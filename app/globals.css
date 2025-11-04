@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 17 17 17; /* Onyx */
+    --foreground: 255 255 255; /* White */
+    --radius: 0.5rem;
+
+    /* ARCLE Brand Colors */
+    --rich-blue: 1 42 254; /* #012AFE */
+    --onyx: 17 17 17; /* #111111 */
+    --dark-grey: 53 53 53; /* #353535 */
+    --casper: 171 187 203; /* #ABBBCB */
+    
+    /* Border color */
+    --border: 171 187 203; /* Casper for borders */
+  }
+
+  * {
+    @apply border-casper/20;
+  }
+
+  body {
+    @apply bg-onyx text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
