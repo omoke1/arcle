@@ -43,10 +43,10 @@ export function useCircle(): UseCircleReturn {
         throw new Error(data.error || "Failed to create wallet");
       }
 
-      const wallet = {
+      const wallet: Wallet = {
         id: data.data.walletId,
         address: data.data.address || data.data.walletId, // Use actual address from API
-        network: "arc",
+        network: "arc" as const,
         createdAt: new Date(),
       };
 
