@@ -23,7 +23,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    if (!arcUtils.isValidAddress(txHash)) {
+    // Validate transaction hash format (0x followed by 64 hex characters)
+    if (!txHash || !/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
       return NextResponse.json(
         { success: false, error: "Invalid transaction hash format" },
         { status: 400 }

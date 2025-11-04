@@ -71,22 +71,25 @@ export async function circleApiRequest<T>(
   // Circle API requires Bearer token authentication
   // Per Circle docs: https://developers.circle.com/w3s/web3-services-api-client-keys-auth
   // Format: authorization: Bearer TEST_API_KEY:key_id:key_secret
+  
+  // Convert options.headers to plain object if it's a Headers object
+  const optionsHeaders: Record<string, string> = options.headers instanceof Headers
+    ? Object.fromEntries(options.headers.entries())
+    : (options.headers as Record<string, string> | undefined) || {};
+  
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "accept": "application/json", // Circle docs show this header
     "authorization": `Bearer ${apiKey}`, // Circle requires "Bearer" prefix with full API key
-    ...options.headers,
+    ...optionsHeaders,
   };
   
   // Override with uppercase if provided in options (HTTP headers are case-insensitive)
-  if (options.headers) {
-    const providedHeaders = options.headers as Record<string, string>;
-    if (providedHeaders.Authorization) {
-      headers.authorization = providedHeaders.Authorization;
-    }
-    if (providedHeaders.Accept) {
-      headers.accept = providedHeaders.Accept;
-    }
+  if (optionsHeaders.Authorization) {
+    headers.authorization = optionsHeaders.Authorization;
+  }
+  if (optionsHeaders.Accept) {
+    headers.accept = optionsHeaders.Accept;
   }
   
   // For user-controlled wallets, App ID might need to be in header
