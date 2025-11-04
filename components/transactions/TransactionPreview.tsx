@@ -67,8 +67,8 @@ export function TransactionPreview({
           <AlertCircle className="w-6 h-6 text-danger" />
         )}
         {isPreview && (
-          <div className="w-6 h-6 rounded-full bg-rich-blue/20 flex items-center justify-center">
-            <ArrowRight className="w-4 h-4 text-rich-blue" />
+          <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
+            <ArrowRight className="w-4 h-4 text-white" />
           </div>
         )}
         <div className="flex-1">
@@ -207,7 +207,7 @@ export function TransactionPreview({
                 "flex-1",
                 riskScore !== undefined && riskScore >= 40
                   ? "bg-warning hover:bg-warning/80"
-                  : "bg-rich-blue hover:bg-[#001FCC]"
+                  : "bg-white hover:bg-white/80 text-onyx"
               )}
             >
               {riskScore !== undefined && riskScore >= 40

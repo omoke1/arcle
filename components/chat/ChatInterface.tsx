@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { ChatMessage } from "./ChatMessage";
-import { ChatInput } from "./ChatInput";
+import { EmptyChatState } from "./EmptyChatState";
 import { QRCodeDisplay } from "@/components/wallet/QRCodeDisplay";
 import { TransactionPreviewMessage } from "./TransactionPreviewMessage";
 import { TransactionHistory } from "@/components/transactions/TransactionHistory";
@@ -35,7 +35,9 @@ export function ChatInterface({
   }, [messages]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (localMessages.length > 0) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [localMessages]);
 
   const handleSendMessage = (content: string) => {
@@ -53,24 +55,18 @@ export function ChatInterface({
     }
   };
 
-  // Welcome message per ui-plans.md - Chat-first interface
-  const welcomeMessage: ChatMessageType = {
-    id: "welcome",
-    role: "assistant",
-    content: "Hello! I'm your AI wallet assistant on ARCLE. I can help you manage your wallet on Arc network.\n\nTry asking:\n• \"What's my balance?\"\n• \"Show my address\"\n• \"Send $50 to 0x...\"",
-    timestamp: new Date(),
-  };
-
-  const displayMessages = localMessages.length === 0 
-    ? [welcomeMessage] 
-    : localMessages;
+  const hasMessages = localMessages.length > 0;
 
   return (
     <div className="flex flex-col h-full bg-onyx">
       {/* Chat Messages Area - Chat-first: 90% of screen per ui-plans.md */}
-      <div className="flex-1 overflow-y-auto px-4 py-6">
-        <div className="max-w-3xl mx-auto w-full">
-          {displayMessages.map((message) => {
+      <div className="flex-1 overflow-y-auto pb-24">
+        {!hasMessages ? (
+          <EmptyChatState />
+        ) : (
+          <div className="px-4 py-6">
+            <div className="max-w-3xl mx-auto w-full">
+              {localMessages.map((message) => {
             // Check if message is about address/QR code - only show when explicitly requested
             // The AI service returns "Here's your wallet address:" when user asks for address
             const showQR = message.role === "assistant" && 
@@ -123,24 +119,19 @@ export function ChatInterface({
             );
           })}
 
-          {isLoading && (
-            <ChatMessage
-              role="assistant"
-              content="Thinking..."
-              isPending={true}
-            />
-          )}
+            {isLoading && (
+              <ChatMessage
+                role="assistant"
+                content="Thinking..."
+                isPending={true}
+              />
+            )}
 
-          <div ref={messagesEndRef} />
+            <div ref={messagesEndRef} />
+          </div>
         </div>
+        )}
       </div>
-
-      {/* Chat Input - Always visible at bottom */}
-      <ChatInput
-        onSendMessage={handleSendMessage}
-        disabled={isLoading}
-        placeholder="Type a message..."
-      />
     </div>
   );
 }

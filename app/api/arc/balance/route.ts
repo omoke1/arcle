@@ -5,7 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getArcClient, USDC_ADDRESS, arcUtils } from "@/lib/arc";
+import { getArcClient, getUSDCAddress, arcUtils } from "@/lib/arc";
 import { erc20Abi } from "viem";
 
 /**
@@ -33,12 +33,15 @@ export async function GET(request: NextRequest) {
 
     const client = getArcClient();
 
-    // TODO: Update USDC_ADDRESS with actual Arc USDC contract address
-    if (!USDC_ADDRESS || USDC_ADDRESS === "0x...") {
+    // Get USDC address for current network
+    let usdcAddress: `0x${string}`;
+    try {
+      usdcAddress = getUSDCAddress();
+    } catch (error) {
       return NextResponse.json(
         {
           success: false,
-          error: "USDC contract address not configured",
+          error: error instanceof Error ? error.message : "USDC contract address not configured",
         },
         { status: 500 }
       );
@@ -46,7 +49,7 @@ export async function GET(request: NextRequest) {
 
     // Get USDC balance
     const balance = await client.readContract({
-      address: USDC_ADDRESS as `0x${string}`,
+      address: usdcAddress,
       abi: erc20Abi,
       functionName: "balanceOf",
       args: [address as `0x${string}`],

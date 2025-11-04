@@ -133,9 +133,9 @@ export function TransactionHistory({ walletId, limit = 10, className }: Transact
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3 flex-1">
-              <div className="w-10 h-10 rounded-full bg-rich-blue/20 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
                 {tx.status === "confirmed" ? (
-                  <ArrowUpRight className="w-5 h-5 text-rich-blue" />
+                  <ArrowUpRight className="w-5 h-5 text-white" />
                 ) : (
                   <ArrowDownLeft className="w-5 h-5 text-casper" />
                 )}
@@ -164,7 +164,7 @@ export function TransactionHistory({ walletId, limit = 10, className }: Transact
                 href={getExplorerUrl(tx.hash)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-casper hover:text-rich-blue transition-colors"
+                className="text-casper hover:text-white transition-colors"
               >
                 <ExternalLink className="w-4 h-4" />
               </a>

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { ChatInterface } from "@/components/chat/ChatInterface";
+import { ChatInput } from "@/components/chat/ChatInput";
 import { CollapsibleHeader } from "@/components/layout/CollapsibleHeader";
 import { TransactionPreviewMessage } from "@/components/chat/TransactionPreviewMessage";
 import { useCircle } from "@/hooks/useCircle";
@@ -456,6 +457,8 @@ export default function ChatPage() {
         <CollapsibleHeader
           balance={balance}
           isLoading={false}
+          walletId={walletId}
+          walletAddress={walletAddress}
           onSend={() => {
             handleSendMessage("Send");
           }}
@@ -475,6 +478,18 @@ export default function ChatPage() {
             handleSendMessage("Withdraw");
           }}
           onLogout={handleLogout}
+          onWalletCreated={async (newWalletId: string, newWalletAddress: string) => {
+            setWalletId(newWalletId);
+            setWalletAddress(newWalletAddress);
+            setHasWallet(true);
+            // Refresh balance
+            const newBalance = await getBalance(newWalletId, newWalletAddress);
+            if (newBalance) {
+              setBalance(newBalance);
+            }
+            // Request testnet tokens
+            await requestTestnetTokens(newWalletAddress);
+          }}
         />
       )}
 
@@ -490,6 +505,13 @@ export default function ChatPage() {
           onCancelTransaction={handleCancelTransaction}
         />
       </div>
+
+      {/* Chat Input - Fixed at bottom */}
+      <ChatInput
+        onSendMessage={handleSendMessage}
+        disabled={isLoading}
+        placeholder="Chat with ARCLE..."
+      />
     </main>
   );
 }

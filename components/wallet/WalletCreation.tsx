@@ -57,7 +57,7 @@ export function WalletCreation({ onWalletCreated }: WalletCreationProps) {
         Create Your Wallet
       </h3>
       <p className="text-sm text-casper mb-6">
-        We'll create a secure wallet on Arc network. No seed phrases needed!
+        We&apos;ll create a secure wallet on Arc network. No seed phrases needed!
       </p>
 
       {error && (
@@ -69,7 +69,7 @@ export function WalletCreation({ onWalletCreated }: WalletCreationProps) {
       <Button
         onClick={handleCreateWallet}
         disabled={loading || isCreating}
-        className="w-full bg-rich-blue hover:bg-[#001FCC]"
+        className="w-full bg-white hover:bg-white/80 text-onyx"
       >
         {loading || isCreating ? (
           <>

@@ -1,14 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronUp, Send, Download, ArrowLeftRight, CreditCard, LogOut, TrendingUp, ArrowDownToLine } from "lucide-react";
+import { ChevronDown, Send, Download, ArrowLeftRight, CreditCard, LogOut, TrendingUp, ArrowDownToLine, Menu, User } from "lucide-react";
 import { BalanceDisplay } from "@/components/wallet/BalanceDisplay";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { BottomSheet } from "@/components/ui/bottom-sheet";
+import { Sidebar } from "./Sidebar";
+import { AnonymousMaskIcon } from "@/components/ui/AnonymousMaskIcon";
 
 interface CollapsibleHeaderProps {
   balance: string;
   isLoading?: boolean;
+  walletId?: string | null;
+  walletAddress?: string | null;
   onSend?: () => void;
   onReceive?: () => void;
   onBridge?: () => void;
@@ -16,11 +20,14 @@ interface CollapsibleHeaderProps {
   onYield?: () => void;
   onWithdraw?: () => void;
   onLogout?: () => void;
+  onWalletCreated?: (walletId: string, walletAddress: string) => void;
 }
 
 export function CollapsibleHeader({
   balance,
   isLoading = false,
+  walletId,
+  walletAddress,
   onSend,
   onReceive,
   onBridge,
@@ -28,57 +35,70 @@ export function CollapsibleHeader({
   onYield,
   onWithdraw,
   onLogout,
+  onWalletCreated,
 }: CollapsibleHeaderProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isSheetOpen, setIsSheetOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  const handleAction = (action?: () => void) => {
+    if (action) {
+      action();
+      setIsSheetOpen(false);
+    }
+  };
 
   return (
-    <div className="sticky top-0 z-10 bg-onyx border-b border-dark-grey">
-      {/* Collapsed State */}
-      {!isExpanded && (
+    <>
+      <div className="sticky top-0 z-10 bg-onyx border-b border-dark-grey">
         <div className="px-4 py-3 flex items-center justify-between">
-          <h1 className="text-xl font-bold text-white">ARCLE</h1>
-          <div className="flex items-center gap-4">
-            {balance !== "0.00" && (
-              <span className="text-sm text-white font-medium">
-                ${parseFloat(balance).toLocaleString("en-US", {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })} USDC
-              </span>
-            )}
-            <button
-              onClick={() => setIsExpanded(true)}
-              className="text-casper hover:text-white transition-colors"
-            >
-              <ChevronDown className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-      )}
+          {/* Left: Menu Icon (Sidebar Trigger) */}
+          <button
+            onClick={() => setIsSidebarOpen(true)}
+            className="text-casper hover:text-white transition-colors"
+          >
+            <Menu className="w-6 h-6" />
+          </button>
 
-      {/* Expanded State */}
-      {isExpanded && (
-        <div className="px-4 py-4 space-y-4">
+          {/* Right: Anonymous Mask Icon & Chevron (Bottom Sheet Trigger) */}
+          <button
+            onClick={() => setIsSheetOpen(true)}
+            className="flex items-center gap-3 hover:bg-dark-grey/30 transition-colors px-2 py-1 rounded"
+          >
+            <AnonymousMaskIcon size={24} className="text-white" />
+            <ChevronDown className="w-5 h-5 text-casper" />
+          </button>
+        </div>
+      </div>
+
+      {/* Sidebar */}
+      <Sidebar
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+        walletId={walletId}
+        walletAddress={walletAddress}
+        onLogout={onLogout}
+        onWalletCreated={onWalletCreated}
+      />
+
+      {/* Bottom Sheet */}
+      <BottomSheet isOpen={isSheetOpen} onClose={() => setIsSheetOpen(false)}>
+        <div className="space-y-6">
+          {/* Header */}
           <div className="flex items-center justify-between">
             <h1 className="text-xl font-bold text-white">ARCLE</h1>
-            <button
-              onClick={() => setIsExpanded(false)}
-              className="text-casper hover:text-white transition-colors"
-            >
-              <ChevronUp className="w-5 h-5" />
-            </button>
           </div>
 
-          <div className="border-t border-dark-grey pt-4">
-            <p className="text-xs text-casper mb-2 uppercase tracking-wide">
+          {/* Balance Section */}
+          <div className="border-t border-dark-grey/50 pt-4">
+            <p className="text-xs text-casper mb-3 uppercase tracking-wide">
               Total Balance
             </p>
             <BalanceDisplay balance={balance} isLoading={isLoading} />
           </div>
 
           {/* Multi-chain breakdown - placeholder for future */}
-          {/* <div className="border-t border-dark-grey pt-3">
-            <div className="flex justify-between text-sm">
+          {/* <div className="border-t border-dark-grey/50 pt-4">
+            <div className="flex justify-between text-sm mb-2">
               <span className="text-casper">Arc:</span>
               <span className="text-white">$1,200.00</span>
             </div>
@@ -89,71 +109,59 @@ export function CollapsibleHeader({
           </div> */}
 
           {/* Quick Actions */}
-          <div className="grid grid-cols-2 gap-2 pt-3 border-t border-dark-grey">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={onSend}
-              className="flex items-center gap-2"
+          <div className="grid grid-cols-2 gap-3 pt-4 border-t border-dark-grey/50">
+            <button
+              onClick={() => handleAction(onSend)}
+              className="flex items-center justify-center gap-2 h-12 bg-dark-grey/50 border border-white/30 rounded-xl text-white hover:bg-dark-grey hover:border-white/50 transition-colors"
             >
               <Send className="w-4 h-4" />
-              Send
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={onReceive}
-              className="flex items-center gap-2"
+              <span className="font-medium">Send</span>
+            </button>
+            <button
+              onClick={() => handleAction(onReceive)}
+              className="flex items-center justify-center gap-2 h-12 bg-dark-grey/50 border border-white/30 rounded-xl text-white hover:bg-dark-grey hover:border-white/50 transition-colors"
             >
               <Download className="w-4 h-4" />
-              Receive
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={onBridge}
-              className="flex items-center gap-2"
+              <span className="font-medium">Receive</span>
+            </button>
+            <button
+              onClick={() => handleAction(onBridge)}
+              className="flex items-center justify-center gap-2 h-12 bg-dark-grey/50 border border-white/30 rounded-xl text-white hover:bg-dark-grey hover:border-white/50 transition-colors"
             >
               <ArrowLeftRight className="w-4 h-4" />
-              Bridge
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={onPay}
-              className="flex items-center gap-2"
+              <span className="font-medium">Bridge</span>
+            </button>
+            <button
+              onClick={() => handleAction(onPay)}
+              className="flex items-center justify-center gap-2 h-12 bg-dark-grey/50 border border-white/30 rounded-xl text-white hover:bg-dark-grey hover:border-white/50 transition-colors"
             >
               <CreditCard className="w-4 h-4" />
-              Pay
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={onYield}
-              className="flex items-center gap-2"
+              <span className="font-medium">Pay</span>
+            </button>
+            <button
+              onClick={() => handleAction(onYield)}
+              className="flex items-center justify-center gap-2 h-12 bg-dark-grey/50 border border-white/30 rounded-xl text-white hover:bg-dark-grey hover:border-white/50 transition-colors"
             >
               <TrendingUp className="w-4 h-4" />
-              Yield
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={onWithdraw}
-              className="flex items-center gap-2"
+              <span className="font-medium">Yield</span>
+            </button>
+            <button
+              onClick={() => handleAction(onWithdraw)}
+              className="flex items-center justify-center gap-2 h-12 bg-dark-grey/50 border border-white/30 rounded-xl text-white hover:bg-dark-grey hover:border-white/50 transition-colors"
             >
               <ArrowDownToLine className="w-4 h-4" />
-              Withdraw
-            </Button>
+              <span className="font-medium">Withdraw</span>
+            </button>
           </div>
 
           {/* Logout Button */}
           {onLogout && (
-            <div className="border-t border-dark-grey pt-3">
+            <div className="border-t border-dark-grey/50 pt-4">
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={onLogout}
-                className="w-full flex items-center gap-2 text-casper hover:text-white hover:bg-dark-grey"
+                onClick={() => handleAction(onLogout)}
+                className="w-full flex items-center gap-2 text-casper hover:text-white hover:bg-dark-grey h-12"
               >
                 <LogOut className="w-4 h-4" />
                 Log Out
@@ -161,8 +169,8 @@ export function CollapsibleHeader({
             </div>
           )}
         </div>
-      )}
-    </div>
+      </BottomSheet>
+    </>
   );
 }
 
