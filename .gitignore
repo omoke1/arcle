@@ -30,6 +30,7 @@ wallet-info.json
 
 # entity secret recovery file (contains sensitive data)
 entity-secret-recovery.dat
+recovery_file_*.dat
 .env
 
 # vercel
