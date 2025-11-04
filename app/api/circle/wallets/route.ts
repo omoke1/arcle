@@ -152,7 +152,7 @@ export async function POST(request: NextRequest) {
       "ETH-SEPOLIA": "ETH-SEPOLIA",
     };
     
-    const mappedBlockchains = blockchains.map(b => blockchainMap[b] || b);
+    const mappedBlockchains = blockchains.map(b => blockchainMap[b] || b) as Array<"ARC-TESTNET" | "ETH-SEPOLIA">;
     
     // Create wallet using SDK
     console.log("Creating wallet with blockchains:", mappedBlockchains);
