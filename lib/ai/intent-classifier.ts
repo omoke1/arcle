@@ -16,6 +16,7 @@ export type IntentType =
   | "pay"
   | "yield"
   | "withdraw"
+  | "faucet"
   | "help"
   | "unknown";
 
