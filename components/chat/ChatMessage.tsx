@@ -3,6 +3,7 @@
 import { cn } from "@/lib/utils";
 import { Check, CheckCheck } from "lucide-react";
 import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
+import { SpeechBubbleIcon } from "@/components/ui/SpeechBubbleIcon";
 
 interface ChatMessageProps {
   role: "user" | "assistant";
@@ -61,6 +62,7 @@ export function ChatMessage({
           >
             {isAI && (
               <div className="flex items-center gap-1.5 mb-2">
+                <SpeechBubbleIcon size={16} className="text-onyx" />
                 <span className="text-sm font-medium text-onyx">ARCLE</span>
                 <VerifiedBadge size={14} variant="dark" />
               </div>

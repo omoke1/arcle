@@ -25,11 +25,17 @@ export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, on
   const [currentView, setCurrentView] = useState<SidebarView>("main");
   const [newWalletId, setNewWalletId] = useState<string | null>(null);
   const [newWalletAddress, setNewWalletAddress] = useState<string | null>(null);
+  const [editingWalletId, setEditingWalletId] = useState<string | null>(null);
+  const [editingWalletAddress, setEditingWalletAddress] = useState<string | null>(null);
 
   // Reset view when sidebar closes
   useEffect(() => {
     if (!isOpen) {
       setCurrentView("main");
+      setNewWalletId(null);
+      setNewWalletAddress(null);
+      setEditingWalletId(null);
+      setEditingWalletAddress(null);
     }
   }, [isOpen]);
 
@@ -48,8 +54,16 @@ export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, on
 
   const handleBack = () => {
     if (currentView === "permissions") {
-      // If going back from permissions, go to create wallet
-      setCurrentView("create-wallet");
+      // If going back from permissions, check if we're editing or creating
+      if (editingWalletId) {
+        // If editing, go back to wallet settings
+        setEditingWalletId(null);
+        setEditingWalletAddress(null);
+        setCurrentView("wallet");
+      } else {
+        // If creating new wallet, go back to create wallet
+        setCurrentView("create-wallet");
+      }
     } else {
       setCurrentView("main");
     }
@@ -178,7 +192,16 @@ export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, on
           <WalletSettingsPage 
             onBack={handleBack} 
             walletAddress={walletAddress}
+            walletId={walletId}
             onCreateWallet={() => setCurrentView("create-wallet")}
+            onViewPermissions={() => {
+              // Navigate to permissions page with existing wallet
+              if (walletId && walletAddress) {
+                setEditingWalletId(walletId);
+                setEditingWalletAddress(walletAddress);
+                setCurrentView("permissions");
+              }
+            }}
           />
         ) : currentView === "help" ? (
           <HelpPage onBack={handleBack} />
@@ -187,12 +210,13 @@ export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, on
             onBack={handleBack} 
             onWalletCreated={handleWalletCreated}
           />
-        ) : currentView === "permissions" && newWalletId && newWalletAddress ? (
+        ) : currentView === "permissions" && (newWalletId && newWalletAddress || editingWalletId && editingWalletAddress) ? (
           <BotPermissionsPage
             onBack={handleBack}
-            onComplete={handlePermissionsComplete}
-            walletId={newWalletId}
-            walletAddress={newWalletAddress}
+            onComplete={newWalletId ? handlePermissionsComplete : undefined}
+            walletId={newWalletId || editingWalletId!}
+            walletAddress={newWalletAddress || editingWalletAddress!}
+            isEditing={!!editingWalletId}
           />
         ) : null}
       </aside>

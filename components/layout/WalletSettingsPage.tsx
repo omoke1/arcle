@@ -6,10 +6,12 @@ import { ArrowLeft, Wallet, Key, Shield, Eye, EyeOff, Download, Trash2, Copy, Ch
 interface WalletSettingsPageProps {
   onBack: () => void;
   walletAddress?: string | null;
+  walletId?: string | null;
   onCreateWallet?: () => void;
+  onViewPermissions?: () => void;
 }
 
-export function WalletSettingsPage({ onBack, walletAddress, onCreateWallet }: WalletSettingsPageProps) {
+export function WalletSettingsPage({ onBack, walletAddress, walletId, onCreateWallet, onViewPermissions }: WalletSettingsPageProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopyAddress = async () => {
@@ -103,35 +105,40 @@ export function WalletSettingsPage({ onBack, walletAddress, onCreateWallet }: Wa
             </button>
           )}
 
+          {onViewPermissions && walletId && (
+            <button 
+              onClick={onViewPermissions}
+              className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-white hover:bg-onyx transition-colors"
+            >
+              <Shield className="w-5 h-5 text-casper" />
+              <div className="flex-1 text-left">
+                <div className="text-sm font-medium">Bot Permissions</div>
+                <div className="text-xs text-casper/70">Manage AI assistant permissions</div>
+              </div>
+            </button>
+          )}
+
           <button className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-white hover:bg-onyx transition-colors">
             <Key className="w-5 h-5 text-casper" />
             <div className="flex-1 text-left">
-              <div className="text-sm font-medium">Recovery Phrase</div>
-              <div className="text-xs text-casper/70">Back up your wallet</div>
-            </div>
-          </button>
-
-          <button className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-white hover:bg-onyx transition-colors">
-            <Shield className="w-5 h-5 text-casper" />
-            <div className="flex-1 text-left">
-              <div className="text-sm font-medium">Security</div>
-              <div className="text-xs text-casper/70">Biometric authentication</div>
+              <div className="text-sm font-medium">Transaction Limits</div>
+              <div className="text-xs text-casper/70">Set daily spending limits</div>
             </div>
           </button>
 
           <button className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-white hover:bg-onyx transition-colors">
             <Eye className="w-5 h-5 text-casper" />
             <div className="flex-1 text-left">
-              <div className="text-sm font-medium">Show Private Key</div>
-              <div className="text-xs text-casper/70">View your private key</div>
+              <div className="text-sm font-medium">Connected DApps</div>
+              <div className="text-xs text-casper/70">Manage connected applications</div>
             </div>
           </button>
 
           <button className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-white hover:bg-onyx transition-colors">
             <Download className="w-5 h-5 text-casper" />
             <div className="flex-1 text-left">
-              <div className="text-sm font-medium">Export Wallet</div>
-              <div className="text-xs text-casper/70">Download wallet backup</div>
+              <div className="text-sm font-medium">Security Settings</div>
+              <div className="text-xs text-casper/70">Biometric authentication & more</div>
             </div>
           </button>
 

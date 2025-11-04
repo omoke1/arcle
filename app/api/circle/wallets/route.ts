@@ -14,6 +14,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getCircleClient, getOrCreateWalletSet } from "@/lib/circle-sdk";
+import { circleApiRequest } from "@/lib/circle";
 
 export interface CreateWalletRequest {
   idempotencyKey?: string;

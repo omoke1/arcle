@@ -1,6 +1,6 @@
 "use client";
 
-import { Sparkles } from "lucide-react";
+import { SpeechBubbleIcon } from "@/components/ui/SpeechBubbleIcon";
 
 export function EmptyChatState() {
   // Get time-based greeting
@@ -14,14 +14,12 @@ export function EmptyChatState() {
 
   return (
     <div className="flex flex-col items-center justify-center h-full min-h-[400px] px-4">
-      {/* Central Icon - Orange starburst/asterisk style */}
+      {/* Central Icon - Speech Bubble */}
       <div className="mb-8 relative">
         <div className="w-24 h-24 rounded-full bg-gradient-to-br from-orange-500/25 via-orange-500/15 to-orange-600/5 flex items-center justify-center backdrop-blur-sm">
-          <Sparkles 
-            className="w-12 h-12 text-orange-500" 
-            strokeWidth={1.5}
-            fill="currentColor"
-            fillOpacity={0.3}
+          <SpeechBubbleIcon 
+            size={48}
+            className="text-orange-500"
           />
         </div>
       </div>

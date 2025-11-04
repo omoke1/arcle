@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 
 interface BotPermissionsPageProps {
   onBack: () => void;
-  onComplete: () => void;
+  onComplete?: () => void;
   walletId: string;
   walletAddress: string;
+  isEditing?: boolean; // If true, this is editing existing permissions, not initial setup
 }
 
 type PermissionType = "send" | "receive" | "bridge" | "pay" | "yield";
@@ -59,13 +60,32 @@ const PERMISSIONS: Permission[] = [
   },
 ];
 
-export function BotPermissionsPage({ onBack, onComplete, walletId, walletAddress }: BotPermissionsPageProps) {
-  const [permissions, setPermissions] = useState<Record<PermissionType, boolean>>(
-    PERMISSIONS.reduce((acc, perm) => {
+export function BotPermissionsPage({ onBack, onComplete, walletId, walletAddress, isEditing = false }: BotPermissionsPageProps) {
+  // Load existing permissions from localStorage if editing
+  const loadExistingPermissions = (): Record<PermissionType, boolean> => {
+    if (typeof window === 'undefined') {
+      return PERMISSIONS.reduce((acc, perm) => {
+        acc[perm.id] = perm.defaultEnabled ?? false;
+        return acc;
+      }, {} as Record<PermissionType, boolean>);
+    }
+    
+    const stored = localStorage.getItem(`arcle_permissions_${walletId}`);
+    if (stored) {
+      try {
+        return JSON.parse(stored);
+      } catch {
+        // Fallback to defaults if parse fails
+      }
+    }
+    
+    return PERMISSIONS.reduce((acc, perm) => {
       acc[perm.id] = perm.defaultEnabled ?? false;
       return acc;
-    }, {} as Record<PermissionType, boolean>)
-  );
+    }, {} as Record<PermissionType, boolean>);
+  };
+
+  const [permissions, setPermissions] = useState<Record<PermissionType, boolean>>(loadExistingPermissions);
 
   const togglePermission = (id: PermissionType) => {
     setPermissions((prev) => ({
@@ -74,12 +94,18 @@ export function BotPermissionsPage({ onBack, onComplete, walletId, walletAddress
     }));
   };
 
-  const handleComplete = () => {
+  const handleSave = () => {
     // Save permissions to localStorage
     if (typeof window !== 'undefined') {
       localStorage.setItem(`arcle_permissions_${walletId}`, JSON.stringify(permissions));
     }
-    onComplete();
+    
+    if (onComplete) {
+      onComplete();
+    } else {
+      // If no onComplete callback, just go back
+      onBack();
+    }
   };
 
   return (
@@ -92,7 +118,7 @@ export function BotPermissionsPage({ onBack, onComplete, walletId, walletAddress
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <h1 className="text-lg font-semibold text-white">Bot Permissions</h1>
+        <h1 className="text-lg font-semibold text-white">{isEditing ? "Edit Bot Permissions" : "Bot Permissions"}</h1>
         <div className="w-5 h-5" /> {/* Spacer */}
       </div>
 
@@ -149,13 +175,13 @@ export function BotPermissionsPage({ onBack, onComplete, walletId, walletAddress
           </p>
         </div>
 
-        {/* Complete Button */}
+        {/* Save Button */}
         <Button
-          onClick={handleComplete}
+          onClick={handleSave}
           className="w-full bg-white hover:bg-white/80 text-onyx font-medium py-3 rounded-xl"
         >
           <Check className="w-4 h-4 mr-2" />
-          Complete Setup
+          {isEditing ? "Save Changes" : "Complete Setup"}
         </Button>
       </div>
     </div>
