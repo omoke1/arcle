@@ -15,7 +15,7 @@ import { findDueReminders, findDueCharges, scheduleNext, updateSubscription, lis
 
 export default function ChatPage() {
   const router = useRouter();
-  const { createWallet, sendTransaction, getBalance, getTransactionStatus, requestTestnetTokens } = useCircle();
+  const { createWallet, sendTransaction, getBalance, getTransactionStatus, requestTestnetTokens, bridgeTransaction, getBridgeStatus } = useCircle();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [hasWallet, setHasWallet] = useState(false);
   const [walletId, setWalletId] = useState<string | null>(null);
@@ -40,39 +40,7 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, msg]);
   };
 
-  async function ensureWalletBeforeChat(): Promise<boolean> {
-    if (hasWallet || creatingRef.current) return true;
-    creatingRef.current = true;
-
-    // Inform the user in-chat
-    pushAssistant("Welcome to ARCLE. I’ll create a secure wallet so we can begin…");
-
-    try {
-      const wallet = await createWallet();
-      if (!wallet) throw new Error("Failed to create wallet");
-
-      setWalletId(wallet.id);
-      setWalletAddress(wallet.address);
-      setHasWallet(true);
-
-      // Optionally fund with testnet tokens
-      await requestTestnetTokens(wallet.address);
-
-      const newBalance = await getBalance(wallet.id, wallet.address);
-      if (newBalance) setBalance(newBalance);
-
-      pushAssistant(
-        `Your wallet is ready: ${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}.\nYou can now send, receive, and check balances.`
-      );
-      return true;
-    } catch (e: any) {
-      pushAssistant("I couldn’t create your wallet. Please try again.");
-      console.error("wallet create error:", e);
-      return false;
-    } finally {
-      creatingRef.current = false;
-    }
-  }
+  // Wallets are now created ONLY when the user explicitly requests it
 
   // Load wallet from localStorage on mount and fetch balance
   useEffect(() => {
@@ -98,19 +66,7 @@ export default function ChatPage() {
     loadWallet();
   }, [router, getBalance]);
   
-  // Refresh balance periodically (every 30 seconds)
-  useEffect(() => {
-    if (!walletId || !walletAddress) return;
-    
-    const interval = setInterval(async () => {
-      const updatedBalance = await getBalance(walletId, walletAddress);
-      if (updatedBalance) {
-        setBalance(updatedBalance);
-      }
-    }, 30000); // 30 seconds
-    
-    return () => clearInterval(interval);
-  }, [walletId, walletAddress, getBalance]);
+  // Removed periodic background polling for balances to honor on-demand fetching
 
   // Reminder loop: check subscriptions every 60s
   useEffect(() => {
@@ -175,12 +131,6 @@ export default function ChatPage() {
     };
     setMessages((prev) => [...prev, userMessage]);
 
-    // Ensure wallet exists before proceeding with AI handling
-    const ok = await ensureWalletBeforeChat();
-    if (!ok) {
-      return;
-    }
-
     setIsLoading(true);
 
     // Add 3-second delay to show typing indicator
@@ -196,6 +146,58 @@ export default function ChatPage() {
     const lowerContent = content.toLowerCase();
 
     // Handle different intents
+    if ((lowerContent.includes("create wallet") || aiResponse.intent.intent === "create_wallet") && !hasWallet && !creatingRef.current) {
+      creatingRef.current = true;
+      try {
+        const creatingMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "Creating your ARCLE wallet…",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, creatingMessage]);
+
+        const wallet = await createWallet();
+        if (!wallet) throw new Error("Failed to create wallet");
+
+        setWalletId(wallet.id);
+        setWalletAddress(wallet.address);
+        setHasWallet(true);
+
+        const createdMsg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `Your wallet is ready: ${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}.`,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, createdMsg]);
+      } catch (e) {
+        const errMsg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "I couldn’t create your wallet. Please try again.",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, errMsg]);
+      } finally {
+        creatingRef.current = false;
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    if ((aiResponse.intent.intent === "send" || aiResponse.intent.intent === "pay") && !hasWallet) {
+      const needWalletMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: "You don’t have a wallet yet. Say ‘create wallet’ to set one up.",
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, needWalletMsg]);
+      setIsLoading(false);
+      return;
+    }
+
     if ((aiResponse.intent.intent === "send" || aiResponse.intent.intent === "pay") && aiResponse.transactionPreview && walletId) {
       // Check if transaction is blocked
       const isBlocked = aiResponse.transactionPreview.blocked || 
@@ -252,11 +254,11 @@ export default function ChatPage() {
       };
       setMessages((prev) => [...prev, aiMessage]);
     } else if (aiResponse.intent.intent === "transaction_history") {
-      // Fetch and display transaction history
+      // Only fetch transactions when explicitly requested (handled elsewhere)
       const aiMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: "Fetching your transaction history...",
+        content: "Okay. I’ll fetch your transactions only when you confirm.",
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, aiMessage]);
@@ -302,6 +304,45 @@ export default function ChatPage() {
           timestamp: new Date(),
         };
         setMessages((prev) => [...prev, errorMessage]);
+      }
+    } else if (aiResponse.intent.intent === "bridge" && walletId && walletAddress) {
+      // Handle bridge intent
+      const { amount, recipient: destinationChain } = aiResponse.intent.entities;
+      
+      if (!amount || !destinationChain) {
+        const aiMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: aiResponse.message,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, aiMessage]);
+      } else {
+        // Map chain names to our format
+        const chainMap: Record<string, "BASE" | "ARBITRUM" | "ETH"> = {
+          "ethereum": "ETH",
+          "eth": "ETH",
+          "base": "BASE",
+          "arbitrum": "ARBITRUM",
+          "polygon": "ETH", // Default to ETH for now
+          "optimism": "ETH",
+          "avalanche": "ETH",
+        };
+        
+        const toChain = chainMap[destinationChain.toLowerCase()] || "ETH";
+        
+        // Extract destination address from message or use a placeholder
+        // In a real scenario, the user should provide the destination address
+        const bridgeMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `🌉 Initiating bridge of ${amount} USDC from Arc to ${destinationChain}...\n\nPlease provide the destination address on ${destinationChain}.`,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, bridgeMessage]);
+        
+        // Note: In a complete implementation, we'd wait for the user to provide the destination address
+        // For now, we'll show a message that they need to provide it
       }
     } else if (lowerContent.includes("logout") || lowerContent.includes("log out") || lowerContent.includes("sign out")) {
       // Handle logout
@@ -577,13 +618,7 @@ export default function ChatPage() {
             setWalletId(newWalletId);
             setWalletAddress(newWalletAddress);
             setHasWallet(true);
-            // Refresh balance
-            const newBalance = await getBalance(newWalletId, newWalletAddress);
-            if (newBalance) {
-              setBalance(newBalance);
-            }
-            // Request testnet tokens
-            await requestTestnetTokens(newWalletAddress);
+            // Do not auto-fetch or auto-fund; wait for user request
           }}
         />
       )}

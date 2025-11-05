@@ -78,20 +78,24 @@ export async function POST(request: NextRequest) {
     const tokenAddress = tokenId || getUSDCAddress();
 
     // Create transaction via Circle API
+    // For developer-controlled wallets on ARC-TESTNET
     const transaction = await circleApiRequest<CircleTransactionResponse>(
       `/v1/w3s/wallets/${walletId}/transactions`,
       {
         method: "POST",
         body: JSON.stringify({
           idempotencyKey: idempotencyKey || crypto.randomUUID(),
-          destinationAddress,
+          destination: {
+            type: "address",
+            address: destinationAddress,
+          },
           amount: {
             amount: amountInSmallestUnit,
             currency: "USDC",
           },
           tokenId: tokenAddress,
           feeLevel: feeLevel || "MEDIUM",
-          // Note: For ERC-4337 wallets, this will create a user operation
+          // Note: Circle API automatically handles ARC-TESTNET based on wallet's blockchain
         }),
       }
     );

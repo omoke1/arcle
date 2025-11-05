@@ -5,6 +5,25 @@
 import { useState, useCallback } from "react";
 import type { Wallet, Transaction } from "@/types";
 
+interface BridgeRequest {
+  walletId: string;
+  amount: string;
+  fromChain: "ARC" | "BASE" | "ARBITRUM" | "ETH";
+  toChain: "ARC" | "BASE" | "ARBITRUM" | "ETH";
+  destinationAddress: string;
+}
+
+interface BridgeStatus {
+  bridgeId: string;
+  status: "pending" | "attesting" | "completed" | "failed";
+  fromChain: string;
+  toChain: string;
+  amount: string;
+  progress: number;
+  transactionHash?: string;
+  error?: string;
+}
+
 interface UseCircleReturn {
       createWallet: () => Promise<Wallet | null>;
       getBalance: (walletId: string, address?: string) => Promise<string | null>;
@@ -13,6 +32,8 @@ interface UseCircleReturn {
         to: string,
         amount: string
       ) => Promise<Transaction | null>;
+      bridgeTransaction: (request: BridgeRequest) => Promise<BridgeStatus | null>;
+      getBridgeStatus: (bridgeId: string) => Promise<BridgeStatus | null>;
       getTransactionStatus: (transactionId: string) => Promise<Transaction | null>;
       requestTestnetTokens: (address: string) => Promise<boolean>;
       loading: boolean;
@@ -221,10 +242,86 @@ export function useCircle(): UseCircleReturn {
         []
       );
 
+      const bridgeTransaction = useCallback(
+        async (request: BridgeRequest): Promise<BridgeStatus | null> => {
+          setLoading(true);
+          setError(null);
+          try {
+            const response = await fetch("/api/circle/bridge", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(request),
+            });
+
+            const data = await response.json();
+
+            if (!data.success) {
+              throw new Error(data.error || "Failed to initiate bridge");
+            }
+
+            return {
+              bridgeId: data.bridgeId,
+              status: data.status,
+              fromChain: data.fromChain,
+              toChain: data.toChain,
+              amount: data.amount,
+              progress: data.progress || 0,
+              transactionHash: data.transactionHash,
+              error: data.error,
+            };
+          } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : "Unknown error";
+            setError(errorMessage);
+            return null;
+          } finally {
+            setLoading(false);
+          }
+        },
+        []
+      );
+
+      const getBridgeStatus = useCallback(
+        async (bridgeId: string): Promise<BridgeStatus | null> => {
+          setLoading(true);
+          setError(null);
+          try {
+            const response = await fetch(`/api/circle/bridge?bridgeId=${bridgeId}`);
+
+            const data = await response.json();
+
+            if (!data.success) {
+              throw new Error(data.error || "Failed to get bridge status");
+            }
+
+            return {
+              bridgeId: data.bridgeId,
+              status: data.status,
+              fromChain: data.fromChain,
+              toChain: data.toChain,
+              amount: data.amount,
+              progress: data.progress || 0,
+              transactionHash: data.transactionHash,
+              error: data.error,
+            };
+          } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : "Unknown error";
+            setError(errorMessage);
+            return null;
+          } finally {
+            setLoading(false);
+          }
+        },
+        []
+      );
+
       return {
         createWallet,
         getBalance,
         sendTransaction,
+        bridgeTransaction,
+        getBridgeStatus,
         getTransactionStatus,
         requestTestnetTokens,
         loading,
