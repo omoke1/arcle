@@ -71,7 +71,8 @@ export async function POST(request: NextRequest) {
     
     // Generate idempotency key if not provided
     const idempotencyKey = body.idempotencyKey || crypto.randomUUID();
-    const blockchains = body.blockchains || ["ETH-SEPOLIA"];
+    // Default to Arc testnet when client doesn't specify
+    const blockchains = body.blockchains || ["ARC-TESTNET"];
 
     // Use Circle SDK for developer-controlled wallets
     // This is more reliable than REST API for wallet creation
