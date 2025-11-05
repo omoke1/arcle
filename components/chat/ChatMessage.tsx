@@ -41,23 +41,31 @@ export function ChatMessage({
       <div className={cn(
         "flex flex-col",
         isUser ? "items-end" : "items-start",
-        "max-w-[85%] md:max-w-[75%]"
+        // Allow container to fit content
+        "w-full"
       )}>
         {/* Message Bubble with Tail */}
         <div className="relative">
           {/* Bubble */}
           <div
             className={cn(
-              "px-4 py-3",
+              "px-4 py-3 shadow-sm",
               isUser
-                ? "bg-dark-grey text-white"
-                : "bg-white text-onyx",
-              isPending && "opacity-60"
+                ? "bg-dark-grey text-white border border-casper/20"
+                : "bg-white text-onyx border border-dark-grey/20",
+              isPending && "opacity-60",
+              // Force rectangular shape - minimum width ensures wider than tall
+              "inline-block",
+              "min-w-[120px] sm:min-w-[140px]",
+              // Max width to prevent overly wide messages
+              "max-w-[85%] sm:max-w-[80%] md:max-w-[75%] lg:max-w-[70%]",
+              // Ensure text wraps properly to maintain rectangle
+              "break-words"
             )}
             style={{
-              borderRadius: isUser 
-                ? "1rem 1rem 0.25rem 1rem" // Top-left, top-right, bottom-left (small), bottom-right (large)
-                : "1rem 1rem 1rem 0.25rem", // Top-left, top-right, bottom-right (large), bottom-left (small)
+              borderRadius: isUser
+                ? "10px 10px 2px 10px" // Sharp rectangle with minimal rounding, tail on bottom-right
+                : "10px 10px 10px 2px", // Sharp rectangle with minimal rounding, tail on bottom-left
             }}
           >
             {isAI && (
@@ -68,6 +76,19 @@ export function ChatMessage({
               </div>
             )}
             <p className="text-[15px] leading-relaxed whitespace-pre-wrap">{content}</p>
+
+            {/* In-bubble timestamp (and ticks for user) */}
+            <div className={cn(
+              "mt-1 flex items-center gap-1 text-xs",
+              isUser ? "justify-end text-casper/70" : "justify-end text-casper/60"
+            )}>
+              <span>{timestamp ? (
+                timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true }).toLowerCase()
+              ) : null}</span>
+              {isUser && !isPending && (
+                <CheckCheck className="w-3.5 h-3.5" />
+              )}
+            </div>
           </div>
 
           {/* Tail - triangular extension */}
@@ -79,24 +100,11 @@ export function ChatMessage({
                 : "left-0 -ml-1 border-r-[8px] border-r-white",
               "border-t-[8px] border-t-transparent border-b-[8px] border-b-transparent"
             )}
+            style={{
+              // Position tail at the corner where it's less rounded
+              bottom: "-1px",
+            }}
           />
-        </div>
-
-        {/* Timestamp and Read Receipt - Outside bubble */}
-        <div className={cn(
-          "flex items-center gap-1.5 mt-1",
-          isUser ? "flex-row-reverse" : "flex-row"
-        )}>
-          {timestamp && (
-            <span className="text-xs text-casper/70">
-              {formatTime(timestamp)}
-            </span>
-          )}
-          {isUser && !isPending && (
-            <div className="flex items-center">
-              <CheckCheck className="w-3.5 h-3.5 text-casper/70" />
-            </div>
-          )}
         </div>
 
         {/* Children (transaction previews, QR codes, etc.) */}

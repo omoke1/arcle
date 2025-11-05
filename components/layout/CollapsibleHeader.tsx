@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, Send, Download, ArrowLeftRight, CreditCard, LogOut, TrendingUp, ArrowDownToLine, Menu, User } from "lucide-react";
+import { ChevronDown, Send, Download, ArrowLeftRight, CreditCard, LogOut, TrendingUp, ArrowDownToLine, Menu, User, Search, CalendarDays } from "lucide-react";
 import { BalanceDisplay } from "@/components/wallet/BalanceDisplay";
 import { Button } from "@/components/ui/button";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
@@ -19,6 +19,8 @@ interface CollapsibleHeaderProps {
   onPay?: () => void;
   onYield?: () => void;
   onWithdraw?: () => void;
+  onScan?: () => void;
+  onSchedule?: () => void;
   onLogout?: () => void;
   onWalletCreated?: (walletId: string, walletAddress: string) => void;
 }
@@ -34,17 +36,24 @@ export function CollapsibleHeader({
   onPay,
   onYield,
   onWithdraw,
+  onScan,
+  onSchedule,
   onLogout,
   onWalletCreated,
 }: CollapsibleHeaderProps) {
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [sidebarView, setSidebarView] = useState<"schedules" | "scan-reports" | "main">("main");
 
-  const handleAction = (action?: () => void) => {
+  const handleAction = (action?: () => void, openView?: "schedules" | "scan-reports") => {
     if (action) {
       action();
-      setIsSheetOpen(false);
     }
+    if (openView) {
+      setSidebarView(openView);
+      setIsSidebarOpen(true);
+    }
+    setIsSheetOpen(false);
   };
 
   return (
@@ -78,6 +87,7 @@ export function CollapsibleHeader({
         walletAddress={walletAddress}
         onLogout={onLogout}
         onWalletCreated={onWalletCreated}
+        openView={sidebarView === "main" ? undefined : sidebarView}
       />
 
       {/* Bottom Sheet */}
@@ -151,6 +161,20 @@ export function CollapsibleHeader({
             >
               <ArrowDownToLine className="w-4 h-4" />
               <span className="font-medium">Withdraw</span>
+            </button>
+            <button
+              onClick={() => handleAction(onScan, "scan-reports")}
+              className="flex items-center justify-center gap-2 h-12 bg-dark-grey/50 border border-white/30 rounded-xl text-white hover:bg-dark-grey hover:border-white/50 transition-colors"
+            >
+              <Search className="w-4 h-4" />
+              <span className="font-medium">Scan</span>
+            </button>
+            <button
+              onClick={() => handleAction(onSchedule, "schedules")}
+              className="flex items-center justify-center gap-2 h-12 bg-dark-grey/50 border border-white/30 rounded-xl text-white hover:bg-dark-grey hover:border-white/50 transition-colors"
+            >
+              <CalendarDays className="w-4 h-4" />
+              <span className="font-medium">Schedule</span>
             </button>
           </div>
 

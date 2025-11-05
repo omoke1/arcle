@@ -66,11 +66,63 @@ function saveAddressHistory(cache: Map<string, AddressHistory>): void {
 let addressHistoryCache = loadAddressHistory();
 
 /**
+ * Known risky contract patterns (in production, this would query contract verification)
+ */
+const KNOWN_RISKY_CONTRACTS = new Set<string>([
+  // Add known risky contract addresses here
+]);
+
+/**
+ * Check if address is a contract (simplified - would query blockchain in production)
+ */
+async function isContract(address: string): Promise<boolean> {
+  try {
+    const client = getArcClient();
+    const code = await client.getBytecode({ address: address as `0x${string}` });
+    return !!(code && code !== "0x");
+  } catch (error) {
+    console.error("Error checking contract:", error);
+    return false;
+  }
+}
+
+/**
+ * Check contract age (days since deployment)
+ * In production, would query contract creation block
+ */
+async function getContractAge(address: string): Promise<number | null> {
+  try {
+    // TODO: Query contract creation block from blockchain
+    // For MVP, return null (unknown)
+    return null;
+  } catch (error) {
+    console.error("Error getting contract age:", error);
+    return null;
+  }
+}
+
+/**
+ * Check if contract is verified (simplified)
+ * In production, would query ArcScan or similar explorer API
+ */
+async function isContractVerified(address: string): Promise<boolean> {
+  try {
+    // TODO: Query ArcScan API for verification status
+    // For MVP, return false (assume unverified)
+    return false;
+  } catch (error) {
+    console.error("Error checking contract verification:", error);
+    return false;
+  }
+}
+
+/**
  * Calculate risk score for a transaction
  */
 export async function calculateRiskScore(
   address: string,
-  amount?: string
+  amount?: string,
+  isContractAddress?: boolean
 ): Promise<RiskScoreResult> {
   const reasons: string[] = [];
   let score = 0;
@@ -150,6 +202,52 @@ export async function calculateRiskScore(
     if (amountNum > 10000) {
       score += 10;
       reasons.push("Large transaction amount");
+    }
+  }
+
+  // Factor 7: Contract address checks (using enhanced contract analysis)
+  const isContractAddr = isContractAddress !== undefined ? isContractAddress : await isContract(normalizedAddress);
+  if (isContractAddr) {
+    // Check if it's a known risky contract
+    if (KNOWN_RISKY_CONTRACTS.has(normalizedAddress)) {
+      score += 40;
+      reasons.push("Known risky contract address");
+    } else {
+      // Use enhanced contract analysis
+      const { analyzeContract } = await import("./contract-analysis");
+      const contractAnalysis = await analyzeContract(normalizedAddress);
+      
+      // Add contract-specific risk factors
+      if (contractAnalysis.age !== undefined) {
+        if (contractAnalysis.age < 7) {
+          score += 40;
+          reasons.push(`Very new contract (${contractAnalysis.age} days old)`);
+        } else if (contractAnalysis.age < 30) {
+          score += 20;
+          reasons.push(`New contract (${contractAnalysis.age} days old)`);
+        }
+      }
+
+      if (!contractAnalysis.verified) {
+        score += 30;
+        reasons.push("Contract is not verified on ArcScan");
+      }
+
+      // Add opcode-based risk factors
+      if (contractAnalysis.opcodeAnalysis) {
+        if (contractAnalysis.opcodeAnalysis.hasDelegateCall) {
+          score += 25;
+          reasons.push("Contract uses DELEGATECALL (potential proxy risk)");
+        }
+        if (contractAnalysis.opcodeAnalysis.hasSelfDestruct) {
+          score += 30;
+          reasons.push("Contract contains SELFDESTRUCT");
+        }
+        if (contractAnalysis.opcodeAnalysis.hasSuspiciousPatterns) {
+          score += 20;
+          reasons.push("Suspicious opcode patterns detected");
+        }
+      }
     }
   }
 

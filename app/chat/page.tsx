@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { ChatInterface } from "@/components/chat/ChatInterface";
 import { ChatInput } from "@/components/chat/ChatInput";
@@ -11,12 +11,13 @@ import { AIService } from "@/lib/ai/ai-service";
 import { updateAddressHistory, calculateRiskScore } from "@/lib/security/risk-scoring";
 import { validateAddress } from "@/lib/security/address-validation";
 import type { ChatMessage } from "@/types";
+import { findDueReminders, findDueCharges, scheduleNext, updateSubscription, listSubscriptions } from "@/lib/subscriptions";
 
 export default function ChatPage() {
   const router = useRouter();
-  const { sendTransaction, getBalance, getTransactionStatus, requestTestnetTokens } = useCircle();
+  const { createWallet, sendTransaction, getBalance, getTransactionStatus, requestTestnetTokens } = useCircle();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [hasWallet, setHasWallet] = useState(true); // TODO: Check actual wallet state
+  const [hasWallet, setHasWallet] = useState(false);
   const [walletId, setWalletId] = useState<string | null>(null);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [balance, setBalance] = useState<string>("0.00");
@@ -26,6 +27,52 @@ export default function ChatPage() {
     amount: string;
     to: string;
   } | null>(null);
+
+  const creatingRef = useRef(false);
+
+  const pushAssistant = (text: string) => {
+    const msg: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      content: text,
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, msg]);
+  };
+
+  async function ensureWalletBeforeChat(): Promise<boolean> {
+    if (hasWallet || creatingRef.current) return true;
+    creatingRef.current = true;
+
+    // Inform the user in-chat
+    pushAssistant("Welcome to ARCLE. I’ll create a secure wallet so we can begin…");
+
+    try {
+      const wallet = await createWallet();
+      if (!wallet) throw new Error("Failed to create wallet");
+
+      setWalletId(wallet.id);
+      setWalletAddress(wallet.address);
+      setHasWallet(true);
+
+      // Optionally fund with testnet tokens
+      await requestTestnetTokens(wallet.address);
+
+      const newBalance = await getBalance(wallet.id, wallet.address);
+      if (newBalance) setBalance(newBalance);
+
+      pushAssistant(
+        `Your wallet is ready: ${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}.\nYou can now send, receive, and check balances.`
+      );
+      return true;
+    } catch (e: any) {
+      pushAssistant("I couldn’t create your wallet. Please try again.");
+      console.error("wallet create error:", e);
+      return false;
+    } finally {
+      creatingRef.current = false;
+    }
+  }
 
   // Load wallet from localStorage on mount and fetch balance
   useEffect(() => {
@@ -44,10 +91,7 @@ export default function ChatPage() {
           if (balance) {
             setBalance(balance);
           }
-        } else {
-          // No wallet found, redirect to home to create one
-          router.push("/");
-        }
+        } 
       }
     };
     
@@ -67,6 +111,42 @@ export default function ChatPage() {
     
     return () => clearInterval(interval);
   }, [walletId, walletAddress, getBalance]);
+
+  // Reminder loop: check subscriptions every 60s
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (typeof window === 'undefined') return;
+      const now = Date.now();
+      // Reminders (show once, 2 days before due date)
+      const reminders = findDueReminders(now);
+      reminders.forEach((s) => {
+        // Mark reminder as shown
+        updateSubscription(s.id, { lastReminderShownAt: now });
+        
+        const msg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `Reminder: your ${s.merchant} subscription (${s.amount} ${s.currency}) renews in 2 days (${new Date(s.nextChargeAt).toLocaleString()}). Would you like to renew?`,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, msg]);
+      });
+      // Charges (MVP: auto-renew acknowledge + schedule next)
+      const charges = findDueCharges(now);
+      charges.forEach((s) => {
+        const next = scheduleNext(s);
+        updateSubscription(s.id, { nextChargeAt: next.nextChargeAt });
+        const msg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `Auto-renewed ${s.merchant} for ${s.amount} ${s.currency}. Next renewal scheduled.`,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, msg]);
+      });
+    }, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleLogout = () => {
     // Clear wallet data from localStorage
@@ -95,7 +175,16 @@ export default function ChatPage() {
     };
     setMessages((prev) => [...prev, userMessage]);
 
+    // Ensure wallet exists before proceeding with AI handling
+    const ok = await ensureWalletBeforeChat();
+    if (!ok) {
+      return;
+    }
+
     setIsLoading(true);
+
+    // Add 3-second delay to show typing indicator
+    await new Promise(resolve => setTimeout(resolve, 3000));
 
     // Use AI service for intent classification and response
     const aiResponse = await AIService.processMessage(content, {
@@ -476,6 +565,12 @@ export default function ChatPage() {
           }}
           onWithdraw={() => {
             handleSendMessage("Withdraw");
+          }}
+          onScan={() => {
+            handleSendMessage("Scan this address for security risks:");
+          }}
+          onSchedule={() => {
+            handleSendMessage("Schedule a payment");
           }}
           onLogout={handleLogout}
           onWalletCreated={async (newWalletId: string, newWalletAddress: string) => {

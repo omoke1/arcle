@@ -17,6 +17,10 @@ export type IntentType =
   | "yield"
   | "withdraw"
   | "faucet"
+  | "scan"
+  | "schedule"
+  | "subscription"
+  | "renew"
   | "help"
   | "unknown";
 
@@ -29,6 +33,10 @@ export interface ParsedIntent {
     address?: string;
     recipient?: string;
     transactionId?: string;
+    date?: string;
+    time?: string;
+    frequency?: string;
+    merchant?: string;
   };
   rawCommand: string;
 }
@@ -139,6 +147,37 @@ export class IntentClassifier {
       return {
         intent: "help",
         confidence: 0.95,
+        entities: {},
+        rawCommand: command,
+      };
+    }
+    
+    // Subscription intent (create/manage)
+    if (/(subscribe|subscription|auto-?renew|recurring payment)/.test(lowerCommand)) {
+      const amountMatch = command.match(/\$?\s?(\d+(?:\.\d{1,2})?)/);
+      const merchantMatch = command.match(/for\s+([a-zA-Z0-9\- ]{2,30})/i);
+      const monthly = /monthly|every\s*month|1st|2nd|3rd|\d{1,2}th/.test(lowerCommand);
+      const weekly = /weekly|every\s*week/.test(lowerCommand);
+      const daily = /daily|every\s*day/.test(lowerCommand);
+      let frequency: any = monthly ? "monthly" : weekly ? "weekly" : daily ? "daily" : undefined;
+      const timeMatch = command.match(/\b(\d{1,2}:\d{2}\s?(am|pm)?|\d{1,2}\s?(am|pm))\b/i);
+      return {
+        intent: "subscription",
+        confidence: 0.9,
+        entities: {
+          amount: amountMatch ? amountMatch[1] : undefined,
+          merchant: merchantMatch ? merchantMatch[1].trim() : undefined,
+          frequency,
+          time: timeMatch ? timeMatch[0] : undefined,
+        },
+      } as any;
+    }
+
+    // Renew intent
+    if (/\brenew\b|\bauto-?renew\b/.test(lowerCommand)) {
+      return {
+        intent: "renew",
+        confidence: 0.9,
         entities: {},
         rawCommand: command,
       };

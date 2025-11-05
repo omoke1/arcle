@@ -9,6 +9,7 @@
 import { IntentClassifier, ParsedIntent } from "./intent-classifier";
 import { validateAddress } from "@/lib/security/address-validation";
 import { calculateRiskScore } from "@/lib/security/risk-scoring";
+import { addSubscription, scheduleNext, listSubscriptions, updateSubscription, Subscription } from "@/lib/subscriptions";
 
 export interface AIResponse {
   message: string;
@@ -65,6 +66,18 @@ export class AIService {
       
       case "withdraw":
         return await this.handleWithdrawIntent(intent, context);
+
+      case "scan":
+        return await this.handleScanIntent(intent, context);
+
+      case "schedule":
+        return this.handleScheduleIntent(intent, context);
+
+      case "subscription":
+        return this.handleSubscriptionIntent(intent, context);
+
+      case "renew":
+        return this.handleRenewIntent(intent, context);
       
       case "help":
         return this.handleHelpIntent(intent, context);
@@ -441,6 +454,93 @@ export class AIService {
       message: `💸 **Withdraw to Fiat**\n\nI'll withdraw **$${amount} ${currency || "USDC"}** to your **${destinationType}**.\n\n⚠️ **Note**: Withdraw functionality is coming soon! This will allow you to:\n• Convert USDC to fiat (USD, EUR, etc.)\n• Withdraw to bank accounts\n• Withdraw to cards\n• Fast, secure transfers\n\nFor now, you can send USDC to other addresses on Arc network.`,
       intent,
       requiresConfirmation: false,
+    };
+  }
+
+  private static async handleScanIntent(
+    intent: ParsedIntent,
+    context?: { walletAddress?: string }
+  ): Promise<AIResponse> {
+    const address = intent.entities.address;
+    if (!address) {
+      return {
+        message: "Paste an address to scan, e.g. 'Scan 0xabc...'.",
+        intent,
+      };
+    }
+    if (!validateAddress(address)) {
+      return {
+        message: `That doesn't look like a valid address: ${address}`,
+        intent,
+      };
+    }
+    const { score, reasons, blocked } = await calculateRiskScore(address, "0.00");
+    if (blocked) {
+      return {
+        message: `High risk address detected (risk ${score}). Action blocked.\nReasons: ${reasons.join(", ")}`,
+        intent,
+      };
+    }
+    const riskLabel = score >= 80 ? "High" : score >= 40 ? "Medium" : "Low";
+    return {
+      message: `Scan complete. Risk: ${riskLabel} (${score}).${reasons.length ? "\nReasons: " + reasons.join(", ") : ""}`,
+      intent,
+    };
+  }
+
+  private static handleScheduleIntent(
+    intent: ParsedIntent,
+    context?: { walletAddress?: string }
+  ): AIResponse {
+    const amount = intent.entities.amount || "amount";
+    const date = intent.entities.date || "a date";
+    const time = intent.entities.time || "a time";
+    return {
+      message: `Got it. I'll schedule a payment of ${amount} at ${time} on ${date}. (Scheduling engine coming soon)`,
+      intent,
+    };
+  }
+
+  private static handleSubscriptionIntent(
+    intent: ParsedIntent,
+    context?: { walletAddress?: string }
+  ): AIResponse {
+    const amount = intent.entities.amount || "";
+    const merchant = (intent.entities as any).merchant || "subscription";
+    const frequency = (intent.entities as any).frequency || "monthly";
+    const time = intent.entities.time || "8:00 am";
+
+    // Construct nextChargeAt as 24h from now for MVP
+    const now = Date.now();
+    const nextChargeAt = now + 24 * 60 * 60 * 1000;
+
+    if (typeof window !== 'undefined') {
+      addSubscription({
+        merchant,
+        amount: amount || "0",
+        currency: "USDC",
+        frequency,
+        nextChargeAt,
+        autoRenew: true,
+        remindBeforeMs: 2 * 24 * 60 * 60 * 1000, // 2 days (48 hours)
+        paused: false,
+      });
+    }
+
+    return {
+      message: `Subscription created for ${merchant}: ${amount || "0"} USDC, ${frequency}, next charge scheduled. You'll be reminded 2 days before renewal.`,
+      intent,
+    };
+  }
+
+  private static handleRenewIntent(
+    intent: ParsedIntent,
+    context?: { walletAddress?: string }
+  ): AIResponse {
+    // MVP: acknowledge and let UI handle sending when due
+    return {
+      message: `Okay, I will renew your subscription when it's due. (Auto-renew is enabled)`,
+      intent,
     };
   }
   

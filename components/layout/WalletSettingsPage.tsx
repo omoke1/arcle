@@ -99,8 +99,8 @@ export function WalletSettingsPage({ onBack, walletAddress, walletId, onCreateWa
             >
               <Plus className="w-5 h-5 text-white" />
               <div className="flex-1 text-left">
-                <div className="text-sm font-medium">Create New Wallet</div>
-                <div className="text-xs text-casper/70">Add another wallet account</div>
+                <div className="text-sm font-medium">Create Agent Sub-account</div>
+                <div className="text-xs text-casper/70">AI-managed wallet with budget limits</div>
               </div>
             </button>
           )}

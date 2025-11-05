@@ -9,6 +9,16 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      animation: {
+        "border-beam": "border-beam calc(var(--duration)*1s) infinite linear",
+      },
+      keyframes: {
+        "border-beam": {
+          "100%": {
+            "offset-distance": "100%",
+          },
+        },
+      },
       colors: {
         // ARCLE Brand Colors
         "rich-blue": "#012AFE",

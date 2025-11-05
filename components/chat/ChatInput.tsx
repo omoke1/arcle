@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, Mic, Plus, List } from "lucide-react";
+import { Send, Mic, Plus, List, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { startVoiceRecognition, isVoiceRecognitionSupported } from "@/lib/voice/voice-recognition";
 
 interface ChatInputProps {
   onSendMessage: (message: string) => void;
@@ -17,7 +18,15 @@ export function ChatInput({
   placeholder = "Chat with ARCLE...",
 }: ChatInputProps) {
   const [message, setMessage] = useState("");
+  const [isListening, setIsListening] = useState(false);
+  const [voiceSupported, setVoiceSupported] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const stopRecognitionRef = useRef<(() => void) | null>(null);
+
+  // Determine voice support on client only to avoid SSR/CSR mismatch
+  useEffect(() => {
+    setVoiceSupported(isVoiceRecognitionSupported());
+  }, []);
 
   // Auto-resize textarea based on content
   useEffect(() => {
@@ -126,14 +135,52 @@ export function ChatInput({
           type="button"
           variant="ghost"
           size="icon"
-          disabled={disabled}
-          className="rounded-xl h-10 w-10 flex-shrink-0 text-casper hover:text-white hover:bg-dark-grey/50 flex items-center justify-center"
+          disabled={disabled || !voiceSupported}
+          className={cn(
+            "rounded-xl h-10 w-10 flex-shrink-0 flex items-center justify-center",
+            isListening 
+              ? "bg-danger/20 text-danger animate-pulse" 
+              : "text-casper hover:text-white hover:bg-dark-grey/50"
+          )}
           onClick={() => {
-            // TODO: Implement voice input
-            alert("Voice input coming soon!");
+            if (isListening && stopRecognitionRef.current) {
+              // Stop listening
+              stopRecognitionRef.current();
+              setIsListening(false);
+              stopRecognitionRef.current = null;
+            } else {
+              // Start listening
+              setIsListening(true);
+              const stop = startVoiceRecognition(
+                (result) => {
+                  if (result.text) {
+                    setMessage(result.text);
+                    // Auto-submit if confidence is high
+                    if (result.confidence && result.confidence > 0.7) {
+                      setTimeout(() => {
+                        onSendMessage(result.text);
+                        setMessage("");
+                      }, 300);
+                    }
+                  }
+                  setIsListening(false);
+                  stopRecognitionRef.current = null;
+                },
+                (error) => {
+                  console.error("Voice recognition error:", error);
+                  setIsListening(false);
+                  stopRecognitionRef.current = null;
+                }
+              );
+              stopRecognitionRef.current = stop;
+            }
           }}
         >
-          <Mic className="w-5 h-5" />
+          {isListening ? (
+            <Loader2 className="w-5 h-5 animate-spin" />
+          ) : (
+            <Mic className="w-5 h-5" />
+          )}
         </Button>
 
         <Button

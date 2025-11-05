@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { ChatMessage } from "./ChatMessage";
 import { EmptyChatState } from "./EmptyChatState";
+import { TypingIndicator } from "./TypingIndicator";
 import { QRCodeDisplay } from "@/components/wallet/QRCodeDisplay";
 import { TransactionPreviewMessage } from "./TransactionPreviewMessage";
 import { TransactionHistory } from "@/components/transactions/TransactionHistory";
@@ -65,7 +66,7 @@ export function ChatInterface({
           <EmptyChatState />
         ) : (
           <div className="px-4 py-6">
-            <div className="max-w-3xl mx-auto w-full">
+            <div className="max-w-4xl mx-auto w-full">
               {localMessages.map((message) => {
             // Check if message is about address/QR code - only show when explicitly requested
             // The AI service returns "Here's your wallet address:" when user asks for address
@@ -119,14 +120,7 @@ export function ChatInterface({
             );
           })}
 
-            {isLoading && (
-              <ChatMessage
-                role="assistant"
-                content="Thinking..."
-                isPending={true}
-              />
-            )}
-
+            {isLoading && <TypingIndicator />}
             <div ref={messagesEndRef} />
           </div>
         </div>

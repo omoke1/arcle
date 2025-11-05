@@ -8,9 +8,12 @@ import { SettingsPage } from "./SettingsPage";
 import { WalletSettingsPage } from "./WalletSettingsPage";
 import { HelpPage } from "./HelpPage";
 import { CreateWalletPage } from "./CreateWalletPage";
+import { CreateSubAccountPage } from "./CreateSubAccountPage";
 import { BotPermissionsPage } from "./BotPermissionsPage";
+import { SchedulesPage } from "./SchedulesPage";
+import { ScanReportsPage } from "./ScanReportsPage";
 
-type SidebarView = "main" | "settings" | "wallet" | "help" | "create-wallet" | "permissions";
+type SidebarView = "main" | "settings" | "wallet" | "help" | "create-wallet" | "create-subaccount" | "permissions" | "schedules" | "scan-reports";
 
 interface SidebarProps {
   isOpen: boolean;
@@ -19,9 +22,10 @@ interface SidebarProps {
   walletAddress?: string | null;
   onLogout?: () => void;
   onWalletCreated?: (walletId: string, walletAddress: string) => void;
+  openView?: SidebarView;
 }
 
-export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, onWalletCreated }: SidebarProps) {
+export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, onWalletCreated, openView }: SidebarProps) {
   const [currentView, setCurrentView] = useState<SidebarView>("main");
   const [newWalletId, setNewWalletId] = useState<string | null>(null);
   const [newWalletAddress, setNewWalletAddress] = useState<string | null>(null);
@@ -38,6 +42,13 @@ export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, on
       setEditingWalletAddress(null);
     }
   }, [isOpen]);
+
+  // If a specific view is requested when opening, navigate there
+  useEffect(() => {
+    if (isOpen && openView) {
+      setCurrentView(openView);
+    }
+  }, [isOpen, openView]);
 
   // Prevent body scroll when sidebar is open
   useEffect(() => {
@@ -60,10 +71,15 @@ export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, on
         setEditingWalletId(null);
         setEditingWalletAddress(null);
         setCurrentView("wallet");
+      } else if (newWalletId) {
+        // If creating new sub-account, go back to create-subaccount
+        setCurrentView("create-subaccount");
       } else {
         // If creating new wallet, go back to create wallet
         setCurrentView("create-wallet");
       }
+    } else if (currentView === "create-subaccount") {
+      setCurrentView("wallet");
     } else {
       setCurrentView("main");
     }
@@ -154,6 +170,22 @@ export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, on
 
                 <button
                   className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-white hover:bg-onyx transition-colors text-left"
+                  onClick={() => setCurrentView("schedules")}
+                >
+                  <span className="w-5 h-5 rounded-full bg-white/10 inline-block" />
+                  <span className="text-sm font-medium">Schedules</span>
+                </button>
+
+                <button
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-white hover:bg-onyx transition-colors text-left"
+                  onClick={() => setCurrentView("scan-reports")}
+                >
+                  <span className="w-5 h-5 rounded-full bg-white/10 inline-block" />
+                  <span className="text-sm font-medium">Scan Reports</span>
+                </button>
+
+                <button
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-white hover:bg-onyx transition-colors text-left"
                   onClick={() => setCurrentView("settings")}
                 >
                   <Settings className="w-5 h-5 text-casper" />
@@ -193,7 +225,7 @@ export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, on
             onBack={handleBack} 
             walletAddress={walletAddress}
             walletId={walletId}
-            onCreateWallet={() => setCurrentView("create-wallet")}
+            onCreateWallet={() => setCurrentView("create-subaccount")}
             onViewPermissions={() => {
               // Navigate to permissions page with existing wallet
               if (walletId && walletAddress) {
@@ -210,6 +242,18 @@ export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, on
             onBack={handleBack} 
             onWalletCreated={handleWalletCreated}
           />
+        ) : currentView === "create-subaccount" && walletId && walletAddress ? (
+          <CreateSubAccountPage
+            onBack={handleBack}
+            masterWalletId={walletId}
+            masterAddress={walletAddress}
+            onSubAccountCreated={(subAccountId, subWalletId, subAddress) => {
+              // Navigate to permissions for sub-account
+              setNewWalletId(subWalletId);
+              setNewWalletAddress(subAddress);
+              setCurrentView("permissions");
+            }}
+          />
         ) : currentView === "permissions" && (newWalletId && newWalletAddress || editingWalletId && editingWalletAddress) ? (
           <BotPermissionsPage
             onBack={handleBack}
@@ -218,6 +262,10 @@ export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, on
             walletAddress={newWalletAddress || editingWalletAddress!}
             isEditing={!!editingWalletId}
           />
+        ) : currentView === "schedules" ? (
+          <SchedulesPage onBack={handleBack} />
+        ) : currentView === "scan-reports" ? (
+          <ScanReportsPage onBack={handleBack} />
         ) : null}
       </aside>
     </>
