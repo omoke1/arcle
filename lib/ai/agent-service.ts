@@ -184,7 +184,7 @@ export class AgentService {
     // For MVP, return a placeholder response
     // In production, this would call the LLM with chain-specific prompt
     return {
-      message: `${chain.charAt(0).toUpperCase() + chain.slice(1)} Agent: Feature coming soon. This agent will handle ${chain}-specific operations.`,
+      message: `${chain.charAt(0).toUpperCase() + chain.slice(1)} Agent is not enabled in this build. I can still help with sending, balances, and bridging on Arc.`,
       metadata: {
         chain,
         status: "coming-soon",

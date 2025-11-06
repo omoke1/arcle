@@ -146,7 +146,7 @@ export default function ChatPage() {
     const lowerContent = content.toLowerCase();
 
     // Handle different intents
-    if ((lowerContent.includes("create wallet") || aiResponse.intent.intent === "create_wallet") && !hasWallet && !creatingRef.current) {
+    if ((lowerContent.includes("create wallet")) && !hasWallet && !creatingRef.current) {
       creatingRef.current = true;
       try {
         const creatingMessage: ChatMessage = {

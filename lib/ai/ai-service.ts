@@ -322,7 +322,7 @@ export class AIService {
     }
     
     return {
-      message: `🌉 **Cross-Chain Bridge**\n\nI'll bridge **$${amount} ${currency || "USDC"}** from Arc to **${destinationChain}**.\n\n⚠️ **Note**: Cross-chain bridge functionality is coming soon! This will allow you to transfer USDC securely across different blockchains.\n\nFor now, you can use the send functionality to transfer USDC on Arc network.`,
+      message: `🌉 **Cross-Chain Bridge**\n\nI can bridge **$${amount} ${currency || "USDC"}** from Arc to **${destinationChain}**.\n\nPlease provide the destination address on ${destinationChain} to continue.`,
       intent,
       requiresConfirmation: false,
     };
@@ -422,7 +422,7 @@ export class AIService {
     const { amount, currency } = intent.entities;
     
     return {
-      message: `💰 **Yield Farming**\n\n${amount ? `I can help you stake **$${amount} ${currency || "USDC"}** to earn yield.` : "I can help you earn yield on your USDC!"}\n\n⚠️ **Note**: Yield farming functionality is coming soon! This will allow you to:\n• Stake USDC to earn APY\n• View your staking positions\n• Unstake and withdraw rewards\n\nFor now, you can hold USDC in your wallet.`,
+      message: `💰 **Yield**\n\nYield features are not available in this testnet build. I can help with sending, receiving, balances, and bridging.`,
       intent,
       requiresConfirmation: false,
     };
@@ -451,7 +451,7 @@ export class AIService {
     const destinationType = destination || "bank account";
     
     return {
-      message: `💸 **Withdraw to Fiat**\n\nI'll withdraw **$${amount} ${currency || "USDC"}** to your **${destinationType}**.\n\n⚠️ **Note**: Withdraw functionality is coming soon! This will allow you to:\n• Convert USDC to fiat (USD, EUR, etc.)\n• Withdraw to bank accounts\n• Withdraw to cards\n• Fast, secure transfers\n\nFor now, you can send USDC to other addresses on Arc network.`,
+      message: `💸 **Withdraw to fiat**\n\nOff-ramp is not available in this testnet build. I can help you send USDC on Arc or bridge to another chain.`,
       intent,
       requiresConfirmation: false,
     };
@@ -495,10 +495,10 @@ export class AIService {
     const amount = intent.entities.amount || "amount";
     const date = intent.entities.date || "a date";
     const time = intent.entities.time || "a time";
-    return {
-      message: `Got it. I'll schedule a payment of ${amount} at ${time} on ${date}. (Scheduling engine coming soon)`,
-      intent,
-    };
+      return {
+        message: `Got it. I'll schedule a payment of ${amount} at ${time} on ${date}.`,
+        intent,
+      };
   }
 
   private static handleSubscriptionIntent(
@@ -549,7 +549,7 @@ export class AIService {
     context?: { hasWallet?: boolean; balance?: string; walletAddress?: string }
   ): AIResponse {
     return {
-      message: "I'm your AI wallet assistant on ARCLE! I can help you:\n\n• Check your balance\n• Send and receive USDC\n• Make payments\n• Bridge assets across chains (coming soon)\n• Withdraw to fiat (coming soon)\n• Earn yield (coming soon)\n• View your wallet address\n• View transaction history\n• And much more!\n\nJust ask me what you'd like to do!",
+      message: "I'm your AI wallet assistant on ARCLE! I can help you:\n\n• Check your balance\n• Send and receive USDC\n• Make payments\n• Bridge assets across chains\n• View your wallet address\n• View transaction history\n\nAsk me anything related to your ARCLE wallet.",
       intent,
     };
   }

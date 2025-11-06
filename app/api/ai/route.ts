@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AIService } from "@/lib/ai/ai-service";
-import { AgentService } from "@/lib/ai/agent-service";
+// Google-only AI route (Gemini)
 import { getAgentConfig, buildContextString, type AgentContext, type AgentConfig } from "@/lib/ai/agent-prompts";
 
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const GOOGLE_AI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent";
 
 /**
  * Enhanced system prompt with few-shot examples
@@ -40,7 +39,14 @@ function buildSystemPrompt(context: AgentContext): string {
 export async function POST(req: NextRequest) {
   try {
     const { message, context, sessionId } = await req.json();
-    const apiKey = process.env.OPENROUTER_API_KEY;
+    const googleApiKey = process.env.GOOGLE_AI_API_KEY;
+
+    if (!googleApiKey) {
+      return NextResponse.json(
+        { success: false, error: "GOOGLE_AI_API_KEY is not set. Please configure it in your environment." },
+        { status: 500 }
+      );
+    }
 
     // Build agent context
     const agentContext: AgentContext = {
@@ -50,63 +56,61 @@ export async function POST(req: NextRequest) {
       walletId: context?.walletId,
     };
 
-    // Fallback to rule-based service if no key
-    if (!apiKey) {
-      const ai = await AIService.processMessage(message, context);
-      return NextResponse.json({ success: true, data: ai });
-    }
-
     const userMsg = String(message || "").slice(0, 5000);
     const systemPrompt = buildSystemPrompt(agentContext);
 
-    // Use better model for improved understanding
-    // Options: meta-llama/Meta-Llama-3.1-70B-Instruct, anthropic/claude-3-opus, openai/gpt-4
-    const model = process.env.AI_MODEL || "meta-llama/Meta-Llama-3.1-70B-Instruct";
-
-    const body = {
-      model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMsg },
+    const geminiBody = {
+      contents: [
+        {
+          parts: [
+            {
+              text: `${systemPrompt}\n\nUser: ${userMsg}\n\nAssistant:`,
+            },
+          ],
+        },
       ],
-      temperature: 0.3, // Slightly higher for more natural responses
-      max_tokens: 500,
-      response_format: { type: "json_object" },
-    } as any;
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 500,
+        responseMimeType: "application/json",
+      },
+    };
 
-    const res = await fetch(OPENROUTER_URL, {
+    const res = await fetch(`${GOOGLE_AI_URL}?key=${googleApiKey}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(geminiBody),
     });
 
     if (!res.ok) {
-      const txt = await res.text();
-      console.error("OpenRouter error:", res.status, txt);
-      // Fallback to rule-based
-      const ai = await AIService.processMessage(message, context);
-      return NextResponse.json({ success: true, data: ai });
+      const txt = await res.text().catch(() => "");
+      console.error("Google AI error:", res.status, txt);
+      return NextResponse.json(
+        { success: false, error: `Google AI error ${res.status}` },
+        { status: 502 }
+      );
     }
 
     const data = await res.json();
-    const content = data?.choices?.[0]?.message?.content ?? "{}";
+    const content = data?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
 
     let parsed: any;
     try {
       parsed = JSON.parse(content);
     } catch {
-      // Fallback to rule-based if model failed JSON
-      const ai = await AIService.processMessage(message, context);
-      return NextResponse.json({ success: true, data: ai });
+      return NextResponse.json(
+        { success: false, error: "Model returned non-JSON output" },
+        { status: 502 }
+      );
     }
 
-    // Minimal safety: ensure shape
     if (!parsed || typeof parsed !== "object") {
-      const ai = await AIService.processMessage(message, context);
-      return NextResponse.json({ success: true, data: ai });
+      return NextResponse.json(
+        { success: false, error: "Invalid AI response shape" },
+        { status: 502 }
+      );
     }
 
     return NextResponse.json({ success: true, data: parsed });
