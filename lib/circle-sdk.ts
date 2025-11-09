@@ -9,6 +9,50 @@ import { initiateDeveloperControlledWalletsClient } from '@circle-fin/developer-
 import { circleConfig } from './circle';
 
 let clientInstance: ReturnType<typeof initiateDeveloperControlledWalletsClient> | null = null;
+let cachedPublicKey: string | null = null;
+
+/**
+ * Clear the SDK client instance (useful for testing or re-initialization)
+ */
+export function clearCircleClient() {
+  clientInstance = null;
+  cachedPublicKey = null; // Clear cached public key when clearing client
+}
+
+/**
+ * Get entity public key (cached)
+ * This is needed for transaction encryption
+ */
+export async function getEntityPublicKey(): Promise<string | null> {
+  // Return cached key if available
+  if (cachedPublicKey) {
+    return cachedPublicKey;
+  }
+  
+  try {
+    const client = getCircleClient();
+    console.log('Fetching entity public key...');
+    const response = await client.getPublicKey();
+    
+    if (response.data?.publicKey) {
+      cachedPublicKey = response.data.publicKey;
+      console.log("✅ Successfully fetched and cached entity public key");
+      return cachedPublicKey;
+    }
+    
+    return null;
+  } catch (error: any) {
+    console.error("Failed to fetch entity public key:", error);
+    console.error("Error details:", {
+      message: error.message,
+      response: error.response?.data,
+      status: error.response?.status,
+      url: error.config?.url || error.request?.url || 'unknown',
+    });
+    // Don't throw - let the transaction creation handle the error
+    return null;
+  }
+}
 
 /**
  * Initialize Circle SDK client
@@ -30,24 +74,26 @@ export function getCircleClient() {
     throw new Error("Circle Entity Secret not configured. Set CIRCLE_ENTITY_SECRET in .env. Run 'npm run generate-entity-secret' to generate one.");
   }
 
-  // Configure SDK with explicit baseUrl for sandbox
-  // The SDK defaults to production (api.circle.com), so we need to explicitly set sandbox
-  const isSandbox = apiKey.startsWith('TEST_API_KEY:') || 
-                    circleConfig.environment === 'sandbox';
+  // Configure SDK baseUrl - ALWAYS use production URL (api.circle.com)
+  // Per Circle API: The base URL should be https://api.circle.com for both testnet and mainnet
+  // The environment (testnet vs mainnet) is determined by the API key, not the base URL
+  // User confirmed: URL should be https://api.circle.com/v1/w3s/config/entity/publicKey
+  const baseUrl = 'https://api.circle.com';
+  const isSandbox = false; // Always use production URL, even for testnet
   
   const sdkConfig: Parameters<typeof initiateDeveloperControlledWalletsClient>[0] = {
     apiKey,
     entitySecret,
-    // Explicitly set sandbox URL - SDK doesn't auto-detect from TEST_API_KEY prefix
-    baseUrl: isSandbox 
-      ? 'https://api-sandbox.circle.com'
-      : 'https://api.circle.com',
+    // Use production URL by default, or sandbox if explicitly configured
+    baseUrl,
   };
 
   console.log(`Circle SDK initialized with ${isSandbox ? 'SANDBOX' : 'PRODUCTION'} environment`);
+  console.log(`Circle SDK baseUrl: ${baseUrl}`);
+  console.log(`Environment variables: NEXT_PUBLIC_ENV=${process.env.NEXT_PUBLIC_ENV}, CIRCLE_ENV=${process.env.CIRCLE_ENV}`);
   
   clientInstance = initiateDeveloperControlledWalletsClient(sdkConfig);
-
+  
   return clientInstance;
 }
 
@@ -82,10 +128,10 @@ export async function getOrCreateWalletSet(name: string = 'ARCLE Default Wallet 
     if (error?.response?.data?.code === 156016 || 
         error?.response?.data?.message?.includes("entity secret has not been set yet")) {
       const helpfulError = new Error(
-        "Entity Secret not registered in Circle Console. " +
-        "You must register your Entity Secret in Circle Developer Console before creating wallets. " +
-        "Go to https://console.circle.com/ → Entity Settings → Register Entity Secret. " +
-        "Alternatively, use the standalone script: npm run create-wallet"
+        "Entity Secret not registered with Circle. " +
+        "You must register your Entity Secret before creating wallets. " +
+        "Run 'npm run register-entity-secret' to register it. " +
+        "See: https://developers.circle.com/wallets/dev-controlled/register-entity-secret"
       );
       (helpfulError as any).code = 156016;
       throw helpfulError;

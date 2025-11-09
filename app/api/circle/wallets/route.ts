@@ -14,12 +14,13 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getCircleClient, getOrCreateWalletSet } from "@/lib/circle-sdk";
-import { circleApiRequest } from "@/lib/circle";
+import { circleApiRequest, circleConfig } from "@/lib/circle";
 
 export interface CreateWalletRequest {
   idempotencyKey?: string;
   blockchains?: string[]; // e.g., ["ARC"] for Arc network
   userId?: string; // For user-controlled wallets
+  forceNew?: boolean; // Force creating a new wallet set for unique wallet
 }
 
 export interface CircleWalletResponse {
@@ -49,22 +50,22 @@ export interface CircleWalletResponse {
  */
 export async function POST(request: NextRequest) {
   try {
-    // Check if Circle API key is configured
-    if (!process.env.NEXT_PUBLIC_CIRCLE_API_KEY) {
+    // Use circleConfig which has fallback to NEXT_PUBLIC_CIRCLE_API_KEY
+    if (!circleConfig.apiKey) {
       console.error("Circle API key not configured");
       return NextResponse.json(
         {
           success: false,
-          error: "Circle API key not configured. Please create a .env file with NEXT_PUBLIC_CIRCLE_API_KEY. See SETUP-ENV.md for instructions.",
+          error: "Circle API key not configured. Set CIRCLE_API_KEY or NEXT_PUBLIC_CIRCLE_API_KEY in your .env file.",
         },
         { status: 500 }
       );
     }
 
-    console.log("API Key found:", process.env.NEXT_PUBLIC_CIRCLE_API_KEY ? "Yes" : "No");
-    console.log("Environment:", process.env.NEXT_PUBLIC_ENV || "sandbox");
-    console.log("App ID:", process.env.NEXT_PUBLIC_CIRCLE_APP_ID || "Not set");
-    console.log("Entity Secret:", process.env.CIRCLE_ENTITY_SECRET ? "Set" : "Not set");
+    console.log("API Key found:", circleConfig.apiKey ? "Yes" : "No");
+    console.log("Environment:", circleConfig.environment || "sandbox");
+    console.log("App ID:", circleConfig.appId || "Not set");
+    console.log("Entity Secret:", circleConfig.entitySecret ? "Set" : "Not set");
 
     const body: CreateWalletRequest = await request.json();
     console.log("Request body:", body);
@@ -77,11 +78,11 @@ export async function POST(request: NextRequest) {
     // Use Circle SDK for developer-controlled wallets
     // This is more reliable than REST API for wallet creation
     
-    if (!process.env.CIRCLE_ENTITY_SECRET) {
+    if (!circleConfig.entitySecret) {
       return NextResponse.json(
         {
           success: false,
-          error: "CIRCLE_ENTITY_SECRET is required for developer-controlled wallets. Run 'npm run generate-entity-secret' to generate one, then add it to your .env file.",
+          error: "CIRCLE_ENTITY_SECRET is required for developer-controlled wallets.\n\nSteps:\n1. Run 'npm run generate-entity-secret' to generate one\n2. Add it to your .env file as CIRCLE_ENTITY_SECRET=<generated_secret>\n3. Run 'npm run register-entity-secret' to register it with Circle",
         },
         { status: 400 }
       );
@@ -96,23 +97,40 @@ export async function POST(request: NextRequest) {
     const client = getCircleClient();
     
     // Step 2: Get or create a wallet set (AFTER Entity Secret registration)
-    // Try to use existing wallet set from wallet-info.json first (from standalone script)
+    // For creating new wallets, we can reuse the same wallet set OR create a new one
+    // Check if user wants to force a new wallet set (for testing multiple wallets)
+    const forceNewWalletSet = body.forceNew || false;
+    
     let walletSetId: string;
     try {
-      const fs = await import('fs');
-      const path = await import('path');
-      const walletInfoPath = path.join(process.cwd(), 'wallet-info.json');
-      
-      if (fs.existsSync(walletInfoPath)) {
-        const walletInfo = JSON.parse(fs.readFileSync(walletInfoPath, 'utf-8'));
-        if (walletInfo.walletSetId) {
-          console.log(`Using existing wallet set from wallet-info.json: ${walletInfo.walletSetId}`);
-          walletSetId = walletInfo.walletSetId;
-        } else {
-          throw new Error("No walletSetId in wallet-info.json");
+      if (forceNewWalletSet) {
+        // Create a new wallet set for this wallet to ensure uniqueness
+        console.log("Creating new wallet set for unique wallet...");
+        const newWalletSet = await client.createWalletSet({ 
+          name: `ARCLE Wallet Set ${Date.now()}` 
+        });
+        if (!newWalletSet.data?.walletSet) {
+          throw new Error("Failed to create new wallet set");
         }
+        walletSetId = newWalletSet.data.walletSet.id;
+        console.log(`Created new wallet set: ${walletSetId}`);
       } else {
-        throw new Error("wallet-info.json not found");
+        // Try to use existing wallet set from wallet-info.json first (from standalone script)
+        const fs = await import('fs');
+        const path = await import('path');
+        const walletInfoPath = path.join(process.cwd(), 'wallet-info.json');
+        
+        if (fs.existsSync(walletInfoPath)) {
+          const walletInfo = JSON.parse(fs.readFileSync(walletInfoPath, 'utf-8'));
+          if (walletInfo.walletSetId) {
+            console.log(`Using existing wallet set from wallet-info.json: ${walletInfo.walletSetId}`);
+            walletSetId = walletInfo.walletSetId;
+          } else {
+            throw new Error("No walletSetId in wallet-info.json");
+          }
+        } else {
+          throw new Error("wallet-info.json not found");
+        }
       }
     } catch (error) {
       // Fallback: try to get or create wallet set via SDK
@@ -137,7 +155,7 @@ export async function POST(request: NextRequest) {
                 `2. ✅ Try creating a NEW API key in Circle Console\n` +
                 `3. ✅ Use the existing wallet: Run 'npm run create-wallet' to use the standalone script\n` +
                 `4. ✅ Check if wallet-info.json exists - it contains the wallet set ID\n\n` +
-                `API Key ID: ${(process.env.CIRCLE_API_KEY || process.env.NEXT_PUBLIC_CIRCLE_API_KEY || '').split(':')[1] || 'unknown'}`,
+                `API Key ID: ${(circleConfig.apiKey || '').split(':')[1] || 'unknown'}`,
               code: 401,
             },
             { status: 401 }
@@ -345,8 +363,8 @@ export async function POST(request: NextRequest) {
 
     // Provide helpful guidance for authentication errors
     if (errorMessage.includes("401") || errorMessage.includes("Invalid credentials") || errorMessage.includes("Unauthorized")) {
-      const hasAppId = !!process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
-      const hasEntitySecret = !!process.env.CIRCLE_ENTITY_SECRET;
+      const hasAppId = !!circleConfig.appId;
+      const hasEntitySecret = !!circleConfig.entitySecret;
       
       let guidance = "Authentication failed. ";
       if (!hasAppId && !hasEntitySecret) {

@@ -33,7 +33,7 @@ async function main() {
     }
 
     // Step 1: Register Entity Secret FIRST (required before creating wallet sets)
-    // This must be done programmatically using the SDK - there's no "Entity Settings" in Console
+    // Follows Circle SDK documentation: https://developers.circle.com/wallets/dev-controlled/register-entity-secret
     console.log("Registering Entity Secret with Circle...");
     
     // Determine baseUrl from API key prefix (TEST_API_KEY = sandbox, LIVE_API_KEY = production)
@@ -41,25 +41,30 @@ async function main() {
     const baseUrl = isSandbox ? 'https://api-sandbox.circle.com' : 'https://api.circle.com';
     console.log(`Using ${isSandbox ? 'SANDBOX' : 'PRODUCTION'} environment: ${baseUrl}`);
     
+    // Set recovery file directory (SDK expects directory, will create file)
+    const recoveryDir = process.cwd();
+    
     try {
+      // Register Entity Secret using Circle SDK
+      // The SDK automatically handles encryption and saves recovery file
       const registrationResponse = await registerEntitySecretCiphertext({
         apiKey: apiKey,
         entitySecret: entitySecret,
-        baseUrl, // Explicitly set baseUrl to match environment
+        baseUrl: baseUrl,
+        recoveryFileDownloadPath: recoveryDir, // SDK expects directory
       });
       
       if (registrationResponse.data?.recoveryFile) {
-        // Save recovery file securely
-        const recoveryPath = path.join(process.cwd(), 'entity-secret-recovery.dat');
-        fs.writeFileSync(recoveryPath, registrationResponse.data.recoveryFile);
+        // Recovery file is automatically saved by SDK
+        const recoveryFilePath = path.join(recoveryDir, 'entity-secret-recovery.dat');
         console.log(`✅ Entity Secret registered successfully!`);
-        console.log(`⚠️  Recovery file saved to: ${recoveryPath}`);
+        console.log(`⚠️  Recovery file saved to: ${recoveryFilePath}`);
         console.log(`⚠️  IMPORTANT: Keep this recovery file secure - you'll need it for recovery!`);
       } else {
         console.log("✅ Entity Secret registration successful");
       }
     } catch (regError: any) {
-      // Check if already registered (error code might be different)
+      // Check if already registered
       if (regError?.response?.data?.code === 156016) {
         console.log("⚠️  Entity Secret registration returned error 156016");
         console.log("This might mean it needs to be registered differently or is already registered");
@@ -71,6 +76,7 @@ async function main() {
         // If registration fails, try to continue anyway - might work if already registered
         console.warn("⚠️  Entity Secret registration warning:", regError.message);
         console.log("Attempting to continue - Entity Secret may already be registered...");
+        console.log("💡 Tip: Run 'npm run register-entity-secret' separately if needed");
       }
     }
 

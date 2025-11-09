@@ -16,10 +16,9 @@ export const circleConfig = {
   apiKey: process.env.CIRCLE_API_KEY || process.env.NEXT_PUBLIC_CIRCLE_API_KEY || "",
   entitySecret: process.env.CIRCLE_ENTITY_SECRET || "",
   environment: process.env.NEXT_PUBLIC_ENV || process.env.CIRCLE_ENV || "sandbox",
-  apiBaseUrl: 
-    (process.env.NEXT_PUBLIC_ENV === "production" || process.env.CIRCLE_ENV === "production")
-      ? CIRCLE_PRODUCTION_URL 
-      : CIRCLE_SANDBOX_URL,
+  // Always use production URL (api.circle.com) - same as SDK
+  // The environment (testnet vs mainnet) is determined by the API key, not the base URL
+  apiBaseUrl: CIRCLE_PRODUCTION_URL,
 };
 
 export interface CircleError {
@@ -147,7 +146,17 @@ export async function circleApiRequest<T>(
       const errorMessage = error.message || 
                           error.errors?.[0]?.message || 
                           `Circle API error: ${response.statusText} (${response.status})`;
-      throw new Error(errorMessage);
+      
+      // Create an error object that preserves the full response details
+      const apiError: any = new Error(errorMessage);
+      apiError.response = {
+        status: response.status,
+        statusText: response.statusText,
+        data: errorData,
+      };
+      apiError.endpoint = endpoint;
+      apiError.url = url;
+      throw apiError;
     }
 
     const data = await response.json();

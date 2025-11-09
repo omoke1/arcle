@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { Check, CheckCheck } from "lucide-react";
 import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { SpeechBubbleIcon } from "@/components/ui/SpeechBubbleIcon";
+import React from "react";
 
 interface ChatMessageProps {
   role: "user" | "assistant";
@@ -29,6 +30,51 @@ export function ChatMessage({
       minute: "2-digit",
       hour12: true,
     }).toLowerCase();
+  };
+
+  // Parse markdown links and convert them to clickable links
+  const parseMessageContent = (text: string): React.ReactNode => {
+    // Match markdown links: [text](url)
+    const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+    let match;
+    let key = 0;
+
+    while ((match = linkRegex.exec(text)) !== null) {
+      // Add text before the link
+      if (match.index > lastIndex) {
+        parts.push(text.substring(lastIndex, match.index));
+      }
+      
+      // Add the link
+      const linkText = match[1];
+      const linkUrl = match[2];
+      parts.push(
+        <a
+          key={key++}
+          href={linkUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(
+            "underline font-medium hover:opacity-80 transition-opacity",
+            isUser ? "text-white" : "text-blue-600"
+          )}
+        >
+          {linkText}
+        </a>
+      );
+      
+      lastIndex = match.index + match[0].length;
+    }
+    
+    // Add remaining text after the last link
+    if (lastIndex < text.length) {
+      parts.push(text.substring(lastIndex));
+    }
+    
+    // If no links were found, return the original text
+    return parts.length > 0 ? parts : text;
   };
 
   return (
@@ -75,7 +121,9 @@ export function ChatMessage({
                 <VerifiedBadge size={14} variant="dark" />
               </div>
             )}
-            <p className="text-[15px] leading-relaxed whitespace-pre-wrap">{content}</p>
+            <p className="text-[15px] leading-relaxed whitespace-pre-wrap">
+              {parseMessageContent(content)}
+            </p>
 
             {/* In-bubble timestamp (and ticks for user) */}
             <div className={cn(

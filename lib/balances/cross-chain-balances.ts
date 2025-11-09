@@ -47,11 +47,24 @@ export async function getChainBalance(
     let balance = "0";
 
     if (chain === "ARC") {
-      // Use Arc client
+      // Use Arc client to query real USDC balance
       const client = getArcClient();
-      // For MVP, we'll use a simplified approach
-      // In production, query ERC20 balance directly
-      balance = "0"; // Placeholder
+      const { getUSDCAddress, arcUtils } = await import("../arc");
+      const { erc20Abi } = await import("viem");
+      
+      try {
+        const usdcAddress = getUSDCAddress();
+        const result = await client.readContract({
+          address: usdcAddress as `0x${string}`,
+          abi: erc20Abi,
+          functionName: "balanceOf",
+          args: [address as `0x${string}`],
+        });
+        balance = arcUtils.formatUSDC(result);
+      } catch (error) {
+        console.error("Error fetching ARC balance:", error);
+        balance = "0";
+      }
     } else {
       // Use Viem for other chains
       const publicClient = createPublicClient({

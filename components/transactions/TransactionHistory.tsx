@@ -18,7 +18,10 @@ export function TransactionHistory({ walletId, limit = 10, className }: Transact
 
   useEffect(() => {
     const fetchTransactions = async () => {
-      if (!walletId) return;
+      if (!walletId) {
+        setTransactions([]);
+        return;
+      }
       
       setIsLoading(true);
       setError(null);
@@ -29,21 +32,39 @@ export function TransactionHistory({ walletId, limit = 10, className }: Transact
         );
         
         const data = await response.json();
+        console.log(`[TransactionHistory] API response for wallet ${walletId}:`, data);
         
         if (data.success && data.data?.data) {
           // Map API response to Transaction type
-          const txList = Array.isArray(data.data.data) ? data.data.data : [];
-          const mappedTransactions: Transaction[] = txList.map((tx: any) => ({
-            id: tx.id || tx.transactionHash,
-            hash: tx.transactionHash || tx.id || "",
-            from: tx.sourceAddress || tx.walletId || "",
-            to: tx.destination?.address || tx.destinationAddress || "",
-            amount: tx.amount?.amount || "0",
-            token: tx.amount?.currency || "USDC",
-            status: (tx.status || "pending") as "pending" | "confirmed" | "failed",
-            timestamp: tx.createDate ? new Date(tx.createDate) : new Date(),
-          }));
+          const txList = Array.isArray(data.data.data) ? data.data.data : [data.data.data];
+          const mappedTransactions: Transaction[] = txList
+            .filter((tx: any) => tx) // Filter out null/undefined
+            .map((tx: any) => {
+              // Extract blockchain hash from various fields
+              const blockchainHash = tx.transactionHash || 
+                                   tx.onChainTxHash || 
+                                   tx.hash ||
+                                   (tx.transaction && tx.transaction.hash) ||
+                                   "";
+              
+              // Use mapped status from API, or fallback to state mapping
+              const status = tx.status || 
+                            (tx.state === "COMPLETED" || tx.state === "CONFIRMED" || tx.state === "SENT" ? "confirmed" :
+                             tx.state === "FAILED" || tx.state === "DENIED" || tx.state === "CANCELLED" ? "failed" : "pending");
+              
+              return {
+                id: tx.id || tx.transactionHash || "",
+                hash: blockchainHash || tx.id || "",
+                from: tx.sourceAddress || tx.walletId || tx.from || "",
+                to: tx.destination?.address || tx.destinationAddress || tx.to || "",
+                amount: tx.amount?.amount || tx.amount || "0",
+                token: tx.amount?.currency || tx.token || "USDC",
+                status: (status || "pending") as "pending" | "confirmed" | "failed",
+                timestamp: tx.createDate ? new Date(tx.createDate) : (tx.createdAt ? new Date(tx.createdAt) : new Date()),
+              };
+            });
           
+          console.log(`[TransactionHistory] Loaded ${mappedTransactions.length} transactions`);
           setTransactions(mappedTransactions);
         } else {
           setTransactions([]);
@@ -96,8 +117,13 @@ export function TransactionHistory({ walletId, limit = 10, className }: Transact
     }
   };
 
-  const getExplorerUrl = (hash: string): string => {
-    return `https://testnet.arcscan.app/tx/${hash}`;
+  const getExplorerUrl = (hash: string): string | null => {
+    // Only generate ArcScan URL if hash is a valid blockchain hash (0x followed by 64 hex chars)
+    // Circle transaction IDs are UUIDs, not blockchain hashes
+    if (hash && /^0x[a-fA-F0-9]{64}$/.test(hash)) {
+      return `https://testnet.arcscan.app/tx/${hash}`;
+    }
+    return null; // Return null if not a valid blockchain hash
   };
 
   if (isLoading) {
@@ -161,10 +187,12 @@ export function TransactionHistory({ walletId, limit = 10, className }: Transact
             
             {tx.hash && (
               <a
-                href={getExplorerUrl(tx.hash)}
+                href={getExplorerUrl(tx.hash) || undefined}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-casper hover:text-white transition-colors"
+                style={{ pointerEvents: getExplorerUrl(tx.hash) ? 'auto' : 'none', opacity: getExplorerUrl(tx.hash) ? 1 : 0.5 }}
+                title={getExplorerUrl(tx.hash) ? 'View on ArcScan' : 'Blockchain hash not available yet'}
               >
                 <ExternalLink className="w-4 h-4" />
               </a>

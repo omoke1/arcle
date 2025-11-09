@@ -42,7 +42,7 @@ export default function ChatPage() {
 
   // Wallets are now created ONLY when the user explicitly requests it
 
-  // Load wallet from localStorage on mount and fetch balance
+  // Load wallet from localStorage on mount and fetch real balance
   useEffect(() => {
     const loadWallet = async () => {
       if (typeof window !== 'undefined') {
@@ -54,12 +54,18 @@ export default function ChatPage() {
           setWalletAddress(storedWalletAddress);
           setHasWallet(true);
           
-          // Fetch initial balance
+          // Always fetch real balance from API/blockchain (no mock data)
           const balance = await getBalance(storedWalletId, storedWalletAddress);
           if (balance) {
             setBalance(balance);
+          } else {
+            // If balance fetch fails, set to 0 (not a mock, just fallback)
+            setBalance("0.00");
           }
-        } 
+        } else {
+          // No wallet yet - ensure balance is 0
+          setBalance("0.00");
+        }
       }
     };
     
@@ -146,9 +152,22 @@ export default function ChatPage() {
     const lowerContent = content.toLowerCase();
 
     // Handle different intents
-    if ((lowerContent.includes("create wallet")) && !hasWallet && !creatingRef.current) {
+    // Allow creating wallet even if one exists (for testing multiple wallets)
+    if ((lowerContent.includes("create wallet") || lowerContent.includes("create new wallet") || lowerContent.includes("create another wallet")) && !creatingRef.current) {
       creatingRef.current = true;
       try {
+        // If user wants a new wallet, clear the old one first
+        if (hasWallet && (lowerContent.includes("new wallet") || lowerContent.includes("another wallet"))) {
+          // Clear existing wallet from localStorage to allow new wallet creation
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem('arcle_wallet_id');
+            localStorage.removeItem('arcle_wallet_address');
+          }
+          setWalletId(null);
+          setWalletAddress(null);
+          setHasWallet(false);
+        }
+        
         const creatingMessage: ChatMessage = {
           id: crypto.randomUUID(),
           role: "assistant",
@@ -157,17 +176,26 @@ export default function ChatPage() {
         };
         setMessages((prev) => [...prev, creatingMessage]);
 
-        const wallet = await createWallet();
+        // Pass forceNew flag if user wants a new wallet (clears old one)
+        const forceNew = hasWallet && (lowerContent.includes("new wallet") || lowerContent.includes("another wallet"));
+        const wallet = await createWallet(forceNew);
         if (!wallet) throw new Error("Failed to create wallet");
 
         setWalletId(wallet.id);
         setWalletAddress(wallet.address);
         setHasWallet(true);
 
+        // Fund testnet tokens for immediate testing
+        await requestTestnetTokens(wallet.address);
+        const fundedBalance = await getBalance(wallet.id, wallet.address);
+        if (fundedBalance) {
+          setBalance(fundedBalance);
+        }
+
         const createdMsg: ChatMessage = {
           id: crypto.randomUUID(),
           role: "assistant",
-          content: `Your wallet is ready: ${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}.`,
+          content: `Your wallet is ready: ${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}. Testnet tokens requested for you.`,
           timestamp: new Date(),
         };
         setMessages((prev) => [...prev, createdMsg]);
@@ -431,6 +459,32 @@ export default function ChatPage() {
     }
     
     setIsLoading(true);
+
+    // Ensure sufficient balance: attempt faucet if needed (testnet only)
+    try {
+      if (walletId && walletAddress) {
+        const currentBalance = await getBalance(walletId, walletAddress);
+        const current = currentBalance ? parseFloat(currentBalance) : 0;
+        const needed = parseFloat(pendingTransaction.amount);
+        if (!Number.isNaN(needed) && current < needed) {
+          const topupMsg: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `Insufficient balance (${currentBalance ?? "0"}). Requesting testnet tokens…`,
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, topupMsg]);
+          await requestTestnetTokens(walletAddress);
+          // Wait briefly and refresh balance
+          await new Promise((r) => setTimeout(r, 3000));
+          const refreshed = await getBalance(walletId, walletAddress);
+          if (refreshed) setBalance(refreshed);
+        }
+      }
+    } catch (e) {
+      // Continue even if faucet/top-up fails
+      // Intentionally no rethrow; user can retry
+    }
     
     try {
       // Update message to show pending state
@@ -446,10 +500,68 @@ export default function ChatPage() {
       ));
       
       // Send transaction using normalized address
+      // CRITICAL: walletAddress must be passed to avoid SDK public key fetch (401 error)
+      if (!walletAddress) {
+        const errorMsg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "Error: Wallet address not found. Please create a new wallet.",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, errorMsg]);
+        setIsLoading(false);
+        return;
+      }
+      
+      // Validate all required fields before sending
+      if (!walletId) {
+        const errorMsg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "❌ Error: Wallet ID is missing. Please create a wallet first.",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, errorMsg]);
+        setIsLoading(false);
+        return;
+      }
+      
+      if (!pendingTransaction.amount || isNaN(parseFloat(pendingTransaction.amount))) {
+        const errorMsg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `❌ Error: Invalid amount "${pendingTransaction.amount}". Please provide a valid number.`,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, errorMsg]);
+        setIsLoading(false);
+        return;
+      }
+      
+      if (!normalizedAddress) {
+        const errorMsg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "❌ Error: Destination address is missing.",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, errorMsg]);
+        setIsLoading(false);
+        return;
+      }
+      
+      console.log("Sending transaction with:", {
+        walletId,
+        destinationAddress: normalizedAddress,
+        amount: pendingTransaction.amount,
+        walletAddress,
+      });
+      
       const transaction = await sendTransaction(
         walletId,
         normalizedAddress, // Use checksummed address
-        pendingTransaction.amount
+        pendingTransaction.amount,
+        walletAddress // CRITICAL: Always pass wallet address for SDK transaction creation
       );
       
       if (transaction) {
@@ -477,14 +589,20 @@ export default function ChatPage() {
         
         // Poll for transaction status (Arc has sub-second finality, so poll faster)
         if (transaction.id) {
-          pollTransactionStatus(transaction.id, 10, 1000); // 10 attempts, 1 second interval for Arc
+          pollTransactionStatus(transaction.id, 30, 2000); // 30 attempts, 2 second interval for Arc
         }
         
             // Add confirmation message with Arc-specific info
+            // Only show ArcScan link if we have a valid blockchain hash (0x followed by 64 hex chars)
+            const isValidBlockchainHash = transaction.hash && /^0x[a-fA-F0-9]{64}$/.test(transaction.hash);
+            const explorerLink = isValidBlockchainHash 
+              ? `\n\n🔗 [View on ArcScan](https://testnet.arcscan.app/tx/${transaction.hash})`
+              : `\n\n⏳ Transaction is processing. The blockchain hash will be available once the transaction is confirmed.`;
+            
             const confirmMessage: ChatMessage = {
               id: crypto.randomUUID(),
               role: "assistant",
-              content: `✅ Transaction confirmed on Arc!\n\n**Transaction Hash:** ${transaction.hash}\n**Network:** Arc (sub-second finality)\n**Gas Paid:** USDC (no ETH needed)\n\n🔗 [View on Arc Explorer](https://testnet.arcscan.app/tx/${transaction.hash})`,
+              content: `✅ Transaction confirmed on Arc!\n\n**Transaction ID:** ${transaction.id}\n${isValidBlockchainHash ? `**Transaction Hash:** ${transaction.hash}` : ''}\n**Network:** Arc (sub-second finality)\n**Gas Paid:** USDC (no ETH needed)${explorerLink}`,
               timestamp: new Date(),
             };
             setMessages((prev) => [...prev, confirmMessage]);
@@ -533,46 +651,97 @@ export default function ChatPage() {
   
       // Poll transaction status until confirmed
       // Arc has sub-second finality, so we can poll faster
-      const pollTransactionStatus = async (transactionId: string, maxAttempts = 10, pollInterval = 2000) => {
+      const pollTransactionStatus = async (transactionId: string, maxAttempts = 30, pollInterval = 2000) => {
         let attempts = 0;
+        let hasNotified = false;
     
     const poll = async () => {
-      if (attempts >= maxAttempts) return;
+      if (attempts >= maxAttempts) {
+        console.log(`Polling stopped after ${maxAttempts} attempts for transaction ${transactionId}`);
+        // Add timeout message
+        setMessages((prev) => prev.map(msg => {
+          if (msg.content.includes(transactionId) && !msg.content.includes("Transaction confirmed") && !msg.content.includes("Transaction failed")) {
+            return {
+              ...msg,
+              content: msg.content + "\n\n⏱️ Transaction is still processing. Please check back later or view it on ArcScan.",
+            };
+          }
+          return msg;
+        }));
+        return;
+      }
       
       attempts++;
+      console.log(`[Polling] Transaction ${transactionId} (attempt ${attempts}/${maxAttempts})...`);
+      
       const status = await getTransactionStatus(transactionId);
       
+      if (!status) {
+        console.log(`[Polling] No status returned for transaction ${transactionId}, continuing to poll...`);
+        setTimeout(poll, pollInterval);
+        return;
+      }
+      
+      console.log(`[Polling] Transaction ${transactionId} status: ${status.status}, hash: ${status.hash || 'none'}`);
+      
       if (status && status.status === "confirmed") {
-        // Update balance after confirmation
-        if (walletId && walletAddress) {
-          const updatedBalance = await getBalance(walletId, walletAddress);
-          if (updatedBalance) {
-            setBalance(updatedBalance);
+        if (!hasNotified) {
+          hasNotified = true;
+          
+          // Update balance after confirmation
+          if (walletId && walletAddress) {
+            const updatedBalance = await getBalance(walletId, walletAddress);
+            if (updatedBalance) {
+              setBalance(updatedBalance);
+            }
           }
+          
+          // Create confirmation message
+          const explorerLink = status.hash && status.hash.startsWith("0x") && status.hash.length === 66
+            ? `\n\n[View on ArcScan](https://testnet.arcscan.app/tx/${status.hash})`
+            : "";
+          
+          const confirmMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `✅ Transaction confirmed!\n\n**Transaction ID:** ${transactionId}${status.hash && status.hash.startsWith("0x") ? `\n**Transaction Hash:** ${status.hash}` : ''}${explorerLink}`,
+            timestamp: new Date(),
+          };
+          
+          // Update existing transaction message and add confirmation
+          setMessages((prev) => {
+            const updated = prev.map(msg => {
+              if (msg.content.includes(transactionId) && !msg.content.includes("Transaction confirmed")) {
+                return {
+                  ...msg,
+                  content: msg.content.replace(/pending|in process|processing/gi, "confirmed"),
+                };
+              }
+              return msg;
+            });
+            // Add confirmation message if not already present
+            if (!updated.some(msg => msg.content.includes("Transaction confirmed") && msg.content.includes(transactionId))) {
+              updated.push(confirmMessage);
+            }
+            return updated;
+          });
         }
-        
-        // Update transaction status in messages
-        setMessages((prev) => prev.map(msg => {
-          if (msg.content.includes(transactionId) || msg.content.includes("Transaction confirmed")) {
-            return {
-              ...msg,
-              content: msg.content.replace(/pending|confirmed/g, "confirmed"),
-            };
-          }
-          return msg;
-        }));
       } else if (status && status.status === "failed") {
-        setMessages((prev) => prev.map(msg => {
-          if (msg.content.includes(transactionId)) {
-            return {
-              ...msg,
-              content: msg.content + "\n\n❌ Transaction failed. Please try again.",
-            };
-          }
-          return msg;
-        }));
+        if (!hasNotified) {
+          hasNotified = true;
+          setMessages((prev) => prev.map(msg => {
+            if (msg.content.includes(transactionId) && !msg.content.includes("Transaction failed")) {
+              return {
+                ...msg,
+                content: msg.content + "\n\n❌ Transaction failed. Please try again.",
+              };
+            }
+            return msg;
+          }));
+        }
       } else {
         // Continue polling
+        console.log(`Transaction ${transactionId} still pending, will poll again in ${pollInterval}ms...`);
         setTimeout(poll, pollInterval);
       }
     };
@@ -582,46 +751,49 @@ export default function ChatPage() {
 
   return (
     <main className="min-h-screen bg-onyx flex flex-col">
-      {/* Collapsible Header with Balance - Only shown when wallet exists per ui-plans.md */}
-      {hasWallet && (
-        <CollapsibleHeader
-          balance={balance}
-          isLoading={false}
-          walletId={walletId}
-          walletAddress={walletAddress}
-          onSend={() => {
-            handleSendMessage("Send");
-          }}
-          onReceive={() => {
-            handleSendMessage("Show my address");
-          }}
-          onBridge={() => {
-            handleSendMessage("Bridge");
-          }}
-          onPay={() => {
-            handleSendMessage("Pay");
-          }}
-          onYield={() => {
-            handleSendMessage("Show yield options");
-          }}
-          onWithdraw={() => {
-            handleSendMessage("Withdraw");
-          }}
-          onScan={() => {
-            handleSendMessage("Scan this address for security risks:");
-          }}
-          onSchedule={() => {
-            handleSendMessage("Schedule a payment");
-          }}
-          onLogout={handleLogout}
-          onWalletCreated={async (newWalletId: string, newWalletAddress: string) => {
-            setWalletId(newWalletId);
-            setWalletAddress(newWalletAddress);
-            setHasWallet(true);
-            // Do not auto-fetch or auto-fund; wait for user request
-          }}
-        />
-      )}
+      {/* Collapsible Header with Balance - always shown */}
+      <CollapsibleHeader
+        balance={balance}
+        isLoading={false}
+        walletId={walletId}
+        walletAddress={walletAddress}
+        onSend={() => {
+          handleSendMessage("Send");
+        }}
+        onReceive={() => {
+          handleSendMessage("Show my address");
+        }}
+        onBridge={() => {
+          handleSendMessage("Bridge");
+        }}
+        onPay={() => {
+          handleSendMessage("Pay");
+        }}
+        onYield={() => {
+          handleSendMessage("Show yield options");
+        }}
+        onWithdraw={() => {
+          handleSendMessage("Withdraw");
+        }}
+        onScan={() => {
+          handleSendMessage("Scan this address for security risks:");
+        }}
+        onSchedule={() => {
+          handleSendMessage("Schedule a payment");
+        }}
+        onLogout={handleLogout}
+        onWalletCreated={async (newWalletId: string, newWalletAddress: string) => {
+          setWalletId(newWalletId);
+          setWalletAddress(newWalletAddress);
+          setHasWallet(true);
+          // Request testnet tokens and update balance for testing
+          await requestTestnetTokens(newWalletAddress);
+          const newBalance = await getBalance(newWalletId, newWalletAddress);
+          if (newBalance) {
+            setBalance(newBalance);
+          }
+        }}
+      />
 
       {/* Chat Interface - Chat-first layout: 90% of screen per ui-plans.md */}
       <div className="flex-1 overflow-hidden min-h-0 flex flex-col">

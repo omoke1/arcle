@@ -25,12 +25,13 @@ interface BridgeStatus {
 }
 
 interface UseCircleReturn {
-      createWallet: () => Promise<Wallet | null>;
+      createWallet: (forceNew?: boolean) => Promise<Wallet | null>;
       getBalance: (walletId: string, address?: string) => Promise<string | null>;
       sendTransaction: (
         walletId: string,
         to: string,
-        amount: string
+        amount: string,
+        walletAddress?: string
       ) => Promise<Transaction | null>;
       bridgeTransaction: (request: BridgeRequest) => Promise<BridgeStatus | null>;
       getBridgeStatus: (bridgeId: string) => Promise<BridgeStatus | null>;
@@ -44,7 +45,7 @@ export function useCircle(): UseCircleReturn {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const createWallet = useCallback(async (): Promise<Wallet | null> => {
+  const createWallet = useCallback(async (forceNew: boolean = false): Promise<Wallet | null> => {
     setLoading(true);
     setError(null);
     try {
@@ -54,7 +55,8 @@ export function useCircle(): UseCircleReturn {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          idempotencyKey: crypto.randomUUID(),
+          idempotencyKey: crypto.randomUUID(), // Always unique to create new wallet
+          forceNew: forceNew, // Force new wallet set for unique wallet
         }),
       });
 
@@ -122,7 +124,8 @@ export function useCircle(): UseCircleReturn {
     async (
       walletId: string,
       to: string,
-      amount: string
+      amount: string,
+      walletAddress?: string // CRITICAL: Pass wallet address for SDK transaction creation
     ): Promise<Transaction | null> => {
       setLoading(true);
       setError(null);
@@ -134,6 +137,7 @@ export function useCircle(): UseCircleReturn {
           },
           body: JSON.stringify({
             walletId,
+            walletAddress, // CRITICAL: Include wallet address to avoid SDK public key fetch
             destinationAddress: to,
             amount,
             idempotencyKey: crypto.randomUUID(),
@@ -143,7 +147,10 @@ export function useCircle(): UseCircleReturn {
         const data = await response.json();
 
         if (!data.success) {
-          throw new Error(data.error || "Failed to send transaction");
+          // Include error details in the error message for better debugging
+          const errorMsg = data.error || "Failed to send transaction";
+          const detailsMsg = data.details ? ` Details: ${JSON.stringify(data.details)}` : "";
+          throw new Error(`${errorMsg}${detailsMsg}`);
         }
 
         // Map Circle API response to Transaction type
@@ -185,15 +192,29 @@ export function useCircle(): UseCircleReturn {
 
         // Map response to Transaction type
         const txData = data.data.data || data.data;
+        const actualTxData = Array.isArray(txData) ? txData[0] : txData;
+        
+        // Extract blockchain hash from various possible fields
+        const blockchainHash = actualTxData?.transactionHash || 
+                              actualTxData?.onChainTxHash || 
+                              actualTxData?.hash ||
+                              (actualTxData?.transaction && actualTxData.transaction.hash) ||
+                              null;
+        
+        // Use mapped status from API, or fallback to state mapping
+        const status = actualTxData?.status || 
+                      (actualTxData?.state === "COMPLETED" || actualTxData?.state === "CONFIRMED" || actualTxData?.state === "SENT" ? "confirmed" :
+                       actualTxData?.state === "FAILED" || actualTxData?.state === "DENIED" || actualTxData?.state === "CANCELLED" ? "failed" : "pending");
+        
         return {
-          id: txData.id || transactionId,
-          hash: txData.hash || txData.id || transactionId,
-          from: txData.from || txData.walletId || "",
-          to: txData.to || txData.destination?.address || "",
-          amount: txData.amount || "0",
-          token: txData.token || "USDC",
-          status: (txData.status || "pending") as "pending" | "confirmed" | "failed",
-          timestamp: txData.createdAt ? new Date(txData.createdAt) : new Date(),
+          id: actualTxData?.id || transactionId,
+          hash: blockchainHash || actualTxData?.hash || actualTxData?.id || transactionId,
+          from: actualTxData?.from || actualTxData?.walletId || "",
+          to: actualTxData?.to || actualTxData?.destination?.address || "",
+          amount: actualTxData?.amount || "0",
+          token: actualTxData?.token || "USDC",
+          status: (status || "pending") as "pending" | "confirmed" | "failed",
+          timestamp: actualTxData?.createdAt ? new Date(actualTxData.createdAt) : new Date(),
         };
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : "Unknown error";

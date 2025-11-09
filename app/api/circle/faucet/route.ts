@@ -74,6 +74,15 @@ export async function POST(request: NextRequest) {
       });
     } catch (faucetError: any) {
       // Handle specific faucet errors
+      if (faucetError?.response?.status === 401) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Unauthorized: Your API key may not have faucet access in sandbox. Please enable faucet/drips permission or provide guidance to enable testnet tokens on ARC-TESTNET.",
+          },
+          { status: 401 }
+        );
+      }
       if (faucetError?.response?.status === 429) {
         return NextResponse.json(
           {

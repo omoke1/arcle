@@ -13,7 +13,17 @@
     "lint": "next lint",
     "type-check": "tsc --noEmit",
     "create-wallet": "tsx scripts/create-wallet.ts",
-    "generate-entity-secret": "tsx scripts/generate-entity-secret.ts"
+    "generate-entity-secret": "tsx scripts/generate-entity-secret.ts",
+    "register-entity-secret": "tsx scripts/register-entity-secret.ts",
+    "reset-entity-secret": "tsx scripts/reset-entity-secret.ts",
+    "restore-entity-secret": "tsx scripts/restore-entity-secret.ts",
+    "test-entity-public-key": "tsx scripts/test-entity-public-key.ts",
+    "test-transaction-validation": "tsx scripts/test-transaction-validation.ts",
+    "test-transaction-api": "tsx scripts/test-transaction-api.ts",
+    "test-transaction-direct": "tsx scripts/test-transaction-direct.ts",
+    "test-transaction-with-new-wallet": "tsx scripts/test-transaction-with-new-wallet.ts",
+    "diagnose-transaction-issue": "tsx scripts/diagnose-transaction-issue.ts",
+    "test-all": "tsx scripts/test-all-features.ts"
   },
   "dependencies": {
     "@circle-fin/developer-controlled-wallets": "^9.2.1",

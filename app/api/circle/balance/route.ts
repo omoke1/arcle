@@ -45,14 +45,25 @@ export async function GET(request: NextRequest) {
         }
       );
 
-      // Find USDC balance
+      // Find USDC balance - ensure we return real data, never mock
       const usdcBalance = balances.data?.find(
         (b) => b.tokenId === getUSDCAddress()
-      ) || {
-        tokenId: getUSDCAddress(),
-        amount: "0",
-        updateDate: new Date().toISOString(),
-      };
+      );
+      
+      // If no USDC balance found, return 0 (real zero, not mock)
+      if (!usdcBalance) {
+        return NextResponse.json({
+          success: true,
+          data: {
+            walletId,
+            balance: "0.00",
+            balanceRaw: "0",
+            token: "USDC",
+            network: "ARC",
+            lastUpdated: new Date().toISOString(),
+          },
+        });
+      }
 
       return NextResponse.json({
         success: true,
