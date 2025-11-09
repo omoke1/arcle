@@ -79,19 +79,33 @@ export const arcMainnetChain: Chain = {
 };
 
 // Select chain based on environment
+// DEFAULT TO TESTNET - Only use mainnet if explicitly set to production
 export const arcChain: Chain = 
   process.env.NEXT_PUBLIC_ENV === "production" 
     ? arcMainnetChain 
-    : arcTestnetChain;
+    : arcTestnetChain; // Default to testnet
 
 export const arcConfig = {
+  // DEFAULT TO TESTNET RPC - Only use mainnet if explicitly set to production
   rpcUrl: process.env.NEXT_PUBLIC_ARC_RPC_URL || 
     (process.env.NEXT_PUBLIC_ENV === "production" 
       ? "https://rpc.arc.network" 
-      : "https://rpc.testnet.arc.network"),
+      : "https://rpc.testnet.arc.network"), // Default to testnet
   chainId: arcChain.id,
   chain: arcChain,
 };
+
+// Log current network configuration for debugging
+if (typeof window === 'undefined') { // Server-side only
+  console.log('🌐 Arc Network Configuration:', {
+    environment: process.env.NEXT_PUBLIC_ENV || 'testnet (default)',
+    chain: arcChain.name,
+    chainId: arcChain.id,
+    rpcUrl: arcConfig.rpcUrl,
+    isTestnet: arcChain.testnet,
+    explorer: arcChain.blockExplorers?.default?.url,
+  });
+}
 
 /**
  * USDC Token Contract Addresses on Arc
@@ -112,6 +126,7 @@ export const USDC_ADDRESSES = {
 } as const;
 
 export function getUSDCAddress(): `0x${string}` {
+  // DEFAULT TO TESTNET - Only use mainnet if explicitly set to production
   const isTestnet = process.env.NEXT_PUBLIC_ENV !== "production";
   const address = isTestnet ? USDC_ADDRESSES.testnet : USDC_ADDRESSES.mainnet;
   
@@ -121,6 +136,9 @@ export function getUSDCAddress(): `0x${string}` {
       `Set NEXT_PUBLIC_ARC_USDC_${isTestnet ? "TESTNET_" : ""}ADDRESS in .env`
     );
   }
+  
+  // Log for debugging
+  console.log(`💰 Using USDC address for Arc ${isTestnet ? "testnet" : "mainnet"}: ${address}`);
   
   return address as `0x${string}`;
 }

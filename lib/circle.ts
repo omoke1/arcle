@@ -3,6 +3,11 @@
  * 
  * Aligned with Circle API documentation
  * https://developers.circle.com/wallets/docs
+ * 
+ * NETWORK: Arc Testnet (ARC-TESTNET) by default
+ * - API URL: https://api.circle.com (same for testnet and mainnet)
+ * - Environment determined by API key (TEST_API_KEY = testnet, LIVE_API_KEY = mainnet)
+ * - Network selection: ARC-TESTNET for testnet, ARC for mainnet
  */
 
 // Circle API base URLs

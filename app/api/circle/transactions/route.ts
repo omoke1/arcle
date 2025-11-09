@@ -3,6 +3,11 @@
  * 
  * Handles transaction creation and status tracking
  * Based on Circle API: POST /v1/w3s/wallets/{walletId}/transactions
+ * 
+ * NETWORK: Arc Testnet (ARC-TESTNET)
+ * - RPC: https://rpc.testnet.arc.network
+ * - Explorer: https://testnet.arcscan.app
+ * - USDC: 0x3600000000000000000000000000000000000000
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -244,8 +249,9 @@ export async function POST(request: NextRequest) {
         // This might work for some Circle API configurations
         console.warn("tokenId not available, trying with tokenAddress + blockchain...");
         transactionRequest.tokenAddress = getUSDCAddress();
+        // Ensure we're using ARC-TESTNET (not mainnet)
         transactionRequest.blockchain = "ARC-TESTNET";
-        console.log(`Using tokenAddress: ${transactionRequest.tokenAddress}, blockchain: ${transactionRequest.blockchain}`);
+        console.log(`Using tokenAddress: ${transactionRequest.tokenAddress}, blockchain: ${transactionRequest.blockchain} (Arc Testnet)`);
       }
       
       // Add idempotency key

@@ -3,6 +3,11 @@
  * 
  * Aligned with Circle API: https://developers.circle.com/wallets/docs
  * 
+ * NETWORK: Arc Testnet (ARC-TESTNET) by default
+ * - RPC: https://rpc.testnet.arc.network
+ * - Explorer: https://testnet.arcscan.app
+ * - Chain ID: 5042002
+ * 
  * For User-Controlled Wallets (ERC-4337 Modular Wallets):
  * - Uses App ID and userToken
  * - Managed by users via UserController
@@ -72,8 +77,10 @@ export async function POST(request: NextRequest) {
     
     // Generate idempotency key if not provided
     const idempotencyKey = body.idempotencyKey || crypto.randomUUID();
-    // Default to Arc testnet when client doesn't specify
+    // DEFAULT TO ARC TESTNET - Only use mainnet if explicitly configured
+    // Network: Arc Testnet (ARC-TESTNET)
     const blockchains = body.blockchains || ["ARC-TESTNET"];
+    console.log(`🌐 Creating wallet on: ${blockchains.join(", ")} (default: ARC-TESTNET)`);
 
     // Use Circle SDK for developer-controlled wallets
     // This is more reliable than REST API for wallet creation

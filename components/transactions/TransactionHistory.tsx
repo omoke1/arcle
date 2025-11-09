@@ -1,3 +1,11 @@
+/**
+ * Transaction History Component
+ * 
+ * Displays transaction history for a wallet
+ * NETWORK: Arc Testnet (ARC-TESTNET)
+ * - Explorer: https://testnet.arcscan.app
+ */
+
 "use client";
 
 import { useState, useEffect } from "react";

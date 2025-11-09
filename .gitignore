@@ -46,4 +46,18 @@ next-env.d.ts
 *.swp
 *.swo
 
-\n# ignore markdown\n*.md
+# Markdown files (except specific ones we want to keep)
+*.md
+!.cursor/scratchpad.md
+!.cursor/ui-plans.md
+!FEATURE-CHECKLIST.md
+
+# Sensitive files - NEVER commit these
+.env
+.env.local
+.env.production
+.env.development
+*.env
+wallet-info.json
+recovery_file_*.dat
+entity-secret-recovery.dat

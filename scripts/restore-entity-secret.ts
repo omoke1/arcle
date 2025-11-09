@@ -9,11 +9,17 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 // The original Entity Secret that was used to create the wallet
-const ORIGINAL_ENTITY_SECRET = 'c3b11ac22fbb6021c86e0b1a3ecc91ed1907b66ddd2eecae3919549985abd50a';
+// SECURITY: Never hardcode secrets in source code!
+// This should be read from environment variables or a secure vault
+const ORIGINAL_ENTITY_SECRET = process.env.ORIGINAL_ENTITY_SECRET || '';
 
 async function main() {
   try {
     console.log('🔄 Restoring original Entity Secret...\n');
+
+    if (!ORIGINAL_ENTITY_SECRET) {
+      throw new Error('ORIGINAL_ENTITY_SECRET environment variable is required. Set it in your .env file or as an environment variable.');
+    }
 
     const envPath = path.join(process.cwd(), '.env');
     
