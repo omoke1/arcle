@@ -270,13 +270,14 @@ export async function POST(request: NextRequest) {
       const txData = response.data as any;
       
       // Extract blockchain transaction hash if available
-      // Circle transaction might have transactionHash, onChainTxHash, or hash field
+      // Circle API uses txHash field for the blockchain transaction hash (priority)
       // Note: The hash might not be available immediately (transaction state: INITIATED)
-      // It will be available once the transaction is sent to the blockchain (state: SENT/CONFIRMED)
-      const blockchainHash = txData.transactionHash || 
+      // It will be available once the transaction is sent to the blockchain (state: SENT/CONFIRMED/COMPLETE)
+      const blockchainHash = txData.txHash ||
+                            txData.transactionHash || 
                             txData.onChainTxHash || 
                             txData.hash || 
-                            (txData.transaction && txData.transaction.hash) ||
+                            (txData.transaction && (txData.transaction.txHash || txData.transaction.transactionHash || txData.transaction.hash)) ||
                             null;
       
       console.log("Transaction hash extracted:", blockchainHash || "Not available yet (transaction may still be processing)");
@@ -304,8 +305,9 @@ export async function POST(request: NextRequest) {
                   "pending") as "pending" | "confirmed" | "failed",
           createDate: new Date().toISOString(),
           updateDate: new Date().toISOString(),
-          // Store blockchain hash if available
+          // Store blockchain hash if available (use txHash field name for consistency)
           transactionHash: blockchainHash || undefined,
+          txHash: blockchainHash || undefined,
         } as any,
       };
     } catch (sdkError: any) {
@@ -575,7 +577,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const transactionId = searchParams.get("transactionId");
     const walletId = searchParams.get("walletId");
-    const limit = searchParams.get("limit") || "10";
+    const limit = searchParams.get("limit") || "50";
 
     if (!transactionId && !walletId) {
       return NextResponse.json(
@@ -588,57 +590,132 @@ export async function GET(request: NextRequest) {
     if (transactionId) {
       endpoint = `/v1/w3s/transactions/${transactionId}`;
     } else if (walletId) {
-      endpoint = `/v1/w3s/wallets/${walletId}/transactions?limit=${limit}`;
+      // For developer-controlled wallets, try multiple endpoints
+      // Try developer wallets endpoint first, then fallback to regular wallets endpoint
+      endpoint = `/v1/w3s/developer/wallets/${walletId}/transactions?limit=${limit}`;
     }
 
     try {
-      const transactions = await circleApiRequest(endpoint, {
-        method: "GET",
-      });
+      let transactions: any;
+      
+      // For wallet transactions, try multiple endpoints if the first one fails
+      if (walletId && !transactionId) {
+        try {
+          // Try 1: Developer-controlled wallets endpoint
+          transactions = await circleApiRequest(endpoint, {
+            method: "GET",
+          });
+          console.log(`[GET Transactions] Successfully fetched from developer wallets endpoint`);
+        } catch (devError: any) {
+          console.log(`[GET Transactions] Developer wallets endpoint failed, trying regular wallets endpoint...`);
+          // Try 2: Regular wallets endpoint
+          try {
+            endpoint = `/v1/w3s/wallets/${walletId}/transactions?limit=${limit}`;
+            transactions = await circleApiRequest(endpoint, {
+              method: "GET",
+            });
+            console.log(`[GET Transactions] Successfully fetched from regular wallets endpoint`);
+          } catch (regularError: any) {
+            // Try 3: Developer transactions endpoint (all transactions for entity)
+            console.log(`[GET Transactions] Regular wallets endpoint failed, trying developer transactions endpoint...`);
+            try {
+              endpoint = `/v1/w3s/developer/transactions?limit=${limit}`;
+              transactions = await circleApiRequest(endpoint, {
+                method: "GET",
+              });
+              console.log(`[GET Transactions] Successfully fetched from developer transactions endpoint`);
+              
+              // Filter transactions by walletId if we got all developer transactions
+              if (transactions.data?.data) {
+                const allTxs = Array.isArray(transactions.data.data) ? transactions.data.data : [transactions.data.data];
+                const filteredTxs = allTxs.filter((tx: any) => {
+                  const actualTx = tx.transaction || tx;
+                  return actualTx.walletId === walletId;
+                });
+                transactions.data.data = filteredTxs;
+              }
+            } catch (devTxError: any) {
+              console.error(`[GET Transactions] All endpoints failed:`, {
+                developerWallets: devError.message,
+                regularWallets: regularError.message,
+                developerTransactions: devTxError.message,
+              });
+              throw devTxError; // Throw the last error
+            }
+          }
+        }
+      } else {
+        // For single transaction lookup, use the endpoint directly
+        transactions = await circleApiRequest(endpoint, {
+          method: "GET",
+        });
+      }
 
       // Extract blockchain hash and map Circle states to our status format
       const transactionsData = transactions as any;
       
       // Handle both single transaction and array of transactions
+      // Circle API response structure: 
+      // - Single: { data: { data: { transaction: {...} } } }
+      // - List: { data: { data: [{ transaction: {...} }] } } or { data: [{ transaction: {...} }] }
       if (transactionsData.data) {
-        const txList = Array.isArray(transactionsData.data) ? transactionsData.data : [transactionsData.data];
+        // Check if data.data exists (nested structure)
+        let innerData = transactionsData.data.data || transactionsData.data;
+        
+        // If innerData is an array, use it directly
+        // If it's an object, check if it has a transaction field or is the transaction itself
+        if (!Array.isArray(innerData) && innerData.transaction) {
+          // Single transaction wrapped in transaction field
+          innerData = [innerData];
+        } else if (!Array.isArray(innerData) && innerData.id) {
+          // Single transaction object (not wrapped)
+          innerData = [innerData];
+        }
+        
+        const txList = Array.isArray(innerData) ? innerData : [innerData];
         
         txList.forEach((txData: any) => {
           if (!txData) return;
           
+          // Handle nested transaction object (Circle API wraps transaction in a transaction field)
+          const actualTx = txData.transaction || txData;
+          
           // Log raw transaction data for debugging
           console.log(`[GET Transaction] Raw transaction data:`, {
-            id: txData.id,
-            state: txData.state,
-            status: txData.status,
-            transactionHash: txData.transactionHash,
-            onChainTxHash: txData.onChainTxHash,
-            hash: txData.hash,
-            transaction: txData.transaction,
+            id: actualTx.id || txData.id,
+            state: actualTx.state || txData.state,
+            status: actualTx.status || txData.status,
+            txHash: actualTx.txHash || txData.txHash,
+            transactionHash: actualTx.transactionHash || txData.transactionHash,
+            onChainTxHash: actualTx.onChainTxHash || txData.onChainTxHash,
+            hash: actualTx.hash || txData.hash,
           });
           
           // Extract blockchain hash from various possible fields
-          const blockchainHash = txData.transactionHash || 
-                                txData.onChainTxHash || 
-                                txData.hash ||
-                                (txData.transaction && txData.transaction.hash) ||
-                                (txData.transaction && txData.transaction.transactionHash) ||
+          // Circle API uses txHash field for the blockchain transaction hash
+          const blockchainHash = actualTx.txHash ||
+                                actualTx.transactionHash || 
+                                actualTx.onChainTxHash || 
+                                actualTx.hash ||
                                 null;
           
           if (blockchainHash) {
             console.log(`[GET Transaction] Found blockchain hash: ${blockchainHash}`);
-            // Add hash to response if not already present
-            if (!txData.transactionHash && !txData.onChainTxHash && !txData.hash) {
+            // Add hash to response for easier access
+            actualTx.transactionHash = blockchainHash;
+            actualTx.txHash = blockchainHash;
+            // Also add to outer object if it exists
+            if (txData !== actualTx) {
               txData.transactionHash = blockchainHash;
             }
           }
           
           // Map Circle transaction state to our status format
-          // Circle states: INITIATED, QUEUED, SENT, CONFIRMED, COMPLETED, FAILED, etc.
-          const circleState = txData.state || txData.status;
+          // Circle states: INITIATED, QUEUED, SENT, CONFIRMED, COMPLETE, COMPLETED, FAILED, etc.
+          const circleState = actualTx.state || txData.state || actualTx.status || txData.status;
           let mappedStatus: "pending" | "confirmed" | "failed" = "pending";
           
-          if (circleState === "COMPLETED" || circleState === "CONFIRMED" || circleState === "SENT") {
+          if (circleState === "COMPLETE" || circleState === "COMPLETED" || circleState === "CONFIRMED" || circleState === "SENT") {
             mappedStatus = "confirmed";
           } else if (circleState === "FAILED" || circleState === "DENIED" || circleState === "CANCELLED") {
             mappedStatus = "failed";
@@ -647,8 +724,11 @@ export async function GET(request: NextRequest) {
           }
           
           // Add mapped status to response
-          txData.status = mappedStatus;
-          console.log(`[GET Transaction] ${txData.id} - Circle state: ${circleState} -> Mapped status: ${mappedStatus}, Hash: ${blockchainHash || 'none'}`);
+          actualTx.status = mappedStatus;
+          if (txData !== actualTx) {
+            txData.status = mappedStatus;
+          }
+          console.log(`[GET Transaction] ${actualTx.id || txData.id} - Circle state: ${circleState} -> Mapped status: ${mappedStatus}, Hash: ${blockchainHash || 'none'}`);
         });
       }
 

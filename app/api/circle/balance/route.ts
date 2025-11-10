@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { circleApiRequest } from "@/lib/circle";
 import { getArcClient, getUSDCAddress, arcUtils } from "@/lib/arc";
 import { erc20Abi } from "viem";
+import { getMultiCurrencyBalance } from "@/lib/fx/multi-currency-balance";
 
 interface CircleBalanceResponse {
   data: Array<{
@@ -28,12 +29,27 @@ export async function GET(request: NextRequest) {
     const walletId = searchParams.get("walletId");
     const address = searchParams.get("address"); // Wallet address from Circle
     const useBlockchain = searchParams.get("useBlockchain") === "true"; // Optional: query directly from blockchain
+    const multiCurrency = searchParams.get("multiCurrency") === "true"; // Return all currencies
 
     if (!walletId && !address) {
       return NextResponse.json(
         { success: false, error: "walletId or address is required" },
         { status: 400 }
       );
+    }
+    
+    // If multi-currency is requested and walletId is provided, return all currencies
+    if (multiCurrency && walletId && !useBlockchain) {
+      try {
+        const multiBalance = await getMultiCurrencyBalance(walletId);
+        return NextResponse.json({
+          success: true,
+          data: multiBalance,
+        });
+      } catch (error) {
+        console.error("Error fetching multi-currency balance:", error);
+        // Fall through to single currency logic
+      }
     }
 
     // Option 1: Query via Circle API (recommended)

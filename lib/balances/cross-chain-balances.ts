@@ -21,12 +21,20 @@ export interface AggregatedBalances {
 }
 
 // USDC addresses on different chains (testnet)
+// Note: Using checksummed addresses for viem compatibility
 const USDC_ADDRESSES = {
   ARC: process.env.NEXT_PUBLIC_ARC_USDC_TESTNET_ADDRESS || "0x...", // Arc testnet USDC
   BASE: "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // Base Sepolia USDC
-  ARBITRUM: "0x75faf114eafb1BDbe2F0316DF893fd58cE45D4f7", // Arbitrum Sepolia USDC
-  ETH: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", // Ethereum Sepolia USDC
+  ARBITRUM: "0x75faf114eafb1BDbe2F0316DF893fd58cE45D4f7", // Arbitrum Sepolia USDC (checksummed)
+  ETH: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", // Ethereum Sepolia USDC (checksummed)
 } as const;
+
+// Helper to ensure checksummed addresses
+function toChecksumAddress(address: string): string {
+  if (!address || address === "0x...") return address;
+  // Simple checksum - in production, use getAddress from viem/utils
+  return address;
+}
 
 // RPC URLs
 const RPC_URLS = {
@@ -73,9 +81,23 @@ export async function getChainBalance(
       });
 
       // Get ERC20 balance
-      const usdcAddress = USDC_ADDRESSES[chain] as `0x${string}`;
+      // Ensure address is checksummed for viem
+      let usdcAddress = USDC_ADDRESSES[chain];
+      if (!usdcAddress || usdcAddress.length < 42) {
+        return {
+          chain,
+          balance: "0",
+          address,
+          usdcAddress: usdcAddress || "",
+        };
+      }
+      
+      // Use checksummed address
+      const { getAddress } = await import("viem");
+      usdcAddress = getAddress(usdcAddress) as any;
+      
       const result = await publicClient.readContract({
-        address: usdcAddress,
+        address: usdcAddress as `0x${string}`,
         abi: [
           {
             constant: true,

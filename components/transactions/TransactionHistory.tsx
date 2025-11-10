@@ -19,7 +19,7 @@ interface TransactionHistoryProps {
   className?: string;
 }
 
-export function TransactionHistory({ walletId, limit = 10, className }: TransactionHistoryProps) {
+export function TransactionHistory({ walletId, limit = 50, className }: TransactionHistoryProps) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,48 +44,97 @@ export function TransactionHistory({ walletId, limit = 10, className }: Transact
         
         if (data.success && data.data?.data) {
           // Map API response to Transaction type
-          const txList = Array.isArray(data.data.data) ? data.data.data : [data.data.data];
+          // Circle API response structure: 
+          // - List: { data: { data: [{ transaction: {...} }] } } or { data: [{ transaction: {...} }] }
+          // - Single: { data: { data: { transaction: {...} } } }
+          let innerData = data.data.data;
+          
+          // Handle different response structures
+          if (!Array.isArray(innerData)) {
+            // If it's a single transaction object, check if it's wrapped
+            if (innerData.transaction) {
+              innerData = [innerData];
+            } else if (innerData.id) {
+              // Single transaction object (not wrapped)
+              innerData = [innerData];
+            } else {
+              // Empty or unexpected structure
+              innerData = [];
+            }
+          }
+          
+          const txList = Array.isArray(innerData) ? innerData : [innerData];
+          
           const mappedTransactions: Transaction[] = txList
             .filter((tx: any) => tx) // Filter out null/undefined
             .map((tx: any) => {
+              // Handle nested transaction object (Circle API wraps transaction in a transaction field)
+              const actualTx = tx.transaction || tx;
+              
               // Extract blockchain hash from various fields
-              const blockchainHash = tx.transactionHash || 
-                                   tx.onChainTxHash || 
-                                   tx.hash ||
-                                   (tx.transaction && tx.transaction.hash) ||
-                                   "";
+              // Circle API uses txHash field for the blockchain transaction hash
+              const blockchainHash = actualTx.txHash ||
+                                     actualTx.transactionHash || 
+                                     actualTx.onChainTxHash || 
+                                     actualTx.hash ||
+                                     "";
               
               // Use mapped status from API, or fallback to state mapping
-              const status = tx.status || 
-                            (tx.state === "COMPLETED" || tx.state === "CONFIRMED" || tx.state === "SENT" ? "confirmed" :
-                             tx.state === "FAILED" || tx.state === "DENIED" || tx.state === "CANCELLED" ? "failed" : "pending");
+              const circleState = actualTx.state || tx.state;
+              const status = actualTx.status || tx.status || 
+                            (circleState === "COMPLETE" || circleState === "COMPLETED" || circleState === "CONFIRMED" || circleState === "SENT" ? "confirmed" :
+                             circleState === "FAILED" || circleState === "DENIED" || circleState === "CANCELLED" ? "failed" : "pending");
+              
+              // Extract amount - Circle API uses amounts array or amount object
+              const amountValue = actualTx.amounts && actualTx.amounts.length > 0 
+                ? actualTx.amounts[0] 
+                : (actualTx.amount?.amount || actualTx.amount || "0");
+              
+              // Extract all transaction details
+              const txId = actualTx.id || tx.id || "";
+              const txHash = blockchainHash || "";
+              const fromAddress = actualTx.sourceAddress || tx.sourceAddress || actualTx.walletId || tx.walletId || actualTx.from || tx.from || "";
+              const toAddress = actualTx.destinationAddress || actualTx.destination?.address || tx.destinationAddress || tx.destination?.address || actualTx.to || tx.to || "";
+              const txAmount = amountValue;
+              const txToken = actualTx.amount?.currency || tx.amount?.currency || actualTx.token || tx.token || "USDC";
+              const txStatus = (status || "pending") as "pending" | "confirmed" | "failed";
               
               return {
-                id: tx.id || tx.transactionHash || "",
-                hash: blockchainHash || tx.id || "",
-                from: tx.sourceAddress || tx.walletId || tx.from || "",
-                to: tx.destination?.address || tx.destinationAddress || tx.to || "",
-                amount: tx.amount?.amount || tx.amount || "0",
-                token: tx.amount?.currency || tx.token || "USDC",
-                status: (status || "pending") as "pending" | "confirmed" | "failed",
-                timestamp: tx.createDate ? new Date(tx.createDate) : (tx.createdAt ? new Date(tx.createdAt) : new Date()),
+                id: txId,
+                hash: txHash,
+                from: fromAddress,
+                to: toAddress,
+                amount: txAmount,
+                token: txToken,
+                status: txStatus,
+                timestamp: new Date(actualTx.createDate || actualTx.createdAt || tx.createdAt || Date.now()),
               };
             });
           
-          console.log(`[TransactionHistory] Loaded ${mappedTransactions.length} transactions`);
           setTransactions(mappedTransactions);
         } else {
           setTransactions([]);
         }
-      } catch (err) {
-        console.error("Error fetching transactions:", err);
-        setError("Failed to load transaction history");
+      } catch (err: any) {
+        setError(err.message || "Failed to load transactions");
       } finally {
         setIsLoading(false);
       }
     };
     
     fetchTransactions();
+
+    // Listen for refresh events dispatched from the chat view
+    const onRefresh = () => fetchTransactions();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('arcle:transactions:refresh', onRefresh);
+    }
+    
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('arcle:transactions:refresh', onRefresh);
+      }
+    };
   }, [walletId, limit]);
 
   const formatAmount = (amount: string): string => {

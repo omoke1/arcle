@@ -31,6 +31,7 @@ export interface ChatMessage {
     riskScore?: number;
     riskReasons?: string[];
     blocked?: boolean;
+    isNewWallet?: boolean;
   };
 }
 

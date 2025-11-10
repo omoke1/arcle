@@ -194,27 +194,43 @@ export function useCircle(): UseCircleReturn {
         const txData = data.data.data || data.data;
         const actualTxData = Array.isArray(txData) ? txData[0] : txData;
         
+        // Handle nested transaction object (Circle API wraps transaction in a transaction field)
+        const actualTx = actualTxData?.transaction || actualTxData;
+        
         // Extract blockchain hash from various possible fields
-        const blockchainHash = actualTxData?.transactionHash || 
-                              actualTxData?.onChainTxHash || 
-                              actualTxData?.hash ||
-                              (actualTxData?.transaction && actualTxData.transaction.hash) ||
+        // Circle API uses txHash field for the blockchain transaction hash (priority)
+        const blockchainHash = actualTx?.txHash ||
+                              actualTx?.transactionHash || 
+                              actualTx?.onChainTxHash || 
+                              actualTx?.hash ||
                               null;
         
-        // Use mapped status from API, or fallback to state mapping
-        const status = actualTxData?.status || 
-                      (actualTxData?.state === "COMPLETED" || actualTxData?.state === "CONFIRMED" || actualTxData?.state === "SENT" ? "confirmed" :
-                       actualTxData?.state === "FAILED" || actualTxData?.state === "DENIED" || actualTxData?.state === "CANCELLED" ? "failed" : "pending");
+        // Map Circle transaction state to our status format
+        const circleState = actualTx?.state || actualTx?.status;
+        let mappedStatus: "pending" | "confirmed" | "failed" = "pending";
+        
+        if (circleState === "COMPLETE" || circleState === "COMPLETED" || circleState === "CONFIRMED" || circleState === "SENT") {
+          mappedStatus = "confirmed";
+        } else if (circleState === "FAILED" || circleState === "DENIED" || circleState === "CANCELLED") {
+          mappedStatus = "failed";
+        }
+        
+        console.log(`[getTransactionStatus] Transaction ${transactionId} - Hash: ${blockchainHash || 'none'}, State: ${circleState} -> Status: ${mappedStatus}`);
+        
+        // Extract amount - Circle API uses amounts array or amount object
+        const amountValue = actualTx?.amounts && actualTx.amounts.length > 0 
+          ? actualTx.amounts[0] 
+          : (actualTx?.amount?.amount || actualTx?.amount || actualTxData?.amount || "0");
         
         return {
-          id: actualTxData?.id || transactionId,
-          hash: blockchainHash || actualTxData?.hash || actualTxData?.id || transactionId,
-          from: actualTxData?.from || actualTxData?.walletId || "",
-          to: actualTxData?.to || actualTxData?.destination?.address || "",
-          amount: actualTxData?.amount || "0",
-          token: actualTxData?.token || "USDC",
-          status: (status || "pending") as "pending" | "confirmed" | "failed",
-          timestamp: actualTxData?.createdAt ? new Date(actualTxData.createdAt) : new Date(),
+          id: actualTx?.id || actualTxData?.id || transactionId,
+          hash: blockchainHash || actualTx?.id || actualTxData?.id || transactionId,
+          from: actualTx?.sourceAddress || actualTx?.from || actualTxData?.from || actualTx?.walletId || actualTxData?.walletId || "",
+          to: actualTx?.destinationAddress || actualTx?.destination?.address || actualTxData?.destinationAddress || actualTxData?.destination?.address || actualTx?.to || actualTxData?.to || "",
+          amount: amountValue,
+          token: actualTx?.amount?.currency || actualTx?.token || actualTxData?.token || "USDC",
+          status: mappedStatus,
+          timestamp: actualTx?.createDate ? new Date(actualTx.createDate) : (actualTx?.createdAt ? new Date(actualTx.createdAt) : (actualTxData?.createdAt ? new Date(actualTxData.createdAt) : new Date())),
         };
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : "Unknown error";

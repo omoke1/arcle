@@ -25,7 +25,13 @@ export interface OpcodeAnalysis {
   complexity: "low" | "medium" | "high";
 }
 
-const ARCSCAN_API_URL = process.env.NEXT_PUBLIC_ARCSCAN_API_URL || "https://api.arcscan.app/api";
+// ArcScan API configuration
+// Testnet: https://testnet.arcscan.app/api
+// Mainnet: https://arcscan.app/api
+const ARCSCAN_API_URL = process.env.NEXT_PUBLIC_ARCSCAN_API_URL || 
+  (process.env.NEXT_PUBLIC_ENV === "production" 
+    ? "https://arcscan.app/api" 
+    : "https://testnet.arcscan.app/api");
 
 /**
  * Analyze contract using ArcScan API
@@ -123,43 +129,139 @@ async function checkIsContract(address: string): Promise<boolean> {
 
 /**
  * Fetch contract information from ArcScan API
+ * Uses multiple endpoints to get comprehensive contract data
  */
 async function fetchContractInfo(address: string): Promise<{
   verified: boolean;
   age?: number;
   creationBlock?: number;
+  creationTimestamp?: number;
 }> {
   try {
-    // ArcScan API endpoint for contract info
-    // Note: This is a placeholder - actual ArcScan API may differ
-    const response = await fetch(`${ARCSCAN_API_URL}/contract/${address}`, {
-      method: "GET",
-      headers: {
-        "Accept": "application/json",
-      },
-    });
-
-    if (!response.ok) {
-      // If API not available, return defaults
-      return {
-        verified: false,
-      };
+    const normalizedAddress = address.toLowerCase();
+    
+    // Try multiple ArcScan API endpoints (similar to Etherscan API structure)
+    // Endpoint 1: Get contract creation transaction
+    let creationTxHash: string | null = null;
+    let creationBlock: number | undefined;
+    let creationTimestamp: number | undefined;
+    
+    try {
+      // Get contract creation transaction from ArcScan
+      // ArcScan API: GET /api?module=contract&action=getcontractcreation&contractaddresses={address}
+      const creationResponse = await fetch(
+        `${ARCSCAN_API_URL}?module=contract&action=getcontractcreation&contractaddresses=${normalizedAddress}`,
+        {
+          method: "GET",
+          headers: {
+            "Accept": "application/json",
+          },
+        }
+      );
+      
+      if (creationResponse.ok) {
+        const creationData = await creationResponse.json();
+        if (creationData.status === "1" && creationData.result && creationData.result.length > 0) {
+          creationTxHash = creationData.result[0].txHash;
+          creationBlock = parseInt(creationData.result[0].contractCreator);
+        }
+      }
+    } catch (error) {
+      console.warn("Could not fetch contract creation from ArcScan:", error);
     }
-
-    const data = await response.json();
+    
+    // Endpoint 2: Get transaction details to get timestamp
+    if (creationTxHash) {
+      try {
+        const txResponse = await fetch(
+          `${ARCSCAN_API_URL}?module=proxy&action=eth_getTransactionByHash&txhash=${creationTxHash}`,
+          {
+            method: "GET",
+            headers: {
+              "Accept": "application/json",
+            },
+          }
+        );
+        
+        if (txResponse.ok) {
+          const txData = await txResponse.json();
+          if (txData.result && txData.result.blockNumber) {
+            // Get block timestamp
+            const blockNumber = parseInt(txData.result.blockNumber, 16);
+            const blockResponse = await fetch(
+              `${ARCSCAN_API_URL}?module=proxy&action=eth_getBlockByNumber&tag=0x${blockNumber.toString(16)}&boolean=true`,
+              {
+                method: "GET",
+                headers: {
+                  "Accept": "application/json",
+                },
+              }
+            );
+            
+            if (blockResponse.ok) {
+              const blockData = await blockResponse.json();
+              if (blockData.result && blockData.result.timestamp) {
+                creationTimestamp = parseInt(blockData.result.timestamp, 16);
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.warn("Could not fetch transaction details from ArcScan:", error);
+      }
+    }
+    
+    // Endpoint 3: Get contract verification status
+    let verified = false;
+    try {
+      const verifyResponse = await fetch(
+        `${ARCSCAN_API_URL}?module=contract&action=getsourcecode&address=${normalizedAddress}`,
+        {
+          method: "GET",
+          headers: {
+            "Accept": "application/json",
+          },
+        }
+      );
+      
+      if (verifyResponse.ok) {
+        const verifyData = await verifyResponse.json();
+        if (verifyData.status === "1" && verifyData.result && verifyData.result.length > 0) {
+          const contractInfo = verifyData.result[0];
+          verified = !!(contractInfo.SourceCode && contractInfo.SourceCode !== "");
+        }
+      }
+    } catch (error) {
+      console.warn("Could not fetch contract verification from ArcScan:", error);
+    }
     
     // Calculate age from creation timestamp
     let age: number | undefined;
-    if (data.creationTimestamp) {
-      const creationDate = new Date(data.creationTimestamp * 1000);
+    if (creationTimestamp) {
+      const creationDate = new Date(creationTimestamp * 1000);
       const now = new Date();
       age = Math.floor((now.getTime() - creationDate.getTime()) / (1000 * 60 * 60 * 24));
+    } else if (creationBlock) {
+      // Fallback: Estimate age from block number (approximate)
+      // This is less accurate but better than nothing
+      try {
+        const { getArcClient } = await import("@/lib/arc");
+        const client = getArcClient();
+        const currentBlock = await client.getBlockNumber();
+        const blocksSinceCreation = Number(currentBlock) - creationBlock;
+        // Estimate: ~1 second per block on Arc
+        const secondsSinceCreation = blocksSinceCreation;
+        age = Math.floor(secondsSinceCreation / (60 * 60 * 24));
+      } catch (error) {
+        console.warn("Could not estimate contract age from block number:", error);
+      }
     }
-
+    
     return {
-      verified: data.verified || false,
+      verified,
       age,
-      creationBlock: data.creationBlock,
+      creationBlock,
+      creationTimestamp,
     };
   } catch (error) {
     console.error("Error fetching contract info from ArcScan:", error);

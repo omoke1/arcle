@@ -5,6 +5,7 @@
  */
 
 import { getArcClient } from "@/lib/arc";
+import { detectPhishingUrls } from "./phishing-detection";
 
 export interface RiskScoreResult {
   score: number; // 0-100
@@ -122,10 +123,30 @@ async function isContractVerified(address: string): Promise<boolean> {
 export async function calculateRiskScore(
   address: string,
   amount?: string,
-  isContractAddress?: boolean
+  isContractAddress?: boolean,
+  message?: string // Optional: message text for phishing detection
 ): Promise<RiskScoreResult> {
   const reasons: string[] = [];
   let score = 0;
+
+  // Factor 0: Phishing URL detection (if message provided)
+  if (message) {
+    const phishingResult = detectPhishingUrls(message);
+    if (phishingResult.isPhishing) {
+      score += phishingResult.confidence;
+      reasons.push(...phishingResult.reasons.map(r => `Phishing: ${r}`));
+      
+      // If blocked by phishing detection, return immediately
+      if (phishingResult.blocked) {
+        return {
+          score: Math.min(score, 100),
+          level: "high",
+          reasons,
+          blocked: true,
+        };
+      }
+    }
+  }
 
   // Normalize address to lowercase for cache lookup
   // Note: Address should already be checksummed (EIP-55) from validation

@@ -27,6 +27,16 @@ export default function ChatPage() {
     amount: string;
     to: string;
   } | null>(null);
+  const [sessionId] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("arcle_session_id");
+      if (stored) return stored;
+      const newId = crypto.randomUUID();
+      localStorage.setItem("arcle_session_id", newId);
+      return newId;
+    }
+    return crypto.randomUUID();
+  });
 
   const creatingRef = useRef(false);
 
@@ -74,11 +84,12 @@ export default function ChatPage() {
   
   // Removed periodic background polling for balances to honor on-demand fetching
 
-  // Reminder loop: check subscriptions every 60s
+  // Reminder loop: check subscriptions and scheduled payments every 60s
   useEffect(() => {
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
       if (typeof window === 'undefined') return;
       const now = Date.now();
+      
       // Reminders (show once, 2 days before due date)
       const reminders = findDueReminders(now);
       reminders.forEach((s) => {
@@ -93,6 +104,7 @@ export default function ChatPage() {
         };
         setMessages((prev) => [...prev, msg]);
       });
+      
       // Charges (MVP: auto-renew acknowledge + schedule next)
       const charges = findDueCharges(now);
       charges.forEach((s) => {
@@ -106,9 +118,56 @@ export default function ChatPage() {
         };
         setMessages((prev) => [...prev, msg]);
       });
+      
+      // Execute scheduled payments
+      if (hasWallet && walletId && walletAddress) {
+        const { findDuePayments, markAsExecuted, markAsFailed } = await import("@/lib/scheduled-payments");
+        const duePayments = findDuePayments(now);
+        
+        for (const payment of duePayments) {
+          try {
+            // Execute the payment
+            const response = await sendTransaction(
+              walletId!,
+              payment.to,
+              payment.amount,
+              walletAddress
+            );
+            
+            if (response && response.id) {
+              markAsExecuted(payment.id, response.id);
+              const msg: ChatMessage = {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: `✅ Scheduled payment executed! Sent $${payment.amount} USDC to ${payment.to.substring(0, 6)}...${payment.to.substring(38)}. Transaction ID: ${response.id}`,
+                timestamp: new Date(),
+              };
+              setMessages((prev) => [...prev, msg]);
+            } else {
+              markAsFailed(payment.id, "Transaction failed");
+              const msg: ChatMessage = {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: `❌ Scheduled payment failed: Transaction could not be completed. Please check your balance and try again.`,
+                timestamp: new Date(),
+              };
+              setMessages((prev) => [...prev, msg]);
+            }
+          } catch (error: any) {
+            markAsFailed(payment.id, error.message || "Execution error");
+            const msg: ChatMessage = {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: `❌ Scheduled payment failed: ${error.message || "An error occurred"}.`,
+              timestamp: new Date(),
+            };
+            setMessages((prev) => [...prev, msg]);
+          }
+        }
+      }
     }, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [hasWallet, walletId, walletAddress, sendTransaction]);
 
   const handleLogout = () => {
     // Clear wallet data from localStorage
@@ -147,7 +206,8 @@ export default function ChatPage() {
       hasWallet,
       balance,
       walletAddress: walletAddress || undefined,
-    });
+      walletId: walletId || undefined,
+    }, sessionId);
     
     const lowerContent = content.toLowerCase();
 
@@ -232,7 +292,41 @@ export default function ChatPage() {
                         (aiResponse.transactionPreview.riskScore !== undefined && 
                          aiResponse.transactionPreview.riskScore >= 80);
       
-      // Send transaction preview (only set pending if not blocked)
+      // Check if user is confirming or canceling a new wallet transaction
+      const isNewWallet = aiResponse.transactionPreview.isNewWallet;
+      const isConfirming = /^(yes|confirm|proceed|ok|okay|sure|go ahead|do it)$/i.test(content.trim());
+      const isCanceling = /^(no|cancel|stop|abort|don't|dont|nevermind|never mind)$/i.test(content.trim());
+      
+      // If this is a new wallet and user hasn't confirmed yet, ask for confirmation
+      if (isNewWallet && !isConfirming && !isCanceling) {
+        // Send transaction preview with new wallet warning
+        const messageId = crypto.randomUUID();
+        const aiMessage: ChatMessage = {
+          id: messageId,
+          role: "assistant",
+          content: aiResponse.message,
+          timestamp: new Date(),
+          transactionPreview: aiResponse.transactionPreview,
+        };
+        setMessages((prev) => [...prev, aiMessage]);
+        setIsLoading(false);
+        return;
+      }
+      
+      // If user canceled, don't proceed
+      if (isCanceling) {
+        const cancelMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "Transaction canceled. No funds were sent. If you'd like to send to a different address, please provide the new address.",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, cancelMessage]);
+        setIsLoading(false);
+        return;
+      }
+      
+      // Send transaction preview (only set pending if not blocked and confirmed)
       const messageId = crypto.randomUUID();
       const aiMessage: ChatMessage = {
         id: messageId,
@@ -242,18 +336,18 @@ export default function ChatPage() {
         transactionPreview: aiResponse.transactionPreview,
       };
       
-      // Only set pending transaction if not blocked
-      if (!isBlocked) {
-      // Use normalized checksummed address from preview
-      const previewAddress = aiResponse.transactionPreview.to;
-      const addressValidation = validateAddress(previewAddress);
-      const normalizedAddress = addressValidation.normalizedAddress || previewAddress;
-      
-      setPendingTransaction({
-        messageId,
-        amount: aiResponse.transactionPreview.amount,
-        to: normalizedAddress, // Store normalized address
-      });
+      // Only set pending transaction if not blocked and (not new wallet or confirmed)
+      if (!isBlocked && (!isNewWallet || isConfirming)) {
+        // Use normalized checksummed address from preview
+        const previewAddress = aiResponse.transactionPreview.to;
+        const addressValidation = validateAddress(previewAddress);
+        const normalizedAddress = addressValidation.normalizedAddress || previewAddress;
+        
+        setPendingTransaction({
+          messageId,
+          amount: aiResponse.transactionPreview.amount,
+          to: normalizedAddress, // Store normalized address
+        });
       }
       
       setMessages((prev) => [...prev, aiMessage]);
@@ -587,6 +681,11 @@ export default function ChatPage() {
             : msg
         ));
         
+        // Notify transaction history to refresh
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
+        }
+        
         // Poll for transaction status (Arc has sub-second finality, so poll faster)
         if (transaction.id) {
           pollTransactionStatus(transaction.id, 30, 2000); // 30 attempts, 2 second interval for Arc
@@ -606,6 +705,11 @@ export default function ChatPage() {
               timestamp: new Date(),
             };
             setMessages((prev) => [...prev, confirmMessage]);
+            
+            // If we already have a valid hash, trigger refresh again
+            if (typeof window !== 'undefined' && isValidBlockchainHash) {
+              window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
+            }
       } else {
         // Show error message
         const errorMessage: ChatMessage = {
@@ -684,7 +788,13 @@ export default function ChatPage() {
       
       console.log(`[Polling] Transaction ${transactionId} status: ${status.status}, hash: ${status.hash || 'none'}`);
       
-      if (status && status.status === "confirmed") {
+      // Check if we have a valid blockchain hash (0x followed by 64 hex characters)
+      const hasValidHash = status.hash && status.hash.startsWith("0x") && status.hash.length === 66;
+      
+      // Transaction is confirmed when status is confirmed AND we have a blockchain hash
+      const isConfirmed = status && status.status === "confirmed" && hasValidHash;
+      
+      if (isConfirmed) {
         if (!hasNotified) {
           hasNotified = true;
           
@@ -696,15 +806,13 @@ export default function ChatPage() {
             }
           }
           
-          // Create confirmation message
-          const explorerLink = status.hash && status.hash.startsWith("0x") && status.hash.length === 66
-            ? `\n\n[View on ArcScan](https://testnet.arcscan.app/tx/${status.hash})`
-            : "";
+          // Create confirmation message with ArcScan link
+          const explorerLink = `\n\n[View on ArcScan](https://testnet.arcscan.app/tx/${status.hash})`;
           
           const confirmMessage: ChatMessage = {
             id: crypto.randomUUID(),
             role: "assistant",
-            content: `✅ Transaction confirmed!\n\n**Transaction ID:** ${transactionId}${status.hash && status.hash.startsWith("0x") ? `\n**Transaction Hash:** ${status.hash}` : ''}${explorerLink}`,
+            content: `✅ **Transaction confirmed on Arc!**\n\n**Transaction Hash:** ${status.hash}\n**Network:** Arc (sub-second finality)\n**Gas Paid:** USDC (no ETH needed)${explorerLink}`,
             timestamp: new Date(),
           };
           
@@ -720,12 +828,18 @@ export default function ChatPage() {
               return msg;
             });
             // Add confirmation message if not already present
-            if (!updated.some(msg => msg.content.includes("Transaction confirmed") && msg.content.includes(transactionId))) {
+            if (!updated.some(msg => msg.content.includes("Transaction confirmed") && msg.content.includes(status.hash || transactionId))) {
               updated.push(confirmMessage);
             }
             return updated;
           });
         }
+        return; // Stop polling once confirmed with hash
+      } else if (status && status.status === "confirmed" && !hasValidHash) {
+        // Transaction is marked confirmed but we don't have the hash yet - keep polling
+        console.log(`[Polling] Transaction ${transactionId} is confirmed but hash not available yet, continuing to poll...`);
+        setTimeout(poll, pollInterval);
+        return;
       } else if (status && status.status === "failed") {
         if (!hasNotified) {
           hasNotified = true;
