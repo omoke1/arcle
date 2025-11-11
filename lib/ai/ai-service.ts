@@ -502,13 +502,11 @@ export class AIService {
       phishingWarning = `⚠️ **PHISHING WARNING**\n\nI detected potentially suspicious URLs in your message:\n${phishingResult.detectedUrls.map(url => `• ${url}`).join('\n')}\n\n**Reasons:**\n${phishingResult.reasons.map(r => `• ${r}`).join('\n')}\n\nPlease verify these URLs are legitimate before proceeding.\n\n`;
     }
     
-    // If high risk, block the transaction
-    if (riskResult.blocked) {
-      return {
-        message: `⚠️ **HIGH RISK TRANSACTION BLOCKED**\n\nRisk Score: ${riskResult.score}/100\n\n**Reasons:**\n${riskResult.reasons.map(r => `• ${r}`).join('\n')}\n\nThis transaction has been blocked for your safety. Please verify the recipient address and try again.`,
-        intent,
-        requiresConfirmation: false,
-      };
+    // If high risk, show warning but still allow user to approve/reject
+    // Don't block - let user decide after seeing the risks
+    let highRiskWarning = "";
+    if (riskResult.blocked || riskResult.score >= 80) {
+      highRiskWarning = `🚨 **HIGH RISK TRANSACTION DETECTED**\n\nRisk Score: ${riskResult.score}/100\n\n**Reasons:**\n${riskResult.reasons.map(r => `• ${r}`).join('\n')}\n\n⚠️ **WARNING:** This transaction has been flagged as high risk. Please carefully verify the recipient address before proceeding. You can still approve this transaction if you're certain it's safe.\n\n`;
     }
     
     // Build risk message
@@ -522,7 +520,7 @@ export class AIService {
     }
     
     // Build base message with natural language
-    let baseMessage = phishingWarning; // Add phishing warning first if present
+    let baseMessage = phishingWarning + highRiskWarning; // Add warnings first if present
     
     const recipientDisplay = contactName 
       ? `${contactName} (${normalizedAddress.substring(0, 6)}...${normalizedAddress.substring(38)})`
@@ -571,7 +569,7 @@ export class AIService {
         fee: estimatedFee,
         riskScore: riskResult.score,
         riskReasons: riskResult.reasons,
-        blocked: false,
+        blocked: riskResult.blocked || riskResult.score >= 80, // Mark as blocked but still show preview
         isNewWallet, // Add flag to indicate if this is a new wallet
       },
     };

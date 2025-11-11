@@ -54,44 +54,93 @@ export async function GET(request: NextRequest) {
 
     // Option 1: Query via Circle API (recommended)
     if (walletId && !useBlockchain) {
-      const balances = await circleApiRequest<CircleBalanceResponse>(
-        `/v1/w3s/wallets/${walletId}/balances`,
-        {
-          method: "GET",
-        }
-      );
+      let balances: CircleBalanceResponse | null = null;
+      let error: any = null;
 
-      // Find USDC balance - ensure we return real data, never mock
-      const usdcBalance = balances.data?.find(
-        (b) => b.tokenId === getUSDCAddress()
-      );
-      
-      // If no USDC balance found, return 0 (real zero, not mock)
-      if (!usdcBalance) {
+      // Try developer-controlled wallets endpoint first
+      try {
+        balances = await circleApiRequest<CircleBalanceResponse>(
+          `/v1/w3s/developer/wallets/${walletId}/balances?blockchain=ARC-TESTNET`,
+          {
+            method: "GET",
+          }
+        );
+      } catch (devError: any) {
+        console.log(`[Balance API] Developer wallets endpoint failed, trying regular wallets endpoint...`);
+        error = devError;
+        
+        // Fallback to regular wallets endpoint
+        try {
+          balances = await circleApiRequest<CircleBalanceResponse>(
+            `/v1/w3s/wallets/${walletId}/balances`,
+            {
+              method: "GET",
+            }
+          );
+        } catch (regularError: any) {
+          console.error(`[Balance API] Both endpoints failed:`, regularError);
+          error = regularError;
+          
+          // If address is provided, fallback to blockchain query
+          if (address) {
+            console.log(`[Balance API] Falling back to blockchain query for address: ${address}`);
+            // Will be handled by Option 2 below
+          } else {
+            throw error;
+          }
+        }
+      }
+
+      // If we got balances from API, process them
+      if (balances && balances.data) {
+        // Handle different response formats
+        // Circle API can return: { data: [...] } or { data: { tokenBalances: [...] } }
+        const tokenBalances = Array.isArray(balances.data)
+          ? balances.data
+          : (balances.data as any)?.tokenBalances || [];
+        
+        // Find USDC balance - ensure we return real data, never mock
+        const usdcAddress = getUSDCAddress();
+        const usdcBalance = tokenBalances.find(
+          (b: any) => {
+            const tokenId = b.tokenId || b.token?.id || b.token?.address;
+            return tokenId && (
+              tokenId === usdcAddress || 
+              tokenId.toLowerCase() === usdcAddress.toLowerCase()
+            );
+          }
+        );
+        
+        // If no USDC balance found, return 0 (real zero, not mock)
+        if (!usdcBalance) {
+          return NextResponse.json({
+            success: true,
+            data: {
+              walletId,
+              balance: "0.00",
+              balanceRaw: "0",
+              token: "USDC",
+              network: "ARC",
+              lastUpdated: new Date().toISOString(),
+            },
+          });
+        }
+
+        // Extract amount - handle different response structures
+        const amount = usdcBalance.amount || usdcBalance.tokenBalance?.amount || "0";
+        
         return NextResponse.json({
           success: true,
           data: {
             walletId,
-            balance: "0.00",
-            balanceRaw: "0",
+            balance: arcUtils.formatUSDC(BigInt(amount)),
+            balanceRaw: amount,
             token: "USDC",
             network: "ARC",
-            lastUpdated: new Date().toISOString(),
+            lastUpdated: usdcBalance.updateDate || new Date().toISOString(),
           },
         });
       }
-
-      return NextResponse.json({
-        success: true,
-        data: {
-          walletId,
-          balance: arcUtils.formatUSDC(BigInt(usdcBalance.amount)),
-          balanceRaw: usdcBalance.amount,
-          token: "USDC",
-          network: "ARC",
-          lastUpdated: usdcBalance.updateDate,
-        },
-      });
     }
 
     // Option 2: Query directly from Arc blockchain

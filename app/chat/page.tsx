@@ -380,6 +380,18 @@ export default function ChatPage() {
           timestamp: new Date(),
           transactionPreview: aiResponse.transactionPreview,
         };
+        
+        // Always set pending transaction so the confirm button can work (even for blocked/high-risk)
+        const previewAddress = aiResponse.transactionPreview.to;
+        const addressValidation = validateAddress(previewAddress);
+        const normalizedAddress = addressValidation.normalizedAddress || previewAddress;
+        
+        setPendingTransaction({
+          messageId,
+          amount: aiResponse.transactionPreview.amount,
+          to: normalizedAddress,
+        });
+        
         setMessages((prev) => [...prev, aiMessage]);
         setIsLoading(false);
         return;
@@ -408,8 +420,8 @@ export default function ChatPage() {
         transactionPreview: aiResponse.transactionPreview,
       };
       
-      // Only set pending transaction if not blocked and (not new wallet or confirmed)
-      if (!isBlocked && (!isNewWallet || isConfirming)) {
+      // Always set pending transaction (even for blocked/high-risk - user can still approve)
+      if (!isNewWallet || isConfirming) {
         // Use normalized checksummed address from preview
         const previewAddress = aiResponse.transactionPreview.to;
         const addressValidation = validateAddress(previewAddress);
@@ -567,31 +579,52 @@ export default function ChatPage() {
   };
 
   const handleConfirmTransaction = async () => {
-    if (!pendingTransaction || !walletId) return;
+    if (!walletId) return;
     
-    // Safety Check 1: Verify transaction preview exists and is not blocked
-    const message = messages.find(m => m.id === pendingTransaction.messageId);
+    // Find the message with transaction preview (use pendingTransaction if available, otherwise find the latest one)
+    let message = pendingTransaction 
+      ? messages.find(m => m.id === pendingTransaction.messageId)
+      : [...messages].reverse().find(m => m.transactionPreview);
+    
     if (!message?.transactionPreview) {
       console.error("Transaction preview not found");
       return;
     }
     
+    // Get transaction details from message preview
+    const previewAmount = message.transactionPreview.amount;
+    const previewTo = message.transactionPreview.to;
+    
+    // If pendingTransaction is not set, create it from the message
+    if (!pendingTransaction) {
+      const addressValidation = validateAddress(previewTo);
+      const normalizedAddress = addressValidation.normalizedAddress || previewTo;
+      
+      setPendingTransaction({
+        messageId: message.id,
+        amount: previewAmount,
+        to: normalizedAddress,
+      });
+    }
+    
+    // Don't block - show warning but allow user to proceed if they confirm
+    // User has seen the risks and can make an informed decision
     if (message.transactionPreview.blocked || 
         (message.transactionPreview.riskScore !== undefined && 
          message.transactionPreview.riskScore >= 80)) {
-      // Show error message
-      const errorMessage: ChatMessage = {
+      // Show warning message but don't block - user can still approve
+      const warningMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: "⚠️ This transaction has been blocked for your safety. Please verify the recipient address and try again.",
+        content: `⚠️ **HIGH RISK TRANSACTION**\n\nYou're about to proceed with a high-risk transaction (Risk Score: ${message.transactionPreview.riskScore}/100).\n\n**Risk Factors:**\n${message.transactionPreview.riskReasons?.map(r => `• ${r}`).join('\n')}\n\nPlease verify the recipient address is correct. Proceeding with this transaction is at your own risk.`,
         timestamp: new Date(),
       };
-      setMessages((prev) => [...prev, errorMessage]);
-      return;
+      setMessages((prev) => [...prev, warningMessage]);
+      // Don't return - allow transaction to proceed if user confirms
     }
     
     // Safety Check 2: Validate and normalize address
-    const addressValidation = validateAddress(pendingTransaction.to);
+    const addressValidation = validateAddress(previewTo);
     if (!addressValidation.isValid) {
       const errorMessage: ChatMessage = {
         id: crypto.randomUUID(),
@@ -604,11 +637,11 @@ export default function ChatPage() {
     }
     
     // Use normalized checksummed address
-    const normalizedAddress = addressValidation.normalizedAddress || pendingTransaction.to;
+    const normalizedAddress = addressValidation.normalizedAddress || previewTo;
     
     // Safety Check 3: Re-validate risk score before execution
     try {
-      const currentRiskResult = await calculateRiskScore(normalizedAddress, pendingTransaction.amount);
+      const currentRiskResult = await calculateRiskScore(normalizedAddress, previewAmount);
       if (currentRiskResult.blocked || currentRiskResult.score >= 80) {
         const errorMessage: ChatMessage = {
           id: crypto.randomUUID(),
@@ -631,7 +664,7 @@ export default function ChatPage() {
       if (walletId && walletAddress) {
         const currentBalance = await getBalance(walletId, walletAddress);
         const current = currentBalance ? parseFloat(currentBalance) : 0;
-        const needed = parseFloat(pendingTransaction.amount);
+        const needed = parseFloat(previewAmount);
         if (!Number.isNaN(needed) && current < needed) {
           const topupMsg: ChatMessage = {
             id: crypto.randomUUID(),
@@ -653,9 +686,18 @@ export default function ChatPage() {
     }
     
     try {
+      // Ensure pendingTransaction is set (should be set above, but double-check)
+      if (!pendingTransaction) {
+        setPendingTransaction({
+          messageId: message.id,
+          amount: previewAmount,
+          to: normalizedAddress,
+        });
+      }
+      
       // Update message to show pending state
       setMessages((prev) => prev.map(msg => 
-        msg.id === pendingTransaction.messageId
+        msg.id === message.id
           ? {
               ...msg,
               transactionPreview: msg.transactionPreview ? {
@@ -692,11 +734,11 @@ export default function ChatPage() {
         return;
       }
       
-      if (!pendingTransaction.amount || isNaN(parseFloat(pendingTransaction.amount))) {
+      if (!previewAmount || isNaN(parseFloat(previewAmount))) {
         const errorMsg: ChatMessage = {
           id: crypto.randomUUID(),
           role: "assistant",
-          content: `❌ Error: Invalid amount "${pendingTransaction.amount}". Please provide a valid number.`,
+          content: `❌ Error: Invalid amount "${previewAmount}". Please provide a valid number.`,
           timestamp: new Date(),
         };
         setMessages((prev) => [...prev, errorMsg]);
@@ -719,14 +761,14 @@ export default function ChatPage() {
       console.log("Sending transaction with:", {
         walletId,
         destinationAddress: normalizedAddress,
-        amount: pendingTransaction.amount,
+        amount: previewAmount,
         walletAddress,
       });
       
       const transaction = await sendTransaction(
         walletId,
         normalizedAddress, // Use checksummed address
-        pendingTransaction.amount,
+        previewAmount,
         walletAddress // CRITICAL: Always pass wallet address for SDK transaction creation
       );
       
@@ -743,15 +785,17 @@ export default function ChatPage() {
         }
         
         // Update message to show confirmed state
-        setMessages((prev) => prev.map(msg => 
-          msg.id === pendingTransaction.messageId
-            ? {
-                ...msg,
-                content: `✅ Transaction sent successfully!\n\nHash: ${transaction.hash}\nAmount: $${pendingTransaction.amount} USDC\nTo: ${pendingTransaction.to.substring(0, 6)}...${pendingTransaction.to.substring(38)}`,
-                transactionPreview: undefined,
-              }
-            : msg
-        ));
+        if (pendingTransaction) {
+          setMessages((prev) => prev.map(msg =>
+            msg.id === pendingTransaction.messageId
+              ? {
+                  ...msg,
+                  content: `✅ Transaction sent successfully!\n\nHash: ${transaction.hash}\nAmount: $${pendingTransaction.amount} USDC\nTo: ${pendingTransaction.to.substring(0, 6)}...${pendingTransaction.to.substring(38)}`,
+                  transactionPreview: undefined,
+                }
+              : msg
+          ));
+        }
         
         // Notify transaction history to refresh
         if (typeof window !== 'undefined') {

@@ -7,7 +7,6 @@
 
 import { analyzeToken, getTokenMetadata, type TokenAnalysis } from "@/lib/security/token-analysis";
 import { addNotification, getAllNotifications } from "./notification-service";
-import { circleApiRequest } from "@/lib/circle";
 
 export interface IncomingTokenTransfer {
   tokenAddress: string;
@@ -61,19 +60,29 @@ export function startIncomingTransactionMonitoring(
 
   const poll = async () => {
     try {
-      // Fetch recent transactions for the wallet
-      const response = await circleApiRequest<any>(
-        `/v1/w3s/developer/wallets/${walletId}/transactions?limit=50&blockchain=ARC-TESTNET`
+      // Fetch recent transactions via our API route (avoids CORS issues)
+      const apiResponse = await fetch(
+        `/api/circle/transactions?walletId=${walletId}&limit=50`
       );
 
-      if (!response || !response.data) {
+      if (!apiResponse.ok) {
+        // If 404, wallet might not have transactions yet - this is expected
+        if (apiResponse.status === 404) {
+          return; // Silently return, no need to log
+        }
+        throw new Error(`Failed to fetch transactions: ${apiResponse.statusText}`);
+      }
+
+      const data = await apiResponse.json();
+
+      if (!data.success || !data.data) {
         return;
       }
 
-      // Handle different response formats
-      const transactions = Array.isArray(response.data.data)
-        ? response.data.data
-        : response.data.data?.transactions || [];
+      // Handle different response formats from our API
+      const transactions = Array.isArray(data.data.data)
+        ? data.data.data
+        : data.data.data?.transactions || [];
 
       // Process each transaction
       for (const tx of transactions) {
@@ -166,8 +175,18 @@ export function startIncomingTransactionMonitoring(
           }
         }
       }
-    } catch (error) {
-      console.error("Error monitoring incoming transactions:", error);
+    } catch (error: any) {
+      // Only log unexpected errors (404s and network errors are expected for new wallets)
+      // Don't log if it's a 404 or network error (CORS, fetch failed, etc.)
+      const isExpectedError = 
+        error.response?.status === 404 ||
+        error.message?.includes("Failed to fetch") ||
+        error.message?.includes("CORS") ||
+        error.name === "TypeError";
+      
+      if (!isExpectedError) {
+        console.error("Error monitoring incoming transactions:", error);
+      }
     }
   };
 

@@ -157,10 +157,10 @@ export function TransactionPreview({
             <AlertCircle className="w-5 h-5 text-danger flex-shrink-0 mt-0.5" />
             <div className="flex-1">
               <p className="text-sm font-semibold text-danger mb-1">
-                Transaction Blocked
+                ⚠️ High Risk Transaction Detected
               </p>
               <p className="text-xs text-casper">
-                This transaction has been blocked for your safety. Please verify the recipient address before proceeding.
+                This transaction has been flagged as high risk. Please carefully verify the recipient address. You can still approve this transaction if you&apos;re certain it&apos;s safe.
               </p>
             </div>
           </div>
@@ -193,28 +193,23 @@ export function TransactionPreview({
           >
             Cancel
           </Button>
-          {isBlocked ? (
-            <Button
-              disabled
-              className="flex-1 bg-danger/50 cursor-not-allowed"
-            >
-              Blocked
-            </Button>
-          ) : (
-            <Button
-              onClick={onConfirm}
-              className={cn(
-                "flex-1",
-                riskScore !== undefined && riskScore >= 40
-                  ? "bg-warning hover:bg-warning/80"
-                  : "bg-white hover:bg-white/80 text-onyx"
-              )}
-            >
-              {riskScore !== undefined && riskScore >= 40
-                ? "Proceed with Caution"
-                : "Confirm"}
-            </Button>
-          )}
+          <Button
+            onClick={onConfirm}
+            className={cn(
+              "flex-1",
+              isBlocked || (riskScore !== undefined && riskScore >= 80)
+                ? "bg-danger hover:bg-danger/80 text-white"
+                : riskScore !== undefined && riskScore >= 40
+                ? "bg-warning hover:bg-warning/80"
+                : "bg-white hover:bg-white/80 text-onyx"
+            )}
+          >
+            {isBlocked || (riskScore !== undefined && riskScore >= 80)
+              ? "Approve Anyway (High Risk)"
+              : riskScore !== undefined && riskScore >= 40
+              ? "Proceed with Caution"
+              : "Confirm"}
+          </Button>
         </div>
       )}
 

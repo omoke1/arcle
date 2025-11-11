@@ -53,14 +53,17 @@ export async function circleApiRequest<T>(
   const isValidFormat = keyParts.length === 3 && 
     (keyParts[0] === "TEST_API_KEY" || keyParts[0] === "LIVE_API_KEY");
   
-  console.log("API Key Debug:", {
-    hasKey: !!apiKey,
-    keyLength: apiKey.length,
-    partCount: keyParts.length,
-    firstPart: keyParts[0],
-    isValidFormat,
-    keyPreview: apiKey.substring(0, 30) + "...",
-  });
+  // Only log API key debug in development mode
+  if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
+    console.log("API Key Debug:", {
+      hasKey: !!apiKey,
+      keyLength: apiKey.length,
+      partCount: keyParts.length,
+      firstPart: keyParts[0],
+      isValidFormat,
+      keyPreview: apiKey.substring(0, 30) + "...",
+    });
+  }
 
   if (!isValidFormat) {
     throw new Error(
@@ -109,20 +112,22 @@ export async function circleApiRequest<T>(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000);
     
-    // Log request details for debugging (without sensitive data)
-    console.log("Circle API Request:", {
-      method: options.method || "GET",
-      url,
-      endpoint,
-      hasApiKey: !!apiKey,
-      apiKeyPrefix: keyParts[0],
-      headers: {
-        "Content-Type": headers["Content-Type"],
-        "accept": headers.accept,
-        "authorization": headers.authorization?.substring(0, 30) + "...",
-        "X-App-Id": headers["X-App-Id"] || "not set",
-      },
-    });
+    // Only log request details in development mode (reduces console noise)
+    if (process.env.NODE_ENV === "development" && typeof window === "undefined") {
+      console.log("Circle API Request:", {
+        method: options.method || "GET",
+        url,
+        endpoint,
+        hasApiKey: !!apiKey,
+        apiKeyPrefix: keyParts[0],
+        headers: {
+          "Content-Type": headers["Content-Type"],
+          "accept": headers.accept,
+          "authorization": headers.authorization?.substring(0, 30) + "...",
+          "X-App-Id": headers["X-App-Id"] || "not set",
+        },
+      });
+    }
     
     const response = await fetch(url, {
       ...options,
