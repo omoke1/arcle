@@ -200,6 +200,18 @@ export class AIService {
           intent,
         };
       
+      case "contact":
+        return await this.handleContactIntent(intent, context, currentSessionId);
+      
+      case "notification":
+        return await this.handleNotificationIntent(intent, context, currentSessionId);
+      
+      case "approve_token":
+        return await this.handleApproveTokenIntent(intent, context, currentSessionId);
+      
+      case "reject_token":
+        return await this.handleRejectTokenIntent(intent, context, currentSessionId);
+      
       case "help":
         return this.handleHelpIntent(intent, context);
       
@@ -232,13 +244,11 @@ export class AIService {
     // Execute the pending action based on type
     switch (pendingAction.type) {
       case "convert":
-        // Re-execute convert with stored data
-        return await this.handleConvertIntent(
-          {
-            ...intent,
-            entities: pendingAction.data,
-          },
-          context
+        // Execute FX swap with stored data
+        return await this.executeFXSwap(
+          pendingAction.data,
+          context,
+          sessionId
         );
       
       case "send":
@@ -384,30 +394,88 @@ export class AIService {
     const { amount, address, recipient } = intent.entities;
     
     if (!amount) {
-      return {
-        message: "I can help you send USDC! Please tell me:\n• How much to send\n• The recipient address\n\nExample: \"Send $50 to 0x1234...\"",
+      const message = await this.enhanceResponse(
+        "I'd be happy to help you send USDC! How much would you like to send?",
         intent,
-      };
+        "send_missing_amount",
+        context,
+        undefined,
+        sessionId,
+        true,
+        ["amount"]
+      );
+      return { message, intent };
     }
     
-    if (!address) {
-      return {
-        message: `I'll send $${amount} USDC. Please provide the recipient address:\n\nExample: "Send $${amount} to 0x..."`,
+    // Check if recipient is a contact name (if no address provided)
+    let resolvedAddress = address;
+    let contactName: string | undefined;
+    
+    if (!address && recipient) {
+      // Try to find contact by name
+      if (typeof window !== "undefined") {
+        const { getContactByName } = await import("@/lib/contacts/contact-service");
+        const contact = getContactByName(recipient);
+        if (contact) {
+          resolvedAddress = contact.address;
+          contactName = contact.name;
+        }
+      }
+    }
+    
+    if (!resolvedAddress) {
+      // If recipient name was provided but not found as contact, ask
+      if (recipient && !contactName) {
+        const message = await this.enhanceResponse(
+          `I couldn't find "${recipient}" in your contacts. Would you like to:\n• Provide the wallet address directly\n• Save "${recipient}" as a new contact first\n\nWhat's the address for ${recipient}?`,
+          intent,
+          "send_contact_not_found",
+          context,
+          { amount, recipient },
+          sessionId,
+          true,
+          ["address"]
+        );
+        return { message, intent };
+      }
+      
+      const message = await this.enhanceResponse(
+        `I'll send $${amount} USDC. Who would you like to send it to? You can provide a wallet address or a contact name.`,
         intent,
-      };
+        "send_missing_address",
+        context,
+        { amount },
+        sessionId,
+        true,
+        ["address", "recipient"]
+      );
+      return { message, intent };
     }
     
     // Validate address format and checksum
-    const addressValidation = validateAddress(address);
+    const addressValidation = validateAddress(resolvedAddress);
     if (!addressValidation.isValid) {
-      return {
-        message: `Invalid address format: ${addressValidation.error}. Please provide a valid Ethereum address.`,
+      const message = await this.enhanceResponse(
+        `That address doesn't look right. Could you double-check it? It should start with "0x" and be 42 characters long.`,
         intent,
-      };
+        "send_invalid_address",
+        context,
+        { amount, address: resolvedAddress },
+        sessionId,
+        true,
+        ["address"]
+      );
+      return { message, intent };
     }
     
     // Use normalized checksummed address
-    const normalizedAddress = addressValidation.normalizedAddress || address;
+    const normalizedAddress = addressValidation.normalizedAddress || resolvedAddress;
+    
+    // Update contact usage if it was found by name
+    if (contactName && typeof window !== "undefined") {
+      const { updateContactUsage } = await import("@/lib/contacts/contact-service");
+      updateContactUsage(normalizedAddress);
+    }
     
     // Check for phishing URLs in the original message
     const phishingResult = detectPhishingUrls(intent.rawCommand);
@@ -456,10 +524,17 @@ export class AIService {
     // Build base message with natural language
     let baseMessage = phishingWarning; // Add phishing warning first if present
     
+    const recipientDisplay = contactName 
+      ? `${contactName} (${normalizedAddress.substring(0, 6)}...${normalizedAddress.substring(38)})`
+      : `${normalizedAddress.substring(0, 6)}...${normalizedAddress.substring(38)}`;
+    
     if (isNewWallet) {
-      baseMessage += `Got it! I'm preparing to send $${amount} USDC to ${normalizedAddress.substring(0, 6)}...${normalizedAddress.substring(38)}.\n\n⚠️ **NEW WALLET ADDRESS DETECTED**\n\nI noticed this address hasn't been used in your transaction history before. I'm being extra careful here because new addresses can sometimes be risky - it could be a typo or a new recipient. Please double-check this is the correct address before we proceed.\n\n`;
+      baseMessage += `Got it! I'm preparing to send $${amount} USDC to ${recipientDisplay}.\n\n⚠️ **NEW WALLET ADDRESS DETECTED**\n\nI noticed this address hasn't been used in your transaction history before. I'm being extra careful here because new addresses can sometimes be risky - it could be a typo or a new recipient. Please double-check this is the correct address before we proceed.\n\n`;
     } else {
-      baseMessage += `Got it! I'm preparing to send $${amount} USDC to ${normalizedAddress.substring(0, 6)}...${normalizedAddress.substring(38)}. I've sent to this address before, so it looks familiar.\n\n`;
+      const familiarNote = contactName 
+        ? `I found ${contactName} in your contacts and I've sent to this address before, so it looks familiar.`
+        : `I've sent to this address before, so it looks familiar.`;
+      baseMessage += `Got it! I'm preparing to send $${amount} USDC to ${recipientDisplay}. ${familiarNote}\n\n`;
     }
     
     baseMessage += `${riskMessage}\n\n**Risk Factors:**\n${riskResult.reasons.map(r => `• ${r}`).join('\n')}\n\n**Arc Benefits:**\n• Gas paid in USDC (no ETH needed)\n• Sub-second transaction finality\n• Native USDC support\n\n`;
@@ -691,30 +766,88 @@ export class AIService {
     const { amount, address, recipient } = intent.entities;
     
     if (!amount) {
-      return {
-        message: "I can help you make a payment! Please tell me:\n• How much to pay\n• The recipient address\n\nExample: \"Pay $50 to 0x1234...\"",
+      const message = await this.enhanceResponse(
+        "I'd be happy to help you make a payment! How much would you like to pay?",
         intent,
-      };
+        "pay_missing_amount",
+        context,
+        undefined,
+        sessionId,
+        true,
+        ["amount"]
+      );
+      return { message, intent };
     }
     
-    if (!address) {
-      return {
-        message: `I'll pay $${amount} USDC. Please provide the recipient address:\n\nExample: "Pay $${amount} to 0x..."`,
+    // Check if recipient is a contact name (if no address provided)
+    let resolvedAddress = address;
+    let contactName: string | undefined;
+    
+    if (!address && recipient) {
+      // Try to find contact by name
+      if (typeof window !== "undefined") {
+        const { getContactByName } = await import("@/lib/contacts/contact-service");
+        const contact = getContactByName(recipient);
+        if (contact) {
+          resolvedAddress = contact.address;
+          contactName = contact.name;
+        }
+      }
+    }
+    
+    if (!resolvedAddress) {
+      // If recipient name was provided but not found as contact, ask
+      if (recipient && !contactName) {
+        const message = await this.enhanceResponse(
+          `I couldn't find "${recipient}" in your contacts. Would you like to:\n• Provide the wallet address directly\n• Save "${recipient}" as a new contact first\n\nWhat's the address for ${recipient}?`,
+          intent,
+          "pay_contact_not_found",
+          context,
+          { amount, recipient },
+          sessionId,
+          true,
+          ["address"]
+        );
+        return { message, intent };
+      }
+      
+      const message = await this.enhanceResponse(
+        `I'll pay $${amount} USDC. Who would you like to pay? You can provide a wallet address or a contact name.`,
         intent,
-      };
+        "pay_missing_address",
+        context,
+        { amount },
+        sessionId,
+        true,
+        ["address", "recipient"]
+      );
+      return { message, intent };
     }
     
     // Validate address format and checksum
-    const addressValidation = validateAddress(address);
+    const addressValidation = validateAddress(resolvedAddress);
     if (!addressValidation.isValid) {
-      return {
-        message: `Invalid address format: ${addressValidation.error}. Please provide a valid Ethereum address.`,
+      const message = await this.enhanceResponse(
+        `That address doesn't look right. Could you double-check it? It should start with "0x" and be 42 characters long.`,
         intent,
-      };
+        "pay_invalid_address",
+        context,
+        { amount, address: resolvedAddress },
+        sessionId,
+        true,
+        ["address"]
+      );
+      return { message, intent };
     }
     
     // Use normalized checksummed address
-    const normalizedAddress = addressValidation.normalizedAddress || address;
+    const normalizedAddress = addressValidation.normalizedAddress || resolvedAddress;
+    
+    // Update contact usage if it was found by name
+    if (contactName && typeof window !== "undefined") {
+      const { updateContactUsage } = await import("@/lib/contacts/contact-service");
+      updateContactUsage(normalizedAddress);
+    }
     
     // Check for phishing URLs in the original message
     const phishingResult = detectPhishingUrls(intent.rawCommand);
@@ -1225,6 +1358,23 @@ export class AIService {
 
       const { convertedAmount, rate } = result;
       
+      // Store pending action for confirmation
+      if (sessionId && context?.walletId) {
+        setPendingAction(sessionId, {
+          type: "convert",
+          data: {
+            fromCurrency,
+            toCurrency,
+            amount,
+            convertedAmount,
+            rate,
+            currency: fromCurrency,
+            recipient: toCurrency,
+          },
+          timestamp: Date.now(),
+        });
+      }
+      
       const message = await this.enhanceResponse(
         `💱 **Currency Conversion Preview**\n\n**From:** ${amount} ${fromCurrency}\n**To:** ~${convertedAmount} ${toCurrency}\n**Rate:** 1 ${fromCurrency} = ${rate.toFixed(6)} ${toCurrency}\n\nReady to convert? This will execute a swap transaction.`,
         intent,
@@ -1236,7 +1386,8 @@ export class AIService {
           amount,
           convertedAmount,
           rate,
-        }
+        },
+        sessionId
       );
       
       return {
@@ -1248,6 +1399,96 @@ export class AIService {
       return {
         message: `❌ Error fetching conversion rate: ${error instanceof Error ? error.message : "Unknown error"}`,
         intent,
+      };
+    }
+  }
+
+  /**
+   * Execute FX swap transaction
+   */
+  private static async executeFXSwap(
+    swapData: any,
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string },
+    sessionId?: string
+  ): Promise<AIResponse> {
+    if (!context?.walletId || !context?.walletAddress) {
+      return {
+        message: "Wallet not found. Please create a wallet first.",
+        intent: { intent: "convert", confidence: 1, entities: {}, rawCommand: "" },
+      };
+    }
+
+    const { fromCurrency, toCurrency, amount } = swapData;
+
+    if (!fromCurrency || !toCurrency || !amount) {
+      return {
+        message: "Missing conversion details. Please try again.",
+        intent: { intent: "convert", confidence: 1, entities: {}, rawCommand: "" },
+      };
+    }
+
+    try {
+      // Import FX swap execution service
+      const { executeFXSwap } = await import("@/lib/fx/fx-swap-execution");
+      
+      // Execute the swap
+      const result = await executeFXSwap({
+        walletId: context.walletId,
+        walletAddress: context.walletAddress,
+        fromCurrency: fromCurrency as any,
+        toCurrency: toCurrency as any,
+        amount: amount.toString(),
+      });
+
+      if (!result.success) {
+        return {
+          message: `❌ FX swap failed: ${result.error || "Unknown error"}`,
+          intent: { intent: "convert", confidence: 1, entities: {}, rawCommand: "" },
+        };
+      }
+
+      // Generate success message with transaction details
+      const explorerLink = result.blockchainHash 
+        ? `[View on ArcScan](https://testnet.arcscan.app/tx/${result.blockchainHash})`
+        : "";
+
+      const message = await this.enhanceResponse(
+        `✅ **FX Swap Executed Successfully!**\n\n` +
+        `**From:** ${result.fromAmount} ${result.fromCurrency}\n` +
+        `**To:** ${result.toAmount} ${result.toCurrency}\n` +
+        `**Rate:** 1 ${result.fromCurrency} = ${result.rate.toFixed(6)} ${result.toCurrency}\n` +
+        `**Transaction ID:** ${result.transactionId}\n` +
+        (explorerLink ? `\n${explorerLink}` : ""),
+        { intent: "convert", confidence: 1, entities: {}, rawCommand: "" },
+        "fx_swap_executed",
+        context,
+        {
+          transactionId: result.transactionId,
+          blockchainHash: result.blockchainHash,
+          fromCurrency: result.fromCurrency,
+          toCurrency: result.toCurrency,
+          fromAmount: result.fromAmount,
+          toAmount: result.toAmount,
+          rate: result.rate,
+        },
+        sessionId
+      );
+
+      // Add to conversation history
+      if (sessionId) {
+        addMessageToHistory(sessionId, "assistant", message);
+      }
+
+      return {
+        message,
+        intent: { intent: "convert", confidence: 1, entities: {}, rawCommand: "" },
+        requiresConfirmation: false,
+      };
+    } catch (error) {
+      console.error("FX swap execution error:", error);
+      return {
+        message: `❌ Error executing FX swap: ${error instanceof Error ? error.message : "Unknown error"}`,
+        intent: { intent: "convert", confidence: 1, entities: {}, rawCommand: "" },
       };
     }
   }
@@ -2341,6 +2582,18 @@ export class AIService {
 • Phishing URL detection
 • Smart contract analysis
 
+**Contact Management:**
+• **Save addresses as contacts** (e.g., "Save this address as Jake" or "Add contact Jake")
+• **Send to contacts by name** (e.g., "Send $50 to Jake" - AI finds the address automatically!)
+• List, search, update, and delete contacts
+• Recent addresses tracking
+
+**Real-Time Notifications:**
+• **Transaction confirmations** - Get notified automatically when transactions confirm
+• **Balance change alerts** - Know immediately when your balance changes
+• **Security alerts** - Get notified about suspicious activity
+• All notifications appear in chat as natural language messages
+
 **Utilities:**
 • **Schedule one-time payments** (e.g., "Schedule $50 to 0x... tomorrow at 3pm" or "Schedule one-time payment of $100 next Monday")
 • Set up recurring subscriptions (e.g., "Subscribe $15 monthly for Netflix")
@@ -2348,7 +2601,7 @@ export class AIService {
 • Cancel scheduled payments before execution
 • Request testnet tokens
 
-Just ask me naturally, like "Send $50 to 0x..." or "What's my balance?" or "Schedule $100 to 0x... next Monday at 9am" and I'll help you!`;
+Just ask me naturally, like "Send $50 to Jake" or "What's my balance?" or "Schedule $100 to 0x... next Monday at 9am" and I'll help you!`;
 
     const message = await this.enhanceResponse(
       helpMessage,
@@ -2360,6 +2613,531 @@ Just ask me naturally, like "Send $50 to 0x..." or "What's my balance?" or "Sche
     return { message, intent };
   }
   
+  private static async handleContactIntent(
+    intent: ParsedIntent,
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string },
+    sessionId?: string
+  ): Promise<AIResponse> {
+    if (typeof window === "undefined") {
+      return {
+        message: "Contact management is only available in the browser.",
+        intent,
+      };
+    }
+
+    const { getAllContacts, addContact, getContactByName, deleteContact, updateContact, searchContacts } = await import("@/lib/contacts/contact-service");
+    const { validateAddress } = await import("@/lib/security/address-validation");
+    
+    const lowerCommand = intent.rawCommand.toLowerCase();
+    const { recipient: name, address, date: notes, time: tags } = intent.entities;
+
+    // List contacts
+    if (lowerCommand.includes("list") || lowerCommand.includes("show") || lowerCommand.includes("my contacts")) {
+      const contacts = getAllContacts();
+      
+      if (contacts.length === 0) {
+        const message = await this.enhanceResponse(
+          "You don't have any contacts saved yet. You can save an address by saying 'Save this address as Jake' or 'Add contact Jake'.",
+          intent,
+          "list_contacts_empty",
+          context,
+          undefined,
+          sessionId
+        );
+        return { message, intent };
+      }
+
+      let message = `📇 **Your Contacts** (${contacts.length})\n\n`;
+      for (const contact of contacts) {
+        message += `**${contact.name}**\n`;
+        message += `Address: ${contact.address.substring(0, 6)}...${contact.address.substring(38)}\n`;
+        if (contact.notes) message += `Notes: ${contact.notes}\n`;
+        if (contact.tags && contact.tags.length > 0) message += `Tags: ${contact.tags.join(", ")}\n`;
+        if (contact.transactionCount) message += `Transactions: ${contact.transactionCount}\n`;
+        message += `\n`;
+      }
+
+      const enhancedMessage = await this.enhanceResponse(
+        message,
+        intent,
+        "list_contacts",
+        context,
+        { contacts },
+        sessionId
+      );
+      return { message: enhancedMessage, intent };
+    }
+
+    // Delete contact
+    if (lowerCommand.includes("delete") || lowerCommand.includes("remove")) {
+      if (!name) {
+        const message = await this.enhanceResponse(
+          "Which contact would you like to delete? Please provide the contact name.",
+          intent,
+          "delete_contact_missing_name",
+          context,
+          undefined,
+          sessionId,
+          true,
+          ["name"]
+        );
+        return { message, intent };
+      }
+
+      const contact = getContactByName(name);
+      if (!contact) {
+        const message = await this.enhanceResponse(
+          `I couldn't find a contact named "${name}". Would you like to see your contacts?`,
+          intent,
+          "delete_contact_not_found",
+          context,
+          { name },
+          sessionId
+        );
+        return { message, intent };
+      }
+
+      deleteContact(contact.id);
+      const message = await this.enhanceResponse(
+        `✅ Contact "${name}" has been deleted.`,
+        intent,
+        "delete_contact",
+        context,
+        { name },
+        sessionId
+      );
+      return { message, intent };
+    }
+
+    // Update contact
+    if (lowerCommand.includes("update") || lowerCommand.includes("edit")) {
+      if (!name) {
+        const message = await this.enhanceResponse(
+          "Which contact would you like to update? Please provide the contact name.",
+          intent,
+          "update_contact_missing_name",
+          context,
+          undefined,
+          sessionId,
+          true,
+          ["name"]
+        );
+        return { message, intent };
+      }
+
+      const contact = getContactByName(name);
+      if (!contact) {
+        const message = await this.enhanceResponse(
+          `I couldn't find a contact named "${name}". Would you like to see your contacts?`,
+          intent,
+          "update_contact_not_found",
+          context,
+          { name },
+          sessionId
+        );
+        return { message, intent };
+      }
+
+      // For now, just confirm - in future, can extract update fields
+      const message = await this.enhanceResponse(
+        `I found "${name}" in your contacts. What would you like to update? You can change the name, address, notes, or tags.`,
+        intent,
+        "update_contact",
+        context,
+        { contact },
+        sessionId,
+        true,
+        ["update_fields"]
+      );
+      return { message, intent };
+    }
+
+    // Add/Save contact
+    if (lowerCommand.includes("save") || lowerCommand.includes("add")) {
+      if (!name) {
+        const message = await this.enhanceResponse(
+          "I'd be happy to save a contact for you! What name would you like to use?",
+          intent,
+          "add_contact_missing_name",
+          context,
+          undefined,
+          sessionId,
+          true,
+          ["name"]
+        );
+        return { message, intent };
+      }
+
+      if (!address) {
+        const message = await this.enhanceResponse(
+          `I'll save "${name}" as a contact. What's the wallet address?`,
+          intent,
+          "add_contact_missing_address",
+          context,
+          { name },
+          sessionId,
+          true,
+          ["address"]
+        );
+        return { message, intent };
+      }
+
+      // Validate address
+      const addressValidation = validateAddress(address);
+      if (!addressValidation.isValid) {
+        const message = await this.enhanceResponse(
+          `That address doesn't look right. Could you double-check it? It should start with "0x" and be 42 characters long.`,
+          intent,
+          "add_contact_invalid_address",
+          context,
+          { name, address },
+          sessionId,
+          true,
+          ["address"]
+        );
+        return { message, intent };
+      }
+
+      try {
+        const normalizedAddress = addressValidation.normalizedAddress || address;
+        const tagsArray = tags ? tags.split(",").map(t => t.trim()) : undefined;
+        
+        const contact = addContact(name, normalizedAddress, notes, tagsArray);
+        
+        const message = await this.enhanceResponse(
+          `✅ Contact saved! I've added "${name}" (${normalizedAddress.substring(0, 6)}...${normalizedAddress.substring(38)}) to your contacts. You can now say "Send $50 to ${name}" and I'll find the address automatically!`,
+          intent,
+          "add_contact",
+          context,
+          { contact },
+          sessionId
+        );
+        return { message, intent };
+      } catch (error: any) {
+        const message = await this.enhanceResponse(
+          `❌ ${error.message}`,
+          intent,
+          "add_contact_error",
+          context,
+          { name, address, error: error.message },
+          sessionId
+        );
+        return { message, intent };
+      }
+    }
+
+    // Search contacts
+    if (name) {
+      const contacts = searchContacts(name);
+      if (contacts.length === 0) {
+        const message = await this.enhanceResponse(
+          `I couldn't find any contacts matching "${name}". Would you like to see all your contacts?`,
+          intent,
+          "search_contacts_not_found",
+          context,
+          { query: name },
+          sessionId
+        );
+        return { message, intent };
+      }
+
+      let message = `📇 **Found ${contacts.length} contact(s)**\n\n`;
+      for (const contact of contacts) {
+        message += `**${contact.name}**\n`;
+        message += `Address: ${contact.address}\n`;
+        if (contact.notes) message += `Notes: ${contact.notes}\n`;
+        message += `\n`;
+      }
+
+      const enhancedMessage = await this.enhanceResponse(
+        message,
+        intent,
+        "search_contacts",
+        context,
+        { contacts, query: name },
+        sessionId
+      );
+      return { message: enhancedMessage, intent };
+    }
+
+    // Default: show help
+    const message = await this.enhanceResponse(
+      "I can help you manage your contacts! You can:\n• Save an address: 'Save this address as Jake'\n• List contacts: 'Show my contacts'\n• Delete a contact: 'Delete Jake'\n• Search: 'Find Jake'\n\nWhat would you like to do?",
+      intent,
+      "contact_help",
+      context,
+      undefined,
+      sessionId
+    );
+    return { message, intent };
+  }
+
+  private static async handleNotificationIntent(
+    intent: ParsedIntent,
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string },
+    sessionId?: string
+  ): Promise<AIResponse> {
+    if (typeof window === "undefined") {
+      return {
+        message: "Notification management is only available in the browser.",
+        intent,
+      };
+    }
+
+    const { 
+      getNotificationPreferences, 
+      updateNotificationPreferences,
+      getAllNotifications,
+      markAllAsRead,
+      getUnreadCount 
+    } = await import("@/lib/notifications/notification-service");
+    
+    const lowerCommand = intent.rawCommand.toLowerCase();
+
+    // Get preferences
+    if (lowerCommand.includes("preferences") || lowerCommand.includes("settings") || lowerCommand.includes("show")) {
+      const preferences = getNotificationPreferences();
+      const unreadCount = getUnreadCount();
+      
+      let message = `🔔 **Notification Settings**\n\n`;
+      message += `**Transaction Notifications:** ${preferences.transactionNotifications ? "✅ On" : "❌ Off"}\n`;
+      message += `**Balance Change Alerts:** ${preferences.balanceChangeNotifications ? "✅ On" : "❌ Off"}\n`;
+      message += `**Security Alerts:** ${preferences.securityAlerts ? "✅ On" : "❌ Off"}\n`;
+      message += `**System Notifications:** ${preferences.systemNotifications ? "✅ On" : "❌ Off"}\n`;
+      message += `**Minimum Balance Change:** ${preferences.minBalanceChange} USDC\n\n`;
+      message += `**Unread Notifications:** ${unreadCount}`;
+
+      const enhancedMessage = await this.enhanceResponse(
+        message,
+        intent,
+        "show_notification_preferences",
+        context,
+        { preferences, unreadCount },
+        sessionId
+      );
+      return { message: enhancedMessage, intent };
+    }
+
+    // Turn on/off transaction notifications
+    if (lowerCommand.includes("transaction")) {
+      const turnOn = !lowerCommand.includes("off") && !lowerCommand.includes("disable");
+      const preferences = updateNotificationPreferences({ transactionNotifications: turnOn });
+      
+      const message = await this.enhanceResponse(
+        turnOn
+          ? "✅ Transaction notifications are now enabled. I'll notify you when your transactions confirm!"
+          : "❌ Transaction notifications are now disabled.",
+        intent,
+        "toggle_transaction_notifications",
+        context,
+        { enabled: turnOn },
+        sessionId
+      );
+      return { message, intent };
+    }
+
+    // Turn on/off balance notifications
+    if (lowerCommand.includes("balance")) {
+      const turnOn = !lowerCommand.includes("off") && !lowerCommand.includes("disable");
+      const preferences = updateNotificationPreferences({ balanceChangeNotifications: turnOn });
+      
+      const message = await this.enhanceResponse(
+        turnOn
+          ? "✅ Balance change notifications are now enabled. I'll notify you when your balance changes!"
+          : "❌ Balance change notifications are now disabled.",
+        intent,
+        "toggle_balance_notifications",
+        context,
+        { enabled: turnOn },
+        sessionId
+      );
+      return { message, intent };
+    }
+
+    // Turn on/off all notifications
+    if (lowerCommand.includes("all") || lowerCommand.includes("notifications")) {
+      const turnOn = !lowerCommand.includes("off") && !lowerCommand.includes("disable");
+      const preferences = updateNotificationPreferences({
+        transactionNotifications: turnOn,
+        balanceChangeNotifications: turnOn,
+        securityAlerts: turnOn,
+        systemNotifications: turnOn,
+      });
+      
+      const message = await this.enhanceResponse(
+        turnOn
+          ? "✅ All notifications are now enabled!"
+          : "❌ All notifications are now disabled.",
+        intent,
+        "toggle_all_notifications",
+        context,
+        { enabled: turnOn },
+        sessionId
+      );
+      return { message, intent };
+    }
+
+    // Mark all as read
+    if (lowerCommand.includes("read") || lowerCommand.includes("clear")) {
+      markAllAsRead();
+      const message = await this.enhanceResponse(
+        "✅ All notifications marked as read!",
+        intent,
+        "mark_all_read",
+        context,
+        undefined,
+        sessionId
+      );
+      return { message, intent };
+    }
+
+    // Default: show help
+    const message = await this.enhanceResponse(
+      "I can help you manage notifications! You can:\n• View settings: 'Show notification settings'\n• Turn on/off: 'Enable transaction notifications' or 'Disable balance notifications'\n• Mark as read: 'Mark all notifications as read'\n\nWhat would you like to do?",
+      intent,
+      "notification_help",
+      context,
+      undefined,
+      sessionId
+    );
+    return { message, intent };
+  }
+
+  /**
+   * Handle approve token intent - user approves a suspicious token
+   */
+  private static async handleApproveTokenIntent(
+    intent: ParsedIntent,
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string },
+    sessionId?: string
+  ): Promise<AIResponse> {
+    if (typeof window === "undefined") {
+      return {
+        message: "Token approval is only available in the browser.",
+        intent,
+      };
+    }
+
+    const { 
+      approveSuspiciousToken
+    } = await import("@/lib/notifications/incoming-transaction-monitor");
+    const { addSafeToken } = await import("@/lib/security/token-analysis");
+    const { getAllNotifications } = await import("@/lib/notifications/notification-service");
+
+    // Get all notifications to find pending token approvals
+    const notifications = getAllNotifications();
+    const pendingTokenNotifications = notifications.filter(
+      n => n.type === "security" && n.data?.requiresApproval && !n.data?.transfer?.approved
+    );
+
+    if (pendingTokenNotifications.length === 0) {
+      return {
+        message: "No pending token approvals found. All tokens have been processed.",
+        intent,
+      };
+    }
+
+    // Get the most recent pending token
+    const latestNotification = pendingTokenNotifications[0];
+    const transfer = latestNotification.data?.transfer;
+
+    if (!transfer) {
+      return {
+        message: "Token information not found. Please try again.",
+        intent,
+      };
+    }
+
+    // Approve the token
+    approveSuspiciousToken(transfer);
+    addSafeToken(transfer.tokenAddress);
+
+    const message = await this.enhanceResponse(
+      `✅ **Token Approved**\n\n` +
+      `**Token:** ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\n` +
+      `**Amount:** ${transfer.amount}\n` +
+      `**Address:** ${transfer.tokenAddress.slice(0, 10)}...${transfer.tokenAddress.slice(-8)}\n\n` +
+      `The token has been added to your wallet and marked as safe. You can now use it normally.`,
+      intent,
+      "token_approved",
+      context,
+      {
+        transfer,
+        tokenAddress: transfer.tokenAddress,
+      },
+      sessionId
+    );
+
+    return { message, intent };
+  }
+
+  /**
+   * Handle reject token intent - user rejects a suspicious token
+   */
+  private static async handleRejectTokenIntent(
+    intent: ParsedIntent,
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string },
+    sessionId?: string
+  ): Promise<AIResponse> {
+    if (typeof window === "undefined") {
+      return {
+        message: "Token rejection is only available in the browser.",
+        intent,
+      };
+    }
+
+    const { 
+      rejectSuspiciousToken
+    } = await import("@/lib/notifications/incoming-transaction-monitor");
+    const { addScamToken } = await import("@/lib/security/token-analysis");
+    const { getAllNotifications } = await import("@/lib/notifications/notification-service");
+
+    // Get all notifications to find pending token approvals
+    const notifications = getAllNotifications();
+    const pendingTokenNotifications = notifications.filter(
+      n => n.type === "security" && n.data?.requiresApproval && !n.data?.transfer?.rejected
+    );
+
+    if (pendingTokenNotifications.length === 0) {
+      return {
+        message: "No pending token approvals found. All tokens have been processed.",
+        intent,
+      };
+    }
+
+    // Get the most recent pending token
+    const latestNotification = pendingTokenNotifications[0];
+    const transfer = latestNotification.data?.transfer;
+
+    if (!transfer) {
+      return {
+        message: "Token information not found. Please try again.",
+        intent,
+      };
+    }
+
+    // Reject the token
+    rejectSuspiciousToken(transfer);
+    addScamToken(transfer.tokenAddress);
+
+    const message = await this.enhanceResponse(
+      `❌ **Token Rejected**\n\n` +
+      `**Token:** ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\n` +
+      `**Address:** ${transfer.tokenAddress.slice(0, 10)}...${transfer.tokenAddress.slice(-8)}\n\n` +
+      `The token has been rejected and will not be added to your wallet. It has been marked as a scam token for future reference.`,
+      intent,
+      "token_rejected",
+      context,
+      {
+        transfer,
+        tokenAddress: transfer.tokenAddress,
+      },
+      sessionId
+    );
+
+    return { message, intent };
+  }
+
   private static async handleUnknownIntent(
     intent: ParsedIntent,
     context?: { hasWallet?: boolean; balance?: string; walletAddress?: string }

@@ -12,6 +12,10 @@ import { updateAddressHistory, calculateRiskScore } from "@/lib/security/risk-sc
 import { validateAddress } from "@/lib/security/address-validation";
 import type { ChatMessage } from "@/types";
 import { findDueReminders, findDueCharges, scheduleNext, updateSubscription, listSubscriptions } from "@/lib/subscriptions";
+import { monitorTransaction } from "@/lib/notifications/transaction-monitor";
+import { startBalanceMonitoring, stopBalanceMonitoring } from "@/lib/notifications/balance-monitor";
+import { startIncomingTransactionMonitoring, stopIncomingTransactionMonitoring } from "@/lib/notifications/incoming-transaction-monitor";
+import { getAllNotifications, markAsRead, getUnreadCount } from "@/lib/notifications/notification-service";
 
 export default function ChatPage() {
   const router = useRouter();
@@ -72,6 +76,64 @@ export default function ChatPage() {
             // If balance fetch fails, set to 0 (not a mock, just fallback)
             setBalance("0.00");
           }
+
+          // Start balance monitoring for notifications
+          startBalanceMonitoring({
+            walletId: storedWalletId,
+            walletAddress: storedWalletAddress,
+            pollInterval: 15000, // Check every 15 seconds
+            enabled: true,
+            onBalanceChange: (oldBalance, newBalance, change) => {
+              // Add notification message to chat
+              const changeNum = parseFloat(change);
+              const isIncrease = changeNum > 0;
+              const notificationMsg: ChatMessage = {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: isIncrease
+                  ? `💰 **Balance Increased!**\n\nYour balance increased by ${change} USDC!\n\n**New balance:** ${newBalance} USDC`
+                  : `💸 **Balance Decreased**\n\nYour balance decreased by ${Math.abs(changeNum)} USDC.\n\n**New balance:** ${newBalance} USDC`,
+                timestamp: new Date(),
+              };
+              setMessages((prev) => [...prev, notificationMsg]);
+            },
+          });
+
+          // Start incoming transaction monitoring for scam token detection
+          startIncomingTransactionMonitoring({
+            walletId: storedWalletId,
+            walletAddress: storedWalletAddress,
+            pollInterval: 20000, // Check every 20 seconds
+            enabled: true,
+            onIncomingToken: (transfer) => {
+              // Safe or medium risk token - just notify
+              let content = "";
+              if (transfer.analysis?.riskLevel === "medium") {
+                content = `⚠️ **Token Received (Medium Risk)**\n\n**Token:** ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\n**Amount:** ${transfer.amount}\n**Risk Score:** ${transfer.analysis?.riskScore}/100\n\n**Warnings:**\n${transfer.analysis?.riskReasons.map(r => `• ${r}`).join('\n')}\n\nPlease review this token carefully.`;
+              } else {
+                content = `✅ **Token Received**\n\n**Token:** ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\n**Amount:** ${transfer.amount}\n\nToken has been added to your wallet.`;
+              }
+              
+              const notificationMsg: ChatMessage = {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content,
+                timestamp: new Date(),
+              };
+              setMessages((prev) => [...prev, notificationMsg]);
+            },
+            onSuspiciousToken: (transfer) => {
+              // Suspicious/scam token - requires approval
+              const analysis = transfer.analysis!;
+              const notificationMsg: ChatMessage = {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: `🚨 **SUSPICIOUS TOKEN DETECTED**\n\n**Token:** ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\n**Amount:** ${transfer.amount}\n**From:** ${transfer.fromAddress.slice(0, 10)}...${transfer.fromAddress.slice(-8)}\n**Risk Score:** ${analysis.riskScore}/100 (${analysis.riskLevel.toUpperCase()})\n\n**Risk Reasons:**\n${analysis.riskReasons.map(r => `• ${r}`).join('\n')}\n\n⚠️ **This token has been blocked for your safety.**\n\nTo approve it, say: "Approve token" or "Accept token"\nTo reject it, say: "Reject token" or "Block token"`,
+                timestamp: new Date(),
+              };
+              setMessages((prev) => [...prev, notificationMsg]);
+            },
+          });
         } else {
           // No wallet yet - ensure balance is 0
           setBalance("0.00");
@@ -80,7 +142,17 @@ export default function ChatPage() {
     };
     
     loadWallet();
-  }, [router, getBalance]);
+
+    // Cleanup: stop balance monitoring on unmount
+    return () => {
+      if (walletId && walletAddress) {
+        stopBalanceMonitoring(walletId, walletAddress);
+        if (walletAddress) {
+          stopIncomingTransactionMonitoring(walletId, walletAddress);
+        }
+      }
+    };
+  }, [router, getBalance, walletId, walletAddress]);
   
   // Removed periodic background polling for balances to honor on-demand fetching
 
@@ -686,30 +758,45 @@ export default function ChatPage() {
           window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
         }
         
-        // Poll for transaction status (Arc has sub-second finality, so poll faster)
-        if (transaction.id) {
-          pollTransactionStatus(transaction.id, 30, 2000); // 30 attempts, 2 second interval for Arc
+        // Monitor transaction with notification system
+        if (transaction.id && walletId) {
+          monitorTransaction({
+            walletId,
+            transactionId: transaction.id,
+            pollInterval: 2000, // 2 seconds
+            maxAttempts: 30, // 60 seconds total
+            onStatusChange: (status, hash) => {
+              if (status === "confirmed") {
+                // Add confirmation message with Arc-specific info
+                const isValidBlockchainHash = hash && /^0x[a-fA-F0-9]{64}$/.test(hash);
+                const explorerLink = isValidBlockchainHash 
+                  ? `\n\n🔗 [View on ArcScan](https://testnet.arcscan.app/tx/${hash})`
+                  : `\n\n⏳ Transaction is processing. The blockchain hash will be available once the transaction is confirmed.`;
+                
+                const confirmMessage: ChatMessage = {
+                  id: crypto.randomUUID(),
+                  role: "assistant",
+                  content: `✅ Transaction confirmed on Arc!\n\n**Transaction ID:** ${transaction.id}\n${isValidBlockchainHash ? `**Transaction Hash:** ${hash}` : ''}\n**Network:** Arc (sub-second finality)\n**Gas Paid:** USDC (no ETH needed)${explorerLink}`,
+                  timestamp: new Date(),
+                };
+                setMessages((prev) => [...prev, confirmMessage]);
+                
+                // If we have a valid hash, trigger refresh
+                if (typeof window !== 'undefined' && isValidBlockchainHash) {
+                  window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
+                }
+              } else if (status === "failed") {
+                const failedMessage: ChatMessage = {
+                  id: crypto.randomUUID(),
+                  role: "assistant",
+                  content: `❌ Transaction failed. Please check the transaction details and try again.`,
+                  timestamp: new Date(),
+                };
+                setMessages((prev) => [...prev, failedMessage]);
+              }
+            },
+          });
         }
-        
-            // Add confirmation message with Arc-specific info
-            // Only show ArcScan link if we have a valid blockchain hash (0x followed by 64 hex chars)
-            const isValidBlockchainHash = transaction.hash && /^0x[a-fA-F0-9]{64}$/.test(transaction.hash);
-            const explorerLink = isValidBlockchainHash 
-              ? `\n\n🔗 [View on ArcScan](https://testnet.arcscan.app/tx/${transaction.hash})`
-              : `\n\n⏳ Transaction is processing. The blockchain hash will be available once the transaction is confirmed.`;
-            
-            const confirmMessage: ChatMessage = {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content: `✅ Transaction confirmed on Arc!\n\n**Transaction ID:** ${transaction.id}\n${isValidBlockchainHash ? `**Transaction Hash:** ${transaction.hash}` : ''}\n**Network:** Arc (sub-second finality)\n**Gas Paid:** USDC (no ETH needed)${explorerLink}`,
-              timestamp: new Date(),
-            };
-            setMessages((prev) => [...prev, confirmMessage]);
-            
-            // If we already have a valid hash, trigger refresh again
-            if (typeof window !== 'undefined' && isValidBlockchainHash) {
-              window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
-            }
       } else {
         // Show error message
         const errorMessage: ChatMessage = {

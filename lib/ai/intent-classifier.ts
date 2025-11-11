@@ -42,6 +42,10 @@ export type IntentType =
   | "agent"
   | "confirm"
   | "cancel"
+  | "contact"
+  | "notification"
+  | "approve_token"
+  | "reject_token"
   | "help"
   | "unknown";
 
@@ -385,6 +389,46 @@ export class IntentClassifier {
       };
     }
     
+    // Contact intent (check before help to avoid conflicts)
+    if (this.matchesContact(lowerCommand)) {
+      return {
+        intent: "contact",
+        confidence: 0.9,
+        entities: this.extractContactEntities(command, lowerCommand),
+        rawCommand: command,
+      };
+    }
+    
+    // Notification intent
+    if (this.matchesNotification(lowerCommand)) {
+      return {
+        intent: "notification",
+        confidence: 0.9,
+        entities: {},
+        rawCommand: command,
+      };
+    }
+    
+    // Approve token intent
+    if (this.matchesApproveToken(lowerCommand)) {
+      return {
+        intent: "approve_token",
+        confidence: 0.9,
+        entities: this.extractTokenApprovalEntities(command, lowerCommand),
+        rawCommand: command,
+      };
+    }
+    
+    // Reject token intent
+    if (this.matchesRejectToken(lowerCommand)) {
+      return {
+        intent: "reject_token",
+        confidence: 0.9,
+        entities: this.extractTokenApprovalEntities(command, lowerCommand),
+        rawCommand: command,
+      };
+    }
+    
     // Help intent
     if (this.matchesHelp(lowerCommand)) {
       return {
@@ -495,6 +539,151 @@ export class IntentClassifier {
   private static matchesHelp(command: string): boolean {
     const helpKeywords = ["help", "what can you do", "how", "commands", "what do you do"];
     return helpKeywords.some(keyword => command.includes(keyword));
+  }
+
+  private static matchesContact(command: string): boolean {
+    const contactKeywords = [
+      "contact",
+      "save contact",
+      "add contact",
+      "save address",
+      "save as",
+      "my contacts",
+      "list contacts",
+      "show contacts",
+      "delete contact",
+      "remove contact",
+      "update contact",
+      "edit contact",
+      "contacts",
+      "address book",
+      "addressbook"
+    ];
+    return contactKeywords.some(keyword => command.includes(keyword));
+  }
+
+  private static extractContactEntities(original: string, lower: string): ParsedIntent["entities"] {
+    const entities: ParsedIntent["entities"] = {};
+    
+    // Extract contact name (for save/add operations)
+    // Patterns: "save as Jake", "add contact Jake", "save this as John"
+    const savePatterns = [
+      /save\s+(?:this\s+)?(?:address\s+)?as\s+([a-zA-Z0-9\s]{2,30})/i,
+      /add\s+contact\s+([a-zA-Z0-9\s]{2,30})/i,
+      /save\s+contact\s+([a-zA-Z0-9\s]{2,30})/i,
+      /(?:save|add)\s+([a-zA-Z0-9\s]{2,30})\s+(?:as\s+)?contact/i,
+    ];
+    
+    for (const pattern of savePatterns) {
+      const match = original.match(pattern);
+      if (match && match[1]) {
+        entities.recipient = match[1].trim(); // Store name in recipient field
+        break;
+      }
+    }
+    
+    // Extract address (0x followed by 40 hex chars)
+    const addressMatch = original.match(/0x[a-fA-F0-9]{40}/);
+    if (addressMatch) {
+      entities.address = addressMatch[0];
+    }
+    
+    // Extract contact name for lookup (for list/delete/update operations)
+    // Patterns: "delete Jake", "update John", "show Jake's contact"
+    if (!entities.recipient) {
+      const lookupPatterns = [
+        /(?:delete|remove|update|edit|show|get)\s+contact\s+([a-zA-Z0-9\s]{2,30})/i,
+        /(?:delete|remove|update|edit|show|get)\s+([a-zA-Z0-9\s]{2,30})(?:\s+contact)?/i,
+      ];
+      
+      for (const pattern of lookupPatterns) {
+        const match = original.match(pattern);
+        if (match && match[1]) {
+          entities.recipient = match[1].trim();
+          break;
+        }
+      }
+    }
+    
+    // Extract notes (after "notes" or "with notes")
+    const notesMatch = original.match(/(?:notes?|note):\s*([^,]+)/i);
+    if (notesMatch) {
+      entities.date = notesMatch[1].trim(); // Store notes in date field (temporary)
+    }
+    
+    // Extract tags (after "tags" or comma-separated)
+    const tagsMatch = original.match(/(?:tags?|tag):\s*([^,]+)/i);
+    if (tagsMatch) {
+      entities.time = tagsMatch[1].trim(); // Store tags in time field (temporary)
+    }
+    
+    return entities;
+  }
+
+  private static matchesNotification(command: string): boolean {
+    const notificationKeywords = [
+      "notification",
+      "notifications",
+      "notify",
+      "alerts",
+      "alert",
+      "notification settings",
+      "notification preferences",
+      "turn on notifications",
+      "turn off notifications",
+      "enable notifications",
+      "disable notifications"
+    ];
+    return notificationKeywords.some(keyword => command.includes(keyword));
+  }
+
+  private static matchesApproveToken(command: string): boolean {
+    const approveKeywords = [
+      "approve token",
+      "approve this token",
+      "allow token",
+      "accept token",
+      "trust token",
+      "yes approve",
+      "approve it",
+      "add token",
+      "keep token"
+    ];
+    return approveKeywords.some(keyword => command.includes(keyword));
+  }
+
+  private static matchesRejectToken(command: string): boolean {
+    const rejectKeywords = [
+      "reject token",
+      "reject this token",
+      "block token",
+      "deny token",
+      "remove token",
+      "delete token",
+      "no reject",
+      "reject it",
+      "don't approve",
+      "don't accept"
+    ];
+    return rejectKeywords.some(keyword => command.includes(keyword));
+  }
+
+  private static extractTokenApprovalEntities(original: string, lower: string): ParsedIntent["entities"] {
+    const entities: ParsedIntent["entities"] = {};
+    
+    // Extract token address if mentioned
+    const addressMatch = original.match(/0x[a-fA-F0-9]{40}/i);
+    if (addressMatch) {
+      entities.recipient = addressMatch[0];
+    }
+    
+    // Extract token symbol/name if mentioned
+    const tokenMatch = original.match(/(?:token|symbol)\s+(\w+)/i);
+    if (tokenMatch) {
+      entities.currency = tokenMatch[1];
+    }
+    
+    return entities;
   }
 
   private static matchesSchedule(command: string): boolean {

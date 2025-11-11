@@ -46,11 +46,11 @@ next-env.d.ts
 *.swp
 *.swo
 
-# Markdown files (except specific ones we want to keep)
+# Cursor folder - exclude completely
+.cursor/
+
+# Markdown files - exclude all .md files
 *.md
-!.cursor/scratchpad.md
-!.cursor/ui-plans.md
-!FEATURE-CHECKLIST.md
 
 # Sensitive files - NEVER commit these
 .env
