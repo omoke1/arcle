@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, CheckCircle2, XCircle, X } from "lucide-react";
 import { BorderBeamDemo } from "@/components/ui/border-beam-demo";
+import { BorderBeam } from "@/components/ui/border-beam";
 import { hasValidAccess, grantAccess } from "@/lib/auth/invite-codes";
 
 export default function Home() {
@@ -160,14 +161,17 @@ export default function Home() {
           onClick={() => !isVerifying && setShowInviteModal(false)}
         >
           <div 
-            className="bg-onyx border border-white/20 rounded-2xl p-8 max-w-md w-full relative animate-in fade-in zoom-in duration-300"
+            className="bg-onyx border border-white/20 rounded-2xl p-8 max-w-md w-full relative overflow-hidden animate-in fade-in zoom-in duration-300"
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Animated Border Beam */}
+            <BorderBeam size={200} duration={10} delay={0} />
+            
             {/* Close Button */}
             <button
               onClick={() => setShowInviteModal(false)}
               disabled={isVerifying}
-              className="absolute top-4 right-4 text-white/60 hover:text-white/90 transition-colors disabled:opacity-50"
+              className="absolute top-4 right-4 text-white/60 hover:text-white/90 transition-colors disabled:opacity-50 z-10"
             >
               <X className="w-6 h-6" />
             </button>

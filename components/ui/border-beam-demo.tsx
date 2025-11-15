@@ -8,6 +8,9 @@ export function BorderBeamDemo() {
       <span className="pointer-events-none whitespace-pre-wrap bg-gradient-to-b from-black to-gray-300/80 bg-clip-text text-center text-8xl font-semibold leading-none text-transparent dark:from-white dark:to-slate-900/10">
         Arcle
       </span>
+      <p className="mt-4 text-center text-lg md:text-xl text-white/60 font-extralight tracking-wide">
+        money moves faster in chat
+      </p>
       <BorderBeam size={250} duration={12} delay={9} />
     </div>
   );
