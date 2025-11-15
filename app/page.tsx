@@ -262,7 +262,7 @@ export default function Home() {
               <p className="text-xs text-white/40 tracking-wide">
                 Don&apos;t have a code?{" "}
                 <a 
-                  href="https://twitter.com/arcle_app" 
+                  href="https://x.com/ArcleAI" 
                   target="_blank" 
                   rel="noopener noreferrer"
                   className="text-white/60 hover:text-white/80 transition-colors underline"

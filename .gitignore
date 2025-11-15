@@ -61,3 +61,7 @@ next-env.d.ts
 wallet-info.json
 recovery_file_*.dat
 entity-secret-recovery.dat
+
+# Invite code usage data - NEVER commit used codes
+/data/
+data/used-invite-codes.json
