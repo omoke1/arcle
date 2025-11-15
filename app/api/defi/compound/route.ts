@@ -3,7 +3,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createCompoundStrategy, executeAutoCompound, checkAndExecuteCompounds } from "@/lib/defi/auto-compound";
+import { createCompoundStrategy, executeCompound, monitorAndCompound, getStrategiesByWallet } from "@/lib/defi/auto-compound";
 
 export async function GET(request: NextRequest) {
   try {
@@ -12,9 +12,14 @@ export async function GET(request: NextRequest) {
     const walletId = searchParams.get("walletId");
     const walletAddress = searchParams.get("walletAddress");
     
-    if (action === "check" && walletId && walletAddress) {
-      const executions = await checkAndExecuteCompounds(walletId, walletAddress);
+    if (action === "check" && walletAddress) {
+      const executions = await monitorAndCompound(walletAddress);
       return NextResponse.json({ success: true, data: executions });
+    }
+    
+    if (action === "list" && walletId) {
+      const strategies = getStrategiesByWallet(walletId);
+      return NextResponse.json({ success: true, data: strategies });
     }
     
     return NextResponse.json({ success: false, error: "Invalid action" }, { status: 400 });
@@ -26,24 +31,16 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, positionIds, frequency, minRewardAmount, strategyId, walletId, walletAddress } = body;
+    const { action, walletId, name, frequency, minimumYield, reinvestPercentage, walletAddress, strategy } = body;
     
-    if (action === "create-strategy" && positionIds && frequency) {
-      const strategy = createCompoundStrategy(positionIds, frequency, minRewardAmount);
-      return NextResponse.json({ success: true, data: strategy });
+    if (action === "create-strategy" && walletId && name && frequency) {
+      const newStrategy = createCompoundStrategy(walletId, name, frequency, minimumYield, reinvestPercentage);
+      return NextResponse.json({ success: true, data: newStrategy });
     }
     
-    if (action === "execute" && strategyId && walletId && walletAddress) {
-      // In production, get strategy from database
-      // For now, we'll need to pass the full strategy in the request body
-      const strategy = body.strategy;
-      
-      if (!strategy) {
-        return NextResponse.json({ success: false, error: "Strategy not found. Please provide strategy in request body." }, { status: 404 });
-      }
-      
-      const execution = await executeAutoCompound(walletId, walletAddress, strategy);
-      return NextResponse.json({ success: execution !== null, data: execution });
+    if (action === "execute" && strategy && walletAddress) {
+      const execution = await executeCompound(strategy, walletAddress);
+      return NextResponse.json({ success: execution.success, data: execution });
     }
     
     return NextResponse.json({ success: false, error: "Invalid action" }, { status: 400 });

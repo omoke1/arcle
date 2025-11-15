@@ -26,7 +26,7 @@ export function startBalanceMonitoring(
   const {
     walletId,
     walletAddress,
-    pollInterval = 10000, // 10 seconds
+    pollInterval = 5000, // 5 seconds for faster balance updates
     enabled = true,
     onBalanceChange,
   } = config;

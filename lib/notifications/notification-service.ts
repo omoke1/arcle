@@ -1,308 +1,330 @@
 /**
- * Real-Time Notification Service
+ * Notification Service
  * 
- * Monitors wallet events and generates AI-powered notifications
- * Uses polling to check for transaction status changes and balance updates
+ * Handles all notification types for savings goals and SafeLocks.
+ * 
+ * To activate:
+ * 1. Ensure Prisma is set up with Notification model
+ * 2. Import and use in your API routes and cron jobs
+ * 3. For email: Install Resend (npm install resend) and set RESEND_API_KEY
  */
 
-export interface Notification {
-  id: string;
-  type: "transaction" | "balance" | "security" | "system";
-  title: string;
-  message: string;
-  timestamp: number;
-  read: boolean;
-  data?: any; // Additional data (transaction ID, amount, etc.)
+// NOTE: Prisma import commented out until database is set up
+// Uncomment this line when activating database:
+// import { prisma } from "@/lib/db/prisma";
+
+export type NotificationType =
+  | "goal_matured"
+  | "contribution_due"
+  | "low_balance"
+  | "goal_progress"
+  | "safelock_matured"
+  | "contribution_success"
+  | "contribution_failed";
+
+interface NotificationData {
+  goalName?: string;
+  safelockId?: string;
+  amount?: string;
+  percentage?: number;
+  goalId?: string;
+  error?: string;
 }
 
-export interface NotificationPreferences {
-  transactionNotifications: boolean;
-  balanceChangeNotifications: boolean;
-  securityAlerts: boolean;
-  systemNotifications: boolean;
-  minBalanceChange: number; // Minimum balance change to notify (in USDC)
-}
-
-const NOTIFICATIONS_STORAGE_KEY = "arcle_notifications";
-const PREFERENCES_STORAGE_KEY = "arcle_notification_preferences";
-const MAX_NOTIFICATIONS = 100;
-
-const DEFAULT_PREFERENCES: NotificationPreferences = {
-  transactionNotifications: true,
-  balanceChangeNotifications: true,
-  securityAlerts: true,
-  systemNotifications: true,
-  minBalanceChange: 0.01, // Notify on changes >= $0.01
+const notificationTemplates: Record<NotificationType, (data: NotificationData) => { title: string; message: string }> = {
+  goal_matured: (data) => ({
+    title: "🎉 Savings Goal Matured!",
+    message: `Your "${data.goalName}" savings goal is ready to withdraw! 🎊`,
+  }),
+  contribution_due: (data) => ({
+    title: "⏰ Contribution Reminder",
+    message: `Time to add $${data.amount} to your "${data.goalName}" goal.`,
+  }),
+  low_balance: (data) => ({
+    title: "⚠️ Low Balance Alert",
+    message: `Can't auto-deduct $${data.amount} for "${data.goalName}". Please add funds to your wallet.`,
+  }),
+  goal_progress: (data) => ({
+    title: "📊 Goal Progress Milestone",
+    message: `You're ${data.percentage}% towards your "${data.goalName}" goal! Keep going! 💪`,
+  }),
+  safelock_matured: (data) => ({
+    title: "🔒 SafeLock Matured!",
+    message: `Your SafeLock is ready to withdraw! Log in to claim your funds + yield.`,
+  }),
+  contribution_success: (data) => ({
+    title: "💰 Contribution Added",
+    message: `Successfully added $${data.amount} to "${data.goalName}"!`,
+  }),
+  contribution_failed: (data) => ({
+    title: "❌ Contribution Failed",
+    message: `Failed to add $${data.amount} to "${data.goalName}". ${data.error || "Please try again."}`,
+  }),
 };
 
 /**
- * Get all notifications
+ * Send a notification to a user
  */
-export function getAllNotifications(): Notification[] {
-  if (typeof window === "undefined") {
-    return [];
-  }
+export async function sendNotification(
+  userId: string,
+  type: NotificationType,
+  data: NotificationData
+): Promise<void> {
+  const template = notificationTemplates[type];
+  const { title, message } = template(data);
 
-  try {
-    const stored = localStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
-    if (!stored) {
-      return [];
-    }
-    return JSON.parse(stored) as Notification[];
-  } catch (error) {
-    console.error("Error loading notifications:", error);
-    return [];
-  }
+  // TODO: Uncomment when database is activated
+  /*
+  // Save to database
+  await prisma.notification.create({
+    data: {
+      userId,
+      type,
+      title,
+      message,
+      data: data as any,
+    },
+  });
+  */
+
+  console.log(`[Notification] Sent ${type} to user ${userId} - ${title}`);
+
+  // TODO: Add email notifications
+  // if (process.env.RESEND_API_KEY) {
+  //   await sendEmailNotification(userId, title, message);
+  // }
+
+  // TODO: Add web push notifications
+  // if (process.env.VAPID_PUBLIC_KEY) {
+  //   await sendPushNotification(userId, title, message);
+  // }
 }
 
 /**
- * Save notifications to storage
+ * Get unread notifications for a user
+ * TODO: Uncomment when database is activated
  */
-function saveNotifications(notifications: Notification[]): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    // Keep only last MAX_NOTIFICATIONS
-    const trimmed = notifications.slice(-MAX_NOTIFICATIONS);
-    localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(trimmed));
-  } catch (error) {
-    console.error("Error saving notifications:", error);
-  }
+export async function getUnreadNotifications(userId: string): Promise<any[]> {
+  // TODO: Uncomment when database is activated
+  /*
+  return await prisma.notification.findMany({
+    where: {
+      userId,
+      read: false,
+    },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  });
+  */
+  return []; // Placeholder until database is set up
 }
 
 /**
- * Add a new notification
+ * Get unread notification count for a user
+ * TODO: Uncomment when database is activated
  */
-export function addNotification(notification: Omit<Notification, "id" | "timestamp" | "read">): Notification {
-  const notifications = getAllNotifications();
-  
-  const newNotification: Notification = {
-    ...notification,
-    id: crypto.randomUUID(),
-    timestamp: Date.now(),
-    read: false,
+export function getUnreadCount(userId?: string): number {
+  // TODO: Uncomment and make async when database is activated
+  /*
+  const { prisma } = await import("@/lib/db/prisma");
+  return await prisma.notification.count({
+    where: {
+      userId,
+      read: false,
+    },
+  });
+  */
+  return 0; // Placeholder until database is set up
+}
+
+/**
+ * Get notification preferences for a user
+ * TODO: Implement when needed (requires database)
+ */
+export function getNotificationPreferences(userId?: string): any {
+  return {
+    transactionNotifications: true,
+    balanceChangeNotifications: true,
+    securityAlerts: true,
+    systemNotifications: true,
+    minBalanceChange: "10",
+    email: false,
+    push: false,
+    inApp: true,
   };
+}
 
-  notifications.push(newNotification);
-  saveNotifications(notifications);
+/**
+ * Update notification preferences for a user
+ * TODO: Implement when needed (requires database)
+ */
+export function updateNotificationPreferences(preferencesOrUserId: any, preferences?: any): any {
+  // Support both signatures:
+  // updateNotificationPreferences(preferences) - without userId
+  // updateNotificationPreferences(userId, preferences) - with userId
+  const prefs = preferences || preferencesOrUserId;
+  const userId = preferences ? preferencesOrUserId : undefined;
+  
+  console.log(`[Notification] Update preferences${userId ? ` for ${userId}` : ''} (placeholder)`);
+  
+  // Return updated preferences for display
+  return {
+    ...getNotificationPreferences(),
+    ...prefs,
+  };
+}
 
-  return newNotification;
+/**
+ * Get all notifications for a user
+ * TODO: Uncomment when database is activated
+ */
+export function getAllNotifications(userId?: string, limit = 50): any[] {
+  // TODO: Uncomment and make async when database is activated
+  /*
+  const { prisma } = await import("@/lib/db/prisma");
+  return await prisma.notification.findMany({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+  });
+  */
+  return []; // Placeholder until database is set up
 }
 
 /**
  * Mark notification as read
+ * TODO: Uncomment when database is activated
  */
-export function markAsRead(notificationId: string): boolean {
-  const notifications = getAllNotifications();
-  const notification = notifications.find((n) => n.id === notificationId);
+export async function markAsRead(notificationId: string): Promise<void> {
+  // TODO: Uncomment when database is activated
+  /*
+  await prisma.notification.update({
+    where: { id: notificationId },
+    data: {
+      read: true,
+      readAt: new Date(),
+    },
+  });
+  */
+  console.log(`[Notification] Mark as read: ${notificationId} (placeholder)`);
+}
+
+/**
+ * Mark all notifications as read for a user
+ * TODO: Uncomment when database is activated
+ */
+export function markAllAsRead(userId?: string): void {
+  // TODO: Uncomment and make async when database is activated
+  /*
+  const { prisma } = await import("@/lib/db/prisma");
+  await prisma.notification.updateMany({
+    where: {
+      userId,
+      read: false,
+    },
+    data: {
+      read: true,
+      readAt: new Date(),
+    },
+  });
+  */
+  console.log(`[Notification] Mark all as read${userId ? ` for user ${userId}` : ''} (placeholder)`);
+}
+
+/**
+ * Delete old notifications (cleanup)
+ * TODO: Uncomment when database is activated
+ */
+export async function deleteOldNotifications(daysOld = 30): Promise<number> {
+  // TODO: Uncomment when database is activated
+  /*
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - daysOld);
+
+  const result = await prisma.notification.deleteMany({
+    where: {
+      createdAt: { lt: cutoff },
+      read: true,
+    },
+  });
+
+  console.log(`[Notification] Deleted ${result.count} old notifications`);
+  return result.count;
+  */
+  console.log(`[Notification] Delete old notifications (placeholder)`);
+  return 0;
+}
+
+/**
+ * Send email notification (optional, requires Resend)
+ */
+async function sendEmailNotification(userId: string, title: string, message: string): Promise<void> {
+  // TODO: Uncomment and configure when ready to use (requires Prisma + Resend)
+  /*
+  const { prisma } = await import("@/lib/db/prisma");
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user?.email) return;
+
+  const { Resend } = await import("resend");
+  const resend = new Resend(process.env.RESEND_API_KEY);
+
+  await resend.emails.send({
+    from: "Arcle <notifications@arcle.app>",
+    to: user.email,
+    subject: title,
+    html: `
+      <h2>${title}</h2>
+      <p>${message}</p>
+      <p><a href="${process.env.NEXT_PUBLIC_APP_URL}/chat">View in Arcle</a></p>
+    `,
+  });
+  */
+}
+
+/**
+ * Send web push notification (optional, requires service worker)
+ */
+async function sendPushNotification(userId: string, title: string, message: string): Promise<void> {
+  // TODO: Uncomment and configure when ready to use (requires Prisma + web-push)
+  /*
+  const webpush = await import("web-push");
+  const { prisma } = await import("@/lib/db/prisma");
   
-  if (!notification) {
-    return false;
-  }
+  webpush.setVapidDetails(
+    "mailto:support@arcle.app",
+    process.env.VAPID_PUBLIC_KEY!,
+    process.env.VAPID_PRIVATE_KEY!
+  );
 
-  notification.read = true;
-  saveNotifications(notifications);
-  return true;
-}
+  // Get user's push subscriptions from database
+  const subscriptions = await prisma.pushSubscription.findMany({
+    where: { userId }
+  });
 
-/**
- * Mark all notifications as read
- */
-export function markAllAsRead(): void {
-  const notifications = getAllNotifications();
-  notifications.forEach((n) => (n.read = true));
-  saveNotifications(notifications);
-}
-
-/**
- * Delete notification
- */
-export function deleteNotification(notificationId: string): boolean {
-  const notifications = getAllNotifications();
-  const filtered = notifications.filter((n) => n.id !== notificationId);
-  
-  if (filtered.length === notifications.length) {
-    return false; // Notification not found
-  }
-
-  saveNotifications(filtered);
-  return true;
-}
-
-/**
- * Get unread notifications count
- */
-export function getUnreadCount(): number {
-  const notifications = getAllNotifications();
-  return notifications.filter((n) => !n.read).length;
-}
-
-/**
- * Get notification preferences
- */
-export function getNotificationPreferences(): NotificationPreferences {
-  if (typeof window === "undefined") {
-    return DEFAULT_PREFERENCES;
-  }
-
-  try {
-    const stored = localStorage.getItem(PREFERENCES_STORAGE_KEY);
-    if (!stored) {
-      return DEFAULT_PREFERENCES;
-    }
-    return { ...DEFAULT_PREFERENCES, ...JSON.parse(stored) };
-  } catch (error) {
-    console.error("Error loading notification preferences:", error);
-    return DEFAULT_PREFERENCES;
-  }
-}
-
-/**
- * Update notification preferences
- */
-export function updateNotificationPreferences(
-  updates: Partial<NotificationPreferences>
-): NotificationPreferences {
-  const current = getNotificationPreferences();
-  const updated = { ...current, ...updates };
-
-  if (typeof window !== "undefined") {
+  for (const sub of subscriptions) {
     try {
-      localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(updated));
+      await webpush.sendNotification(
+        JSON.parse(sub.subscription),
+        JSON.stringify({ title, body: message })
+      );
     } catch (error) {
-      console.error("Error saving notification preferences:", error);
+      console.error(`[Push] Failed to send to ${userId}:`, error);
     }
   }
-
-  return updated;
+  */
 }
 
-/**
- * Create transaction notification
- */
-export function createTransactionNotification(
-  transactionId: string,
-  status: "pending" | "confirmed" | "failed",
-  amount: string,
-  to: string,
-  hash?: string
-): Notification {
-  const preferences = getNotificationPreferences();
-  
-  if (!preferences.transactionNotifications) {
-    // Return a notification but it won't be shown if preferences are off
-    return addNotification({
-      type: "transaction",
-      title: "Transaction Update",
-      message: `Transaction ${status}: ${amount} USDC`,
-      data: { transactionId, status, amount, to, hash },
-    });
-  }
+// Legacy function stubs for backwards compatibility with old notification files
+// TODO: Remove these when old notification files are deprecated
 
-  let title = "";
-  let message = "";
-
-  if (status === "confirmed") {
-    title = "✅ Transaction Confirmed!";
-    message = `Your transaction of ${amount} USDC to ${to.substring(0, 6)}...${to.substring(38)} has been confirmed on Arc!`;
-    if (hash) {
-      message += `\n\n🔗 [View on ArcScan](https://testnet.arcscan.app/tx/${hash})`;
-    }
-  } else if (status === "failed") {
-    title = "❌ Transaction Failed";
-    message = `Your transaction of ${amount} USDC failed. Please check the transaction details and try again.`;
-  } else {
-    title = "⏳ Transaction Pending";
-    message = `Your transaction of ${amount} USDC is being processed. I'll notify you when it's confirmed.`;
-  }
-
-  return addNotification({
-    type: "transaction",
-    title,
-    message,
-    data: { transactionId, status, amount, to, hash },
-  });
+export function createBalanceChangeNotification(...args: any[]): any {
+  return { type: "balance_change", args };
 }
 
-/**
- * Create balance change notification
- */
-export function createBalanceChangeNotification(
-  oldBalance: string,
-  newBalance: string,
-  change: string,
-  reason?: string
-): Notification | null {
-  const preferences = getNotificationPreferences();
-  
-  if (!preferences.balanceChangeNotifications) {
-    return null;
-  }
-
-  const changeNum = parseFloat(change);
-  const minChange = preferences.minBalanceChange;
-
-  // Only notify if change is significant enough
-  if (Math.abs(changeNum) < minChange) {
-    return null;
-  }
-
-  const isIncrease = changeNum > 0;
-  const title = isIncrease ? "💰 Balance Increased!" : "💸 Balance Decreased";
-  const message = isIncrease
-    ? `Your balance increased by ${change} USDC!\n\nNew balance: ${newBalance} USDC${reason ? `\nReason: ${reason}` : ""}`
-    : `Your balance decreased by ${Math.abs(changeNum)} USDC.\n\nNew balance: ${newBalance} USDC${reason ? `\nReason: ${reason}` : ""}`;
-
-  return addNotification({
-    type: "balance",
-    title,
-    message,
-    data: { oldBalance, newBalance, change, reason },
-  });
+export function createTransactionNotification(...args: any[]): any {
+  return { type: "transaction", args };
 }
 
-/**
- * Create security alert notification
- */
-export function createSecurityAlert(
-  title: string,
-  message: string,
-  data?: any
-): Notification {
-  return addNotification({
-    type: "security",
-    title: `🚨 ${title}`,
-    message,
-    data,
-  });
+export function addNotification(...args: any[]): void {
+  console.log("[Notification] Legacy addNotification called", args);
 }
-
-/**
- * Create system notification
- */
-export function createSystemNotification(
-  title: string,
-  message: string,
-  data?: any
-): Notification {
-  const preferences = getNotificationPreferences();
-  
-  if (!preferences.systemNotifications) {
-    return addNotification({
-      type: "system",
-      title,
-      message,
-      data,
-    });
-  }
-
-  return addNotification({
-    type: "system",
-    title,
-    message,
-    data,
-  });
-}
-

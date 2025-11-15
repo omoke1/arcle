@@ -11,12 +11,14 @@ import type { ChatMessage as ChatMessageType } from "@/types";
 
 interface ChatInterfaceProps {
   messages?: ChatMessageType[];
-  onSendMessage?: (message: string) => void;
+  onSendMessage?: (message: string, replyTo?: string) => void;
   isLoading?: boolean;
   walletAddress?: string | null;
   walletId?: string | null;
   onConfirmTransaction?: () => void;
   onCancelTransaction?: () => void;
+  replyToMessageId?: string | null; // Currently selected message to reply to
+  onReplyToMessage?: (messageId: string | null) => void; // Callback to set reply target
 }
 
 export function ChatInterface({
@@ -27,9 +29,24 @@ export function ChatInterface({
   walletId,
   onConfirmTransaction,
   onCancelTransaction,
+  replyToMessageId,
+  onReplyToMessage,
 }: ChatInterfaceProps) {
   const [localMessages, setLocalMessages] = useState<ChatMessageType[]>(messages);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  // Handle reply to a message
+  const handleReply = (messageId: string) => {
+    if (onReplyToMessage) {
+      onReplyToMessage(messageId);
+    }
+  };
+  
+  // Find the message being replied to
+  const getRepliedMessage = (replyToId?: string) => {
+    if (!replyToId) return undefined;
+    return localMessages.find(m => m.id === replyToId);
+  };
 
   useEffect(() => {
     setLocalMessages(messages);
@@ -84,12 +101,22 @@ export function ChatInterface({
             // Check if message has transaction preview
             const hasTransactionPreview = message.transactionPreview;
 
+            const repliedMessage = getRepliedMessage(message.replyTo);
+            
             return (
               <ChatMessage
                 key={message.id}
                 role={message.role}
                 content={message.content}
                 timestamp={message.timestamp}
+                messageId={message.id}
+                replyTo={message.replyTo}
+                repliedMessage={repliedMessage ? {
+                  id: repliedMessage.id,
+                  content: repliedMessage.content,
+                  role: repliedMessage.role,
+                } : undefined}
+                onReply={handleReply}
               >
                 {showQR && walletAddress && (
                   <div className="mt-3 max-w-xs">
@@ -98,7 +125,7 @@ export function ChatInterface({
                 )}
                 {showHistory && walletId && (
                   <div className="mt-3 max-w-2xl">
-                    <TransactionHistory walletId={walletId} limit={5} />
+                    <TransactionHistory walletId={walletId} walletAddress={walletAddress || undefined} limit={5} />
                   </div>
                 )}
                 {hasTransactionPreview && (

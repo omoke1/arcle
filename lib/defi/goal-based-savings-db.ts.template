@@ -1,0 +1,463 @@
+/**
+ * Goal-Based Savings Implementation (Database Version)
+ * 
+ * This is the production-ready version that uses Prisma for persistence.
+ * 
+ * To activate:
+ * 1. Set up database (see prisma/schema.prisma)
+ * 2. Rename this file to goal-based-savings.ts (backup the old one)
+ * 3. Update imports in API routes and AI service
+ * 
+ * Or just replace the functions in the existing goal-based-savings.ts
+ */
+
+import { prisma } from "@/lib/db/prisma";
+import type { SavingsGoal, SavingsTransaction } from "@prisma/client";
+
+export type SavingsGoalStatus = "active" | "matured" | "broken";
+export type SavingsFrequency = "daily" | "weekly" | "monthly" | "one-time";
+
+export interface SavingsBreakdown {
+  principal: string;
+  yieldEarned: string;
+  penalty: string;
+  netAmount: string;
+  daysLocked: number;
+  daysRemaining: number;
+  progressPercentage: number;
+}
+
+/**
+ * Create a new savings goal
+ */
+export async function createSavingsGoal(params: {
+  userId: string;
+  walletId: string;
+  goalName: string;
+  goalCategory?: string;
+  targetAmount: string;
+  initialDeposit: string;
+  lockPeriod: number;
+  contributionAmount?: string;
+  contributionFrequency?: SavingsFrequency;
+  autoDeduct?: boolean;
+  reminderEnabled?: boolean;
+}): Promise<SavingsGoal> {
+  const {
+    userId,
+    walletId,
+    goalName,
+    goalCategory = "custom",
+    targetAmount,
+    initialDeposit,
+    lockPeriod,
+    contributionAmount,
+    contributionFrequency = "monthly",
+    autoDeduct = false,
+    reminderEnabled = true,
+  } = params;
+
+  // Calculate APY and penalty based on lock period
+  const { bonusAPY, penaltyRate } = calculateRatesForLockPeriod(lockPeriod);
+
+  const now = new Date();
+  const maturityDate = new Date(now.getTime() + lockPeriod * 24 * 60 * 60 * 1000);
+
+  const goal = await prisma.savingsGoal.create({
+    data: {
+      userId,
+      walletId,
+      goalName,
+      goalCategory,
+      targetAmount,
+      currentAmount: initialDeposit,
+      contributionAmount,
+      contributionFrequency,
+      lockPeriod,
+      penaltyRate,
+      bonusAPY,
+      maturityDate,
+      lastContributionAt: now,
+      nextContributionAt: contributionAmount
+        ? calculateNextContribution(now, contributionFrequency)
+        : null,
+      autoDeduct,
+      reminderEnabled,
+    },
+  });
+
+  // Record initial deposit transaction
+  await prisma.savingsTransaction.create({
+    data: {
+      goalId: goal.id,
+      type: "deposit",
+      amount: initialDeposit,
+      balanceAfter: initialDeposit,
+    },
+  });
+
+  console.log(`[Savings DB] Created goal: ${goalName} - $${targetAmount} over ${lockPeriod} days`);
+
+  return goal;
+}
+
+/**
+ * Add contribution to savings goal
+ */
+export async function addContribution(
+  goalId: string,
+  amount: string
+): Promise<{ success: boolean; newBalance: string; error?: string }> {
+  const goal = await prisma.savingsGoal.findUnique({ where: { id: goalId } });
+
+  if (!goal) {
+    return { success: false, newBalance: "0", error: "Savings goal not found" };
+  }
+
+  if (goal.status !== "active") {
+    return { success: false, newBalance: goal.currentAmount.toString(), error: `Goal is ${goal.status}` };
+  }
+
+  const newBalance = (parseFloat(goal.currentAmount.toString()) + parseFloat(amount)).toFixed(2);
+  const now = new Date();
+
+  await prisma.savingsGoal.update({
+    where: { id: goalId },
+    data: {
+      currentAmount: newBalance,
+      lastContributionAt: now,
+      nextContributionAt: goal.contributionFrequency
+        ? calculateNextContribution(now, goal.contributionFrequency as SavingsFrequency)
+        : null,
+    },
+  });
+
+  // Record transaction
+  await prisma.savingsTransaction.create({
+    data: {
+      goalId,
+      type: "deposit",
+      amount,
+      balanceAfter: newBalance,
+    },
+  });
+
+  console.log(`[Savings DB] Added $${amount} to goal ${goalId}. New balance: $${newBalance}`);
+
+  return { success: true, newBalance };
+}
+
+/**
+ * Break savings goal early (with penalty)
+ */
+export async function breakSavingsEarly(goalId: string): Promise<SavingsBreakdown | null> {
+  const goal = await prisma.savingsGoal.findUnique({ where: { id: goalId } });
+
+  if (!goal) {
+    console.error(`[Savings DB] Goal ${goalId} not found`);
+    return null;
+  }
+
+  if (goal.status !== "active") {
+    console.error(`[Savings DB] Goal ${goalId} is ${goal.status}, cannot break`);
+    return null;
+  }
+
+  const breakdown = calculateSavingsBreakdown(goal);
+
+  // Update goal status
+  await prisma.savingsGoal.update({
+    where: { id: goalId },
+    data: { status: "broken" },
+  });
+
+  // Record penalty transaction
+  await prisma.savingsTransaction.create({
+    data: {
+      goalId,
+      type: "penalty",
+      amount: breakdown.penalty,
+      balanceAfter: breakdown.netAmount,
+    },
+  });
+
+  // Record withdrawal
+  await prisma.savingsTransaction.create({
+    data: {
+      goalId,
+      type: "withdrawal",
+      amount: breakdown.netAmount,
+      balanceAfter: "0",
+    },
+  });
+
+  console.log(`[Savings DB] Broke goal ${goalId} early. Penalty: $${breakdown.penalty}, Net: $${breakdown.netAmount}`);
+
+  return breakdown;
+}
+
+/**
+ * Mature savings goal (no penalty)
+ */
+export async function matureSavingsGoal(goalId: string): Promise<SavingsBreakdown | null> {
+  const goal = await prisma.savingsGoal.findUnique({ where: { id: goalId } });
+
+  if (!goal) {
+    return null;
+  }
+
+  const now = new Date();
+
+  if (now < goal.maturityDate) {
+    console.warn(`[Savings DB] Goal ${goalId} not yet matured. Use breakSavingsEarly() instead.`);
+    return null;
+  }
+
+  // Calculate final amount with full yield, no penalty
+  const daysLocked = Math.floor((now.getTime() - goal.createdAt.getTime()) / (24 * 60 * 60 * 1000));
+  const yieldEarned = calculateYield(goal.currentAmount.toString(), parseFloat(goal.bonusAPY.toString()), daysLocked);
+  const totalAmount = (parseFloat(goal.currentAmount.toString()) + parseFloat(yieldEarned)).toFixed(2);
+
+  const breakdown: SavingsBreakdown = {
+    principal: goal.currentAmount.toString(),
+    yieldEarned,
+    penalty: "0",
+    netAmount: totalAmount,
+    daysLocked,
+    daysRemaining: 0,
+    progressPercentage: 100,
+  };
+
+  // Update goal status
+  await prisma.savingsGoal.update({
+    where: { id: goalId },
+    data: { status: "matured" },
+  });
+
+  // Record maturity
+  await prisma.savingsTransaction.create({
+    data: {
+      goalId,
+      type: "maturity",
+      amount: totalAmount,
+      balanceAfter: "0",
+    },
+  });
+
+  console.log(`[Savings DB] Matured goal ${goalId}. Total: $${totalAmount} (Principal: $${goal.currentAmount} + Yield: $${yieldEarned})`);
+
+  return breakdown;
+}
+
+/**
+ * Calculate savings breakdown (for display or early withdrawal)
+ */
+export function calculateSavingsBreakdown(goal: SavingsGoal): SavingsBreakdown {
+  const now = Date.now();
+  const daysLocked = Math.floor((now - goal.createdAt.getTime()) / (24 * 60 * 60 * 1000));
+  const totalDays = goal.lockPeriod;
+  const daysRemaining = Math.max(0, totalDays - daysLocked);
+
+  // Calculate yield earned so far
+  const yieldEarned = calculateYield(
+    goal.currentAmount.toString(),
+    parseFloat(goal.bonusAPY.toString()),
+    daysLocked
+  );
+
+  // Calculate progressive penalty based on how early the withdrawal is
+  const progressPercentage = (daysLocked / totalDays) * 100;
+  const penaltyRate = calculateProgressivePenalty(parseFloat(goal.penaltyRate.toString()), progressPercentage);
+
+  // Penalty is on principal only, not on yield
+  const penaltyAmount = (parseFloat(goal.currentAmount.toString()) * (penaltyRate / 100)).toFixed(2);
+
+  // Net amount = principal - penalty + yield (you keep earned yield!)
+  const netAmount = (
+    parseFloat(goal.currentAmount.toString()) -
+    parseFloat(penaltyAmount) +
+    parseFloat(yieldEarned)
+  ).toFixed(2);
+
+  return {
+    principal: goal.currentAmount.toString(),
+    yieldEarned,
+    penalty: penaltyAmount,
+    netAmount,
+    daysLocked,
+    daysRemaining,
+    progressPercentage: Math.min(100, progressPercentage),
+  };
+}
+
+/**
+ * Calculate progressive penalty (decreases as you get closer to maturity)
+ */
+function calculateProgressivePenalty(basePenaltyRate: number, progressPercentage: number): number {
+  if (progressPercentage >= 100) return 0; // Fully matured
+
+  // Progressive reduction
+  if (progressPercentage < 16.67) return basePenaltyRate; // 0-30 days: full penalty
+  if (progressPercentage < 33.33) return basePenaltyRate * 0.7; // 30-60 days: 70%
+  if (progressPercentage < 50) return basePenaltyRate * 0.5; // 60-90 days: 50%
+  if (progressPercentage < 66.67) return basePenaltyRate * 0.3; // 90-120 days: 30%
+  if (progressPercentage < 83.33) return basePenaltyRate * 0.2; // 120-150 days: 20%
+  return basePenaltyRate * 0.1; // 150+ days: 10% (almost there!)
+}
+
+/**
+ * Calculate rates based on lock period
+ */
+function calculateRatesForLockPeriod(lockPeriod: number): { bonusAPY: number; penaltyRate: number } {
+  if (lockPeriod >= 365) {
+    return { bonusAPY: 15, penaltyRate: 10 }; // 1 year: 15% APY, 10% penalty
+  } else if (lockPeriod >= 180) {
+    return { bonusAPY: 12, penaltyRate: 7 }; // 6 months: 12% APY, 7% penalty
+  } else if (lockPeriod >= 90) {
+    return { bonusAPY: 10, penaltyRate: 5 }; // 3 months: 10% APY, 5% penalty
+  } else if (lockPeriod >= 60) {
+    return { bonusAPY: 9, penaltyRate: 5 }; // 2 months: 9% APY, 5% penalty
+  } else if (lockPeriod >= 30) {
+    return { bonusAPY: 8, penaltyRate: 5 }; // 1 month: 8% APY, 5% penalty
+  } else {
+    return { bonusAPY: 7, penaltyRate: 3 }; // < 1 month: 7% APY, 3% penalty
+  }
+}
+
+/**
+ * Calculate yield earned
+ */
+function calculateYield(principal: string, apy: number, daysLocked: number): string {
+  const principalNum = parseFloat(principal);
+  const dailyRate = apy / 365 / 100;
+  const yield_ = principalNum * dailyRate * daysLocked;
+  return yield_.toFixed(2);
+}
+
+/**
+ * Calculate next contribution date
+ */
+function calculateNextContribution(from: Date, frequency: SavingsFrequency): Date {
+  const intervals = {
+    daily: 1 * 24 * 60 * 60 * 1000,
+    weekly: 7 * 24 * 60 * 60 * 1000,
+    monthly: 30 * 24 * 60 * 60 * 1000,
+    "one-time": 0,
+  };
+
+  return new Date(from.getTime() + intervals[frequency]);
+}
+
+/**
+ * Get all savings goals for a user
+ */
+export async function getSavingsGoalsByUser(userId: string): Promise<SavingsGoal[]> {
+  return await prisma.savingsGoal.findMany({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+/**
+ * Get single savings goal
+ */
+export async function getSavingsGoal(goalId: string): Promise<SavingsGoal | null> {
+  return await prisma.savingsGoal.findUnique({ where: { id: goalId } });
+}
+
+/**
+ * Get transactions for a goal
+ */
+export async function getSavingsTransactions(goalId: string): Promise<SavingsTransaction[]> {
+  return await prisma.savingsTransaction.findMany({
+    where: { goalId },
+    orderBy: { timestamp: "desc" },
+  });
+}
+
+/**
+ * Check for goals due for contribution reminder
+ */
+export async function getGoalsDueForContribution(): Promise<SavingsGoal[]> {
+  const now = new Date();
+  return await prisma.savingsGoal.findMany({
+    where: {
+      status: "active",
+      reminderEnabled: true,
+      nextContributionAt: { lte: now },
+    },
+  });
+}
+
+/**
+ * Check for matured goals
+ */
+export async function getMaturedGoals(): Promise<SavingsGoal[]> {
+  const now = new Date();
+  return await prisma.savingsGoal.findMany({
+    where: {
+      status: "active",
+      maturityDate: { lte: now },
+    },
+  });
+}
+
+/**
+ * Format goal for display
+ */
+export function formatSavingsGoal(goal: SavingsGoal): string {
+  const breakdown = calculateSavingsBreakdown(goal);
+  const maturityDate = goal.maturityDate.toLocaleDateString();
+
+  let message = `🎯 ${goal.goalName}\n\n`;
+  message += `Target: $${goal.targetAmount}\n`;
+  message += `Current: $${goal.currentAmount}\n`;
+  message += `Progress: ${breakdown.progressPercentage.toFixed(1)}%\n`;
+  message += `Yield Earned: $${breakdown.yieldEarned}\n`;
+  message += `APY: ${goal.bonusAPY}%\n`;
+  message += `Maturity: ${maturityDate}\n`;
+  message += `Days Remaining: ${breakdown.daysRemaining}\n`;
+  message += `Status: ${goal.status}\n\n`;
+
+  if (goal.status === "active") {
+    message += `⚠️ Early withdrawal penalty: $${breakdown.penalty} (${goal.penaltyRate}% base)\n`;
+    message += `Net if broken now: $${breakdown.netAmount}`;
+  }
+
+  return message;
+}
+
+/**
+ * Format all goals for a user
+ */
+export function formatAllSavingsGoals(goals: SavingsGoal[]): string {
+  if (goals.length === 0) {
+    return "You don't have any savings goals yet. Create one to start saving!";
+  }
+
+  const active = goals.filter(g => g.status === "active");
+  const matured = goals.filter(g => g.status === "matured");
+  const broken = goals.filter(g => g.status === "broken");
+
+  let message = `💰 Your Savings Goals (${goals.length})\n\n`;
+
+  if (active.length > 0) {
+    message += `📊 Active (${active.length}):\n`;
+    active.forEach((goal, i) => {
+      const breakdown = calculateSavingsBreakdown(goal);
+      message += `${i + 1}. ${goal.goalName}: $${goal.currentAmount}/$${goal.targetAmount} (${breakdown.progressPercentage.toFixed(0)}%)\n`;
+    });
+    message += `\n`;
+  }
+
+  if (matured.length > 0) {
+    message += `✅ Matured (${matured.length})\n`;
+  }
+
+  if (broken.length > 0) {
+    message += `❌ Broken (${broken.length})\n`;
+  }
+
+  return message;
+}
+

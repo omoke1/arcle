@@ -144,14 +144,17 @@ export async function circleApiRequest<T>(
         message: response.statusText,
       };
       
-      // Log full error details for debugging
-      console.error("Circle API Error:", {
-        status: response.status,
-        statusText: response.statusText,
-        error: errorData,
-        endpoint,
-        url,
-      });
+      // Only log errors that aren't expected 404s (e.g., for UUID bridge IDs)
+      // Suppress 404 errors to reduce console noise
+      if (response.status !== 404) {
+        console.error("Circle API Error:", {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorData,
+          endpoint,
+          url,
+        });
+      }
       
       const errorMessage = error.message || 
                           error.errors?.[0]?.message || 

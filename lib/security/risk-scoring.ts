@@ -142,7 +142,7 @@ export async function calculateRiskScore(
           score: Math.min(score, 100),
           level: "high",
           reasons,
-          blocked: true,
+          blocked: false, // Never block - allow user to proceed after seeing warnings
         };
       }
     }

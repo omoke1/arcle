@@ -1,0 +1,266 @@
+[
+  {
+    "route": {
+      "name": "ARC → Base",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "BASE-SEPOLIA",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "circle-api-v2",
+    "error": "Circle API key not configured"
+  },
+  {
+    "route": {
+      "name": "ARC → Base",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "BASE-SEPOLIA",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "circle-api-v1",
+    "error": "Circle API key not configured"
+  },
+  {
+    "route": {
+      "name": "ARC → Base",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "BASE-SEPOLIA",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "gateway",
+    "error": "fetch failed"
+  },
+  {
+    "route": {
+      "name": "ARC → Arbitrum",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "ARB-SEPOLIA",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "circle-api-v2",
+    "error": "Circle API key not configured"
+  },
+  {
+    "route": {
+      "name": "ARC → Arbitrum",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "ARB-SEPOLIA",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "circle-api-v1",
+    "error": "Circle API key not configured"
+  },
+  {
+    "route": {
+      "name": "ARC → Arbitrum",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "ARB-SEPOLIA",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "gateway",
+    "error": "fetch failed"
+  },
+  {
+    "route": {
+      "name": "ARC → Ethereum",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "ETH-SEPOLIA",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "circle-api-v2",
+    "error": "Circle API key not configured"
+  },
+  {
+    "route": {
+      "name": "ARC → Ethereum",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "ETH-SEPOLIA",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "circle-api-v1",
+    "error": "Circle API key not configured"
+  },
+  {
+    "route": {
+      "name": "ARC → Ethereum",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "ETH-SEPOLIA",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "gateway",
+    "error": "fetch failed"
+  },
+  {
+    "route": {
+      "name": "ARC → Avalanche",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "AVAX-FUJI",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "circle-api-v2",
+    "error": "Circle API key not configured"
+  },
+  {
+    "route": {
+      "name": "ARC → Avalanche",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "AVAX-FUJI",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "circle-api-v1",
+    "error": "Circle API key not configured"
+  },
+  {
+    "route": {
+      "name": "ARC → Avalanche",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "AVAX-FUJI",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "gateway",
+    "error": "fetch failed"
+  },
+  {
+    "route": {
+      "name": "ARC → Optimism",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "OP-SEPOLIA",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "circle-api-v2",
+    "error": "Circle API key not configured"
+  },
+  {
+    "route": {
+      "name": "ARC → Optimism",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "OP-SEPOLIA",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "circle-api-v1",
+    "error": "Circle API key not configured"
+  },
+  {
+    "route": {
+      "name": "ARC → Optimism",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "OP-SEPOLIA",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "gateway",
+    "error": "fetch failed"
+  },
+  {
+    "route": {
+      "name": "ARC → Polygon",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "MATIC-AMOY",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "circle-api-v2",
+    "error": "Circle API key not configured"
+  },
+  {
+    "route": {
+      "name": "ARC → Polygon",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "MATIC-AMOY",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "circle-api-v1",
+    "error": "Circle API key not configured"
+  },
+  {
+    "route": {
+      "name": "ARC → Polygon",
+      "fromChain": "ARC-TESTNET",
+      "toChain": "MATIC-AMOY",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "gateway",
+    "error": "fetch failed"
+  },
+  {
+    "route": {
+      "name": "Base → ARC",
+      "fromChain": "BASE-SEPOLIA",
+      "toChain": "ARC-TESTNET",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "circle-api-v2",
+    "error": "Circle API key not configured"
+  },
+  {
+    "route": {
+      "name": "Base → ARC",
+      "fromChain": "BASE-SEPOLIA",
+      "toChain": "ARC-TESTNET",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "circle-api-v1",
+    "error": "Circle API key not configured"
+  },
+  {
+    "route": {
+      "name": "Base → ARC",
+      "fromChain": "BASE-SEPOLIA",
+      "toChain": "ARC-TESTNET",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "gateway",
+    "error": "fetch failed"
+  },
+  {
+    "route": {
+      "name": "Ethereum → ARC",
+      "fromChain": "ETH-SEPOLIA",
+      "toChain": "ARC-TESTNET",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "circle-api-v2",
+    "error": "Circle API key not configured"
+  },
+  {
+    "route": {
+      "name": "Ethereum → ARC",
+      "fromChain": "ETH-SEPOLIA",
+      "toChain": "ARC-TESTNET",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "circle-api-v1",
+    "error": "Circle API key not configured"
+  },
+  {
+    "route": {
+      "name": "Ethereum → ARC",
+      "fromChain": "ETH-SEPOLIA",
+      "toChain": "ARC-TESTNET",
+      "method": "gateway"
+    },
+    "success": false,
+    "method": "gateway",
+    "error": "fetch failed"
+  }
+]

@@ -75,7 +75,7 @@ export function TransactionPreview({
           <h3 className="text-lg font-semibold text-white">
             {isSend ? "Send" : "Receive"} {amount} USDC
           </h3>
-          {status !== "preview" && (
+          {status !== "preview" && status !== "blocked" && (
             <p className="text-sm text-casper capitalize">{status}</p>
           )}
         </div>

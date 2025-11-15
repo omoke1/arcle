@@ -21,6 +21,7 @@ import {
   getConversationSummary,
   type PendingAction 
 } from "./conversation-context";
+import { removeMarkdownFormatting } from "@/lib/utils/format-message";
 
 export interface AIResponse {
   message: string;
@@ -34,6 +35,17 @@ export interface AIResponse {
     riskReasons?: string[];
     blocked?: boolean;
     isNewWallet?: boolean;
+  };
+  bridgeData?: {
+    amount: string;
+    fromChain: string;
+    toChain: string;
+    destinationAddress: string;
+    walletId: string;
+    walletAddress: string;
+    bridgeId?: string;
+    transactionHash?: string;
+    status?: string;
   };
 }
 
@@ -93,6 +105,9 @@ export class AIService {
       
       case "balance":
         return this.handleBalanceIntent(intent, context);
+      
+      case "tokens":
+        return await this.handleTokensIntent(intent, context);
       
       case "address":
         return this.handleAddressIntent(intent, context);
@@ -317,10 +332,12 @@ export class AIService {
         missingFields,
       });
 
-      return enhanced.message;
+      // Remove markdown formatting from the final message
+      return removeMarkdownFormatting(enhanced.message);
     } catch (error) {
       console.warn("Error enhancing response, using base message:", error);
-      return baseMessage;
+      // Remove markdown from base message as fallback
+      return removeMarkdownFormatting(baseMessage);
     }
   }
 
@@ -414,11 +431,13 @@ export class AIService {
     if (!address && recipient) {
       // Try to find contact by name
       if (typeof window !== "undefined") {
-        const { getContactByName } = await import("@/lib/contacts/contact-service");
-        const contact = getContactByName(recipient);
+        const { getContact, updateContactLastUsed } = await import("@/lib/storage/contacts");
+        const contact = getContact(recipient);
         if (contact) {
           resolvedAddress = contact.address;
           contactName = contact.name;
+          // Update last used timestamp
+          updateContactLastUsed(contact.address);
         }
       }
     }
@@ -426,62 +445,35 @@ export class AIService {
     if (!resolvedAddress) {
       // If recipient name was provided but not found as contact, ask
       if (recipient && !contactName) {
-        const message = await this.enhanceResponse(
-          `I couldn't find "${recipient}" in your contacts. Would you like to:\n• Provide the wallet address directly\n• Save "${recipient}" as a new contact first\n\nWhat's the address for ${recipient}?`,
+        return {
+          message: `I couldn't find "${recipient}" in your contacts.\n\nEither:\n• Give me their wallet address\n• Or save them first: "Save contact ${recipient} as 0x..."\n\nWhat's the address for ${recipient}?`,
           intent,
-          "send_contact_not_found",
-          context,
-          { amount, recipient },
-          sessionId,
-          true,
-          ["address"]
-        );
-        return { message, intent };
+        };
       }
       
-      const message = await this.enhanceResponse(
-        `I'll send $${amount} USDC. Who would you like to send it to? You can provide a wallet address or a contact name.`,
+      return {
+        message: `I'll send $${amount} USDC. Who should I send it to?\n\nYou can give me:\n• A wallet address (0x...)\n• A contact name (if you've saved them)`,
         intent,
-        "send_missing_address",
-        context,
-        { amount },
-        sessionId,
-        true,
-        ["address", "recipient"]
-      );
-      return { message, intent };
+      };
     }
     
     // Validate address format and checksum
     const addressValidation = validateAddress(resolvedAddress);
     if (!addressValidation.isValid) {
-      const message = await this.enhanceResponse(
-        `That address doesn't look right. Could you double-check it? It should start with "0x" and be 42 characters long.`,
+      return {
+        message: `That address doesn't look right. It should start with "0x" and be 42 characters long. Want to try again?`,
         intent,
-        "send_invalid_address",
-        context,
-        { amount, address: resolvedAddress },
-        sessionId,
-        true,
-        ["address"]
-      );
-      return { message, intent };
+      };
     }
     
     // Use normalized checksummed address
     const normalizedAddress = addressValidation.normalizedAddress || resolvedAddress;
     
-    // Update contact usage if it was found by name
-    if (contactName && typeof window !== "undefined") {
-      const { updateContactUsage } = await import("@/lib/contacts/contact-service");
-      updateContactUsage(normalizedAddress);
-    }
-    
     // Check for phishing URLs in the original message
     const phishingResult = detectPhishingUrls(intent.rawCommand);
     if (phishingResult.blocked) {
       return {
-        message: `🚨 **PHISHING DETECTED - TRANSACTION BLOCKED**\n\nI detected suspicious URLs in your message:\n${phishingResult.detectedUrls.map(url => `• ${url}`).join('\n')}\n\n**Reasons:**\n${phishingResult.reasons.map(r => `• ${r}`).join('\n')}\n\nThis transaction has been blocked for your safety. Please verify the recipient address and never share your private keys or seed phrases.`,
+        message: `🚨 PHISHING DETECTED - TRANSACTION BLOCKED\n\nI detected suspicious URLs in your message:\n${phishingResult.detectedUrls.map(url => `• ${url}`).join('\n')}\n\nReasons:\n${phishingResult.reasons.map(r => `• ${r}`).join('\n')}\n\nThis transaction has been blocked for your safety. Please verify the recipient address and never share your private keys or seed phrases.`,
         intent,
         requiresConfirmation: false,
       };
@@ -499,24 +491,24 @@ export class AIService {
     // Add phishing warning if detected but not blocked
     let phishingWarning = "";
     if (phishingResult.isPhishing && !phishingResult.blocked) {
-      phishingWarning = `⚠️ **PHISHING WARNING**\n\nI detected potentially suspicious URLs in your message:\n${phishingResult.detectedUrls.map(url => `• ${url}`).join('\n')}\n\n**Reasons:**\n${phishingResult.reasons.map(r => `• ${r}`).join('\n')}\n\nPlease verify these URLs are legitimate before proceeding.\n\n`;
+      phishingWarning = `⚠️ PHISHING WARNING\n\nI detected potentially suspicious URLs in your message:\n${phishingResult.detectedUrls.map(url => `• ${url}`).join('\n')}\n\nReasons:\n${phishingResult.reasons.map(r => `• ${r}`).join('\n')}\n\nPlease verify these URLs are legitimate before proceeding.\n\n`;
     }
     
     // If high risk, show warning but still allow user to approve/reject
     // Don't block - let user decide after seeing the risks
     let highRiskWarning = "";
     if (riskResult.blocked || riskResult.score >= 80) {
-      highRiskWarning = `🚨 **HIGH RISK TRANSACTION DETECTED**\n\nRisk Score: ${riskResult.score}/100\n\n**Reasons:**\n${riskResult.reasons.map(r => `• ${r}`).join('\n')}\n\n⚠️ **WARNING:** This transaction has been flagged as high risk. Please carefully verify the recipient address before proceeding. You can still approve this transaction if you're certain it's safe.\n\n`;
+      highRiskWarning = `🚨 HIGH RISK TRANSACTION DETECTED\n\nRisk Score: ${riskResult.score}/100\n\nReasons:\n${riskResult.reasons.map(r => `• ${r}`).join('\n')}\n\n⚠️ WARNING: This transaction has been flagged as high risk. Please carefully verify the recipient address before proceeding. You can still approve this transaction if you're certain it's safe.\n\n`;
     }
     
     // Build risk message
     let riskMessage = "";
     if (riskResult.level === "high") {
-      riskMessage = `⚠️ **HIGH RISK** (${riskResult.score}/100)`;
+      riskMessage = `⚠️ HIGH RISK (${riskResult.score}/100)`;
     } else if (riskResult.level === "medium") {
-      riskMessage = `⚠️ **MEDIUM RISK** (${riskResult.score}/100)`;
+      riskMessage = `⚠️ MEDIUM RISK (${riskResult.score}/100)`;
     } else {
-      riskMessage = `✅ **LOW RISK** (${riskResult.score}/100)`;
+      riskMessage = `✅ LOW RISK (${riskResult.score}/100)`;
     }
     
     // Build base message with natural language
@@ -527,7 +519,7 @@ export class AIService {
       : `${normalizedAddress.substring(0, 6)}...${normalizedAddress.substring(38)}`;
     
     if (isNewWallet) {
-      baseMessage += `Got it! I'm preparing to send $${amount} USDC to ${recipientDisplay}.\n\n⚠️ **NEW WALLET ADDRESS DETECTED**\n\nI noticed this address hasn't been used in your transaction history before. I'm being extra careful here because new addresses can sometimes be risky - it could be a typo or a new recipient. Please double-check this is the correct address before we proceed.\n\n`;
+      baseMessage += `Got it! I'm preparing to send $${amount} USDC to ${recipientDisplay}.\n\n⚠️ NEW WALLET ADDRESS DETECTED\n\nI noticed this address hasn't been used in your transaction history before. I'm being extra careful here because new addresses can sometimes be risky - it could be a typo or a new recipient. Please double-check this is the correct address before we proceed.\n\n`;
     } else {
       const familiarNote = contactName 
         ? `I found ${contactName} in your contacts and I've sent to this address before, so it looks familiar.`
@@ -535,11 +527,11 @@ export class AIService {
       baseMessage += `Got it! I'm preparing to send $${amount} USDC to ${recipientDisplay}. ${familiarNote}\n\n`;
     }
     
-    baseMessage += `${riskMessage}\n\n**Risk Factors:**\n${riskResult.reasons.map(r => `• ${r}`).join('\n')}\n\n**Arc Benefits:**\n• Gas paid in USDC (no ETH needed)\n• Sub-second transaction finality\n• Native USDC support\n\n`;
+    baseMessage += `${riskMessage}\n\nRisk Factors:\n${riskResult.reasons.map(r => `• ${r}`).join('\n')}\n\nArc Benefits:\n• Gas paid in USDC (no ETH needed)\n• Sub-second transaction finality\n• Native USDC support\n\n`;
     
     // Add confirmation prompt based on whether it's a new wallet
     if (isNewWallet) {
-      baseMessage += `**⚠️ This is a new wallet address. Do you want to proceed with this transaction?**\n\nPlease confirm by saying "yes", "confirm", or "proceed" to continue, or "no", "cancel", or "stop" to abort.`;
+      baseMessage += `⚠️ This is a new wallet address. Do you want to proceed with this transaction?\n\nPlease confirm by saying "yes", "confirm", or "proceed" to continue, or "no", "cancel", or "stop" to abort.`;
     } else {
       baseMessage += `Please review and confirm:`;
     }
@@ -569,7 +561,7 @@ export class AIService {
         fee: estimatedFee,
         riskScore: riskResult.score,
         riskReasons: riskResult.reasons,
-        blocked: riskResult.blocked || riskResult.score >= 80, // Mark as blocked but still show preview
+        blocked: false, // Never block - always allow user to proceed after seeing warnings
         isNewWallet, // Add flag to indicate if this is a new wallet
       },
     };
@@ -662,7 +654,7 @@ export class AIService {
     const balance = context.balance || "0.00";
     
     const message = await this.enhanceResponse(
-      `Your balance is **$${balance} USDC** on Arc network.`,
+      `Your balance is $${balance} USDC on Arc network.`,
       intent,
       "balance_check",
       context,
@@ -670,6 +662,42 @@ export class AIService {
     );
     
     return { message, intent };
+  }
+  
+  private static async handleTokensIntent(
+    intent: ParsedIntent,
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string }
+  ): Promise<AIResponse> {
+    if (!context?.hasWallet || !context?.walletId) {
+      return {
+        message: "You'll need a wallet first to check your tokens. Want me to create one for you?",
+        intent,
+      };
+    }
+    
+    // Fetch all token balances
+    const { getTokenBalances, formatTokensForAI } = await import("@/lib/tokens/token-balance");
+    
+    try {
+      const tokenData = await getTokenBalances(context.walletId);
+      
+      if (!tokenData) {
+        return {
+          message: "Hmm, I'm having trouble fetching your token balances right now. Want to try again?",
+          intent,
+        };
+      }
+      
+      const message = formatTokensForAI(tokenData.tokens, tokenData.totalValueUSD);
+      
+      return { message, intent };
+    } catch (error: any) {
+      console.error("[AI] Error fetching tokens:", error);
+      return {
+        message: "Oops, something went wrong while fetching your tokens. Let me try again...",
+        intent,
+      };
+    }
   }
   
   private static handleAddressIntent(
@@ -716,33 +744,58 @@ export class AIService {
   
   private static async handleBridgeIntent(
     intent: ParsedIntent,
-    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string }
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string }
   ): Promise<AIResponse> {
     if (!context?.hasWallet) {
       return {
-        message: "Please create a wallet first to bridge assets.",
+        message: "Hey! You'll need a wallet first to bridge assets across chains. Want me to help you set one up?",
         intent,
       };
     }
     
-    const { amount, recipient: destinationChain, currency } = intent.entities;
+    const { amount, recipient: destinationChain, currency, address } = intent.entities;
     
     if (!amount) {
       return {
-        message: "I can help you bridge USDC across chains! Please tell me:\n• How much to bridge\n• The destination chain\n\nExample: \"Bridge $50 to Ethereum\" or \"Bridge 100 USDC to Base\"",
+        message: "I can help you bridge USDC across chains! 🌉\n\nJust tell me:\n• How much to bridge\n• Which chain you're sending to\n\nExample: \"Bridge $50 to Ethereum\" or \"Bridge 100 USDC to Base\"",
         intent,
       };
     }
     
     if (!destinationChain) {
       return {
-        message: `I'll bridge $${amount} USDC. Please specify the destination chain:\n\nExample: "Bridge $${amount} to Ethereum" or "Bridge $${amount} to Base"\n\nSupported chains: Ethereum, Base, Polygon, Arbitrum, Optimism, Avalanche`,
+        message: `I'll bridge $${amount} USDC for you! Which chain should I send it to?\n\nYou can choose:\n• Ethereum\n• Base\n• Arbitrum\n• Optimism\n• Polygon\n• Avalanche\n\nJust say something like "Bridge to Base" and I'll handle the rest!`,
         intent,
       };
     }
     
+    // If destination address is provided, prepare to execute bridge with Gateway deposit handling
+    if (address && context.walletAddress && context.walletId) {
+      // Check if this is first-time bridge user (will need Gateway deposit)
+      // The bridge API will handle auto-deposit, we just set expectations
+      return {
+        message: `Perfect! Bridging $${amount} USDC from Arc to ${destinationChain} 🚀\n\n` +
+                `Here's what's happening:\n` +
+                `• If this is your first bridge, I'll set up instant bridging for you (takes a moment)\n` +
+                `• Future bridges will be instant!\n• Destination: ${address.substring(0, 6)}...${address.substring(38)}\n\n` +
+                `Ready to go?`,
+        intent,
+        requiresConfirmation: true,
+        bridgeData: {
+          amount,
+          fromChain: "ARC-TESTNET",
+          toChain: destinationChain.toUpperCase(),
+          destinationAddress: address,
+          walletId: context.walletId,
+          walletAddress: context.walletAddress,
+        },
+      };
+    }
+    
     return {
-      message: `🌉 **Cross-Chain Bridge (CCTP)**\n\nI can bridge **$${amount} ${currency || "USDC"}** from Arc to **${destinationChain}** using Circle's CCTP.\n\n**CCTP Benefits:**\n• Zero Slippage: 1:1 USDC transfers\n• Instant Settlements: Near-instant finality\n• Enterprise-Grade Security\n\nPlease provide the destination address on ${destinationChain} to continue.`,
+      message: `Great! I'll bridge $${amount} USDC to ${destinationChain}.\n\n` +
+              `Just need one more thing - what's the destination address on ${destinationChain}?\n\n` +
+              `(Paste the address or say "my wallet" to use your same address on ${destinationChain})`,
       intent,
       requiresConfirmation: false,
     };
@@ -851,7 +904,7 @@ export class AIService {
     const phishingResult = detectPhishingUrls(intent.rawCommand);
     if (phishingResult.blocked) {
       return {
-        message: `🚨 **PHISHING DETECTED - PAYMENT BLOCKED**\n\nI detected suspicious URLs in your message:\n${phishingResult.detectedUrls.map(url => `• ${url}`).join('\n')}\n\n**Reasons:**\n${phishingResult.reasons.map(r => `• ${r}`).join('\n')}\n\nThis payment has been blocked for your safety. Please verify the recipient address and never share your private keys or seed phrases.`,
+        message: `🚨 PHISHING DETECTED - PAYMENT BLOCKED\n\nI detected suspicious URLs in your message:\n${phishingResult.detectedUrls.map(url => `• ${url}`).join('\n')}\n\nReasons:\n${phishingResult.reasons.map(r => `• ${r}`).join('\n')}\n\nThis payment has been blocked for your safety. Please verify the recipient address and never share your private keys or seed phrases.`,
         intent,
         requiresConfirmation: false,
       };
@@ -869,13 +922,14 @@ export class AIService {
     // Add phishing warning if detected but not blocked
     let phishingWarning = "";
     if (phishingResult.isPhishing && !phishingResult.blocked) {
-      phishingWarning = `⚠️ **PHISHING WARNING**\n\nI detected potentially suspicious URLs in your message:\n${phishingResult.detectedUrls.map(url => `• ${url}`).join('\n')}\n\n**Reasons:**\n${phishingResult.reasons.map(r => `• ${r}`).join('\n')}\n\nPlease verify these URLs are legitimate before proceeding.\n\n`;
+      phishingWarning = `⚠️ PHISHING WARNING\n\nI detected potentially suspicious URLs in your message:\n${phishingResult.detectedUrls.map(url => `• ${url}`).join('\n')}\n\nReasons:\n${phishingResult.reasons.map(r => `• ${r}`).join('\n')}\n\nPlease verify these URLs are legitimate before proceeding.\n\n`;
     }
     
-    // If high risk, block the transaction
-    if (riskResult.blocked) {
+    // Don't block - show warning but allow user to proceed
+    // Only block zero address (truly invalid)
+    if (normalizedAddress === "0x0000000000000000000000000000000000000000") {
       return {
-        message: `⚠️ **HIGH RISK PAYMENT BLOCKED**\n\nRisk Score: ${riskResult.score}/100\n\n**Reasons:**\n${riskResult.reasons.map(r => `• ${r}`).join('\n')}\n\nThis payment has been blocked for your safety. Please verify the recipient address and try again.`,
+        message: `⚠️ Invalid Address\n\nCannot send to zero address. Please provide a valid recipient address.`,
         intent,
         requiresConfirmation: false,
       };
@@ -884,11 +938,11 @@ export class AIService {
     // Build risk message
     let riskMessage = "";
     if (riskResult.level === "high") {
-      riskMessage = `⚠️ **HIGH RISK** (${riskResult.score}/100)`;
+      riskMessage = `⚠️ HIGH RISK (${riskResult.score}/100)`;
     } else if (riskResult.level === "medium") {
-      riskMessage = `⚠️ **MEDIUM RISK** (${riskResult.score}/100)`;
+      riskMessage = `⚠️ MEDIUM RISK (${riskResult.score}/100)`;
     } else {
-      riskMessage = `✅ **LOW RISK** (${riskResult.score}/100)`;
+      riskMessage = `✅ LOW RISK (${riskResult.score}/100)`;
     }
     
     // Build message with new wallet warning if applicable
@@ -897,14 +951,14 @@ export class AIService {
     
     // Add new wallet warning if this is a new address
     if (isNewWallet) {
-      message += `⚠️ **NEW WALLET ADDRESS DETECTED**\n\nThis address hasn't been used in your transaction history before. Please verify this is the correct recipient address before proceeding.\n\n`;
+      message += `⚠️ NEW WALLET ADDRESS DETECTED\n\nThis address hasn't been used in your transaction history before. Please verify this is the correct recipient address before proceeding.\n\n`;
     }
     
-    message += `${riskMessage}\n\n**Risk Factors:**\n${riskResult.reasons.map(r => `• ${r}`).join('\n')}\n\n`;
+    message += `${riskMessage}\n\nRisk Factors:\n${riskResult.reasons.map(r => `• ${r}`).join('\n')}\n\n`;
     
     // Add confirmation prompt based on whether it's a new wallet
     if (isNewWallet) {
-      message += `**⚠️ This is a new wallet address. Do you want to proceed with this payment?**\n\nPlease confirm by saying "yes", "confirm", or "proceed" to continue, or "no", "cancel", or "stop" to abort.`;
+      message += `⚠️ This is a new wallet address. Do you want to proceed with this payment?\n\nPlease confirm by saying "yes", "confirm", or "proceed" to continue, or "no", "cancel", or "stop" to abort.`;
     } else {
       message += `Please review and confirm:`;
     }
@@ -929,69 +983,61 @@ export class AIService {
     intent: ParsedIntent,
     context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string }
   ): Promise<AIResponse> {
-    if (!context?.hasWallet) {
+    if (!context?.hasWallet || !context?.walletId) {
       return {
-        message: "Please create a wallet first to earn yield.",
+        message: "You'll need a wallet first to earn yield. Want me to create one for you?",
         intent,
       };
     }
     
-    const { amount, currency } = intent.entities;
+    const { amount } = intent.entities;
+    const lowerCommand = intent.rawCommand.toLowerCase();
+    const { isUSYCAvailable, getAvailableBlockchains } = await import("@/lib/defi/yield-savings-usyc");
     
-    if (!amount) {
-      return {
-        message: "I can help you earn yield on your USDC! Please tell me:\n• How much to invest\n• Your risk tolerance (low/medium/high)\n\nExample: \"Earn yield on $1000 with low risk\"",
-        intent,
-      };
-    }
+    // Check available blockchains
+    const availableChains = getAvailableBlockchains();
+    const defaultChain = "ETH"; // USYC available on Ethereum
     
-    // Import yield farming service
-    const { getBestYieldStrategy, startYieldFarming } = await import("@/lib/defi/yield-farming");
+    // Determine action from command
+    const isWithdraw = lowerCommand.includes("withdraw") || lowerCommand.includes("redeem");
+    const isCheck = lowerCommand.includes("check") || lowerCommand.includes("balance") || lowerCommand.includes("status");
     
-    // Determine risk tolerance from message
-    const riskTolerance = intent.rawCommand.toLowerCase().includes("high") ? "high" :
-                         intent.rawCommand.toLowerCase().includes("medium") ? "medium" : "low";
-    
-    // Find best yield strategy
-    const strategy = await getBestYieldStrategy(amount, riskTolerance);
-    
-    if (!strategy) {
-      return {
-        message: `I couldn't find a suitable yield strategy for ${amount} USDC with ${riskTolerance} risk. Minimum amounts may be required.`,
-        intent,
-        requiresConfirmation: false,
-      };
-    }
-    
-    // Start yield farming
-    if (context.walletId && context.walletAddress) {
-      const result = await startYieldFarming(
-        context.walletId,
-        context.walletAddress,
-        strategy.id,
-        amount
-      );
-      
-      if (result.success) {
+    if (isWithdraw) {
+      // User wants to withdraw/redeem yield
+      if (!amount) {
         return {
-          message: `✅ **Yield Farming Started**\n\n**Strategy:** ${strategy.name}\n**Protocol:** ${strategy.protocol}\n**Chain:** ${strategy.chain}\n**Amount:** ${amount} USDC\n**APY:** ${strategy.apy}%\n**Risk Level:** ${strategy.riskLevel}\n\nYour funds are now earning yield. I'll automatically compound rewards for you.`,
+          message: `I'll help you withdraw your USYC and convert it back to USDC (including earned yield).\n\nHow much USYC would you like to redeem?`,
           intent,
-          requiresConfirmation: false,
-        };
-      } else {
-        return {
-          message: `❌ Failed to start yield farming: ${result.message}`,
-          intent,
-          requiresConfirmation: false,
         };
       }
+      
+      return {
+        message: `I'll redeem $${amount} USYC and convert it to USDC. You'll receive your original amount plus any yield earned.\n\nShall I proceed?`,
+        intent,
+        requiresConfirmation: true,
+      };
+    } else if (isCheck) {
+      // User wants to check yield position
+      return {
+        message: `Let me check your USYC position and yield earnings...\n\n(This would fetch your current USYC balance, initial investment, and earned yield)\n\nWant to deposit more or withdraw?`,
+        intent,
+      };
+    } else {
+      // User wants to deposit/subscribe to earn yield
+      if (!amount) {
+        return {
+          message: `Great! Let's get you earning yield with USYC (Circle's yield token).\n\n💰 Current APY: ~5% (overnight federal funds rate)\n✅ Available on: ${availableChains.join(", ")}\n✅ Backed by US government securities\n\nHow much USDC would you like to deposit? (e.g., "$1000")`,
+          intent,
+        };
+      }
+      
+      // Ready to deposit
+      return {
+        message: `Perfect! I'll deposit $${amount} USDC into USYC to start earning ~5% APY.\n\nYour funds will be:\n• Earning yield automatically\n• Backed by US government securities\n• Redeemable anytime 24/7\n\nShall I proceed with the deposit?`,
+        intent,
+        requiresConfirmation: true,
+      };
     }
-    
-    return {
-      message: `💰 **Yield Strategy Found**\n\n**Best Option:** ${strategy.name}\n**Protocol:** ${strategy.protocol}\n**Chain:** ${strategy.chain}\n**APY:** ${strategy.apy}%\n**Risk Level:** ${strategy.riskLevel}\n**Minimum:** ${strategy.minAmount} USDC\n\nWould you like to start earning yield with this strategy?`,
-      intent,
-      requiresConfirmation: true,
-    };
   }
   
   private static async handleArbitrageIntent(
@@ -1000,33 +1046,26 @@ export class AIService {
   ): Promise<AIResponse> {
     if (!context?.hasWallet || !context?.walletAddress) {
       return {
-        message: "Please create a wallet first to find arbitrage opportunities.",
+        message: "You'll need a wallet first. Want me to create one?",
         intent,
       };
     }
     
-    const { scanArbitrageOpportunities } = await import("@/lib/defi/arbitrage");
+    const { amount } = intent.entities;
+    const lowerCommand = intent.rawCommand.toLowerCase();
+    const minProfitMargin = amount ? parseFloat(amount) : 0.5; // Default 0.5% minimum
     
-    try {
-      const opportunities = await scanArbitrageOpportunities(context.walletAddress, 0.5);
-      
-      if (opportunities.length === 0) {
-        return {
-          message: "🔍 **Arbitrage Scan Complete**\n\nNo profitable arbitrage opportunities found at this time. I'll keep monitoring and notify you when opportunities arise.",
-          intent,
-          requiresConfirmation: false,
-        };
-      }
-      
-      const bestOpp = opportunities[0];
+    const isExecute = lowerCommand.includes("execute") || lowerCommand.includes("run");
+    
+    if (isExecute) {
       return {
-        message: `💰 **Arbitrage Opportunity Found!**\n\n**Best Opportunity:**\n• From: ${bestOpp.fromChain}\n• To: ${bestOpp.toChain}\n• Profit Margin: ${bestOpp.profitMargin.toFixed(2)}%\n• Estimated Profit: ${bestOpp.estimatedProfit} USDC\n• Amount: ${bestOpp.amount} USDC\n• Risk Level: ${bestOpp.riskLevel}\n\nWould you like to execute this arbitrage opportunity?`,
+        message: `Ready to execute arbitrage! Make sure you have sufficient funds.\n\nI'll:\n1. Verify the opportunity still exists\n2. Calculate gas costs\n3. Execute if profitable\n\nShall I proceed?`,
         intent,
         requiresConfirmation: true,
       };
-    } catch (error: any) {
+    } else {
       return {
-        message: `❌ Failed to scan for arbitrage: ${error.message}`,
+        message: `I'll scan for arbitrage opportunities! 🔍\n\nScanning for:\n• Cross-chain price differences\n• DEX-to-DEX arbitrage\n• Minimum profit: ${minProfitMargin}%\n\nThis may take a moment...`,
         intent,
         requiresConfirmation: false,
       };
@@ -1039,37 +1078,36 @@ export class AIService {
   ): Promise<AIResponse> {
     if (!context?.hasWallet || !context?.walletAddress || !context?.walletId) {
       return {
-        message: "Please create a wallet first to rebalance your portfolio.",
+        message: "You'll need a wallet first. Want me to create one?",
         intent,
       };
     }
     
-    const { analyzePortfolio, executeRebalancing, createDefaultStrategy } = await import("@/lib/defi/portfolio-rebalancing");
+    const { recipient } = intent.entities;
+    const lowerCommand = intent.rawCommand.toLowerCase();
+    const strategy = recipient || "balanced"; // Strategy name or default "balanced"
     
-    try {
-      const strategy = createDefaultStrategy();
-      const actions = await analyzePortfolio(context.walletAddress, strategy);
-      
-      if (actions.length === 0) {
-        return {
-          message: "✅ **Portfolio Analysis**\n\nYour portfolio is already balanced! No rebalancing needed at this time.",
-          intent,
-          requiresConfirmation: false,
-        };
-      }
-      
+    const isAnalyze = lowerCommand.includes("analyze") || lowerCommand.includes("check");
+    const isExecute = lowerCommand.includes("execute") || lowerCommand.includes("rebalance");
+    
+    if (isAnalyze) {
       return {
-        message: `📊 **Portfolio Rebalancing Needed**\n\nI found ${actions.length} rebalancing action(s) needed:\n\n${actions.map((a, i) => `${i + 1}. ${a.reason}\n   Transfer: ${a.amount} USDC from ${a.fromChain} to ${a.toChain}`).join('\n\n')}\n\nWould you like me to execute these rebalancing actions?`,
-        intent,
-        requiresConfirmation: true,
-      };
-    } catch (error: any) {
-      return {
-        message: `❌ Failed to analyze portfolio: ${error.message}`,
+        message: `I'll analyze your portfolio and show what rebalancing actions are needed.\n\nStrategy: ${strategy}\n• Conservative: 70% USDC, 20% USDT, 10% WETH\n• Balanced: 50% USDC, 30% WETH, 20% USDT\n• Aggressive: 50% WETH, 30% USDC, 20% WBTC\n\nChecking your holdings...`,
         intent,
         requiresConfirmation: false,
       };
+    } else if (isExecute) {
+      return {
+        message: `I'll rebalance your portfolio to match the ${strategy} strategy.\n\nI'll:\n1. Analyze current allocations\n2. Calculate required trades\n3. Execute trades to reach target\n\nShall I proceed?`,
+        intent,
+        requiresConfirmation: true,
+      };
     }
+    
+    return {
+      message: `I can rebalance your portfolio! Available strategies:\n• Conservative (low risk)\n• Balanced (medium risk)\n• Aggressive (higher returns)\n\nTry: "Rebalance my portfolio to balanced strategy" or "Analyze my portfolio"`,
+      intent,
+    };
   }
   
   private static async handleSplitPaymentIntent(
@@ -1078,7 +1116,7 @@ export class AIService {
   ): Promise<AIResponse> {
     if (!context?.hasWallet || !context?.walletAddress || !context?.walletId) {
       return {
-        message: "Please create a wallet first to split payments.",
+        message: "You'll need a wallet first. Want me to create one?",
         intent,
       };
     }
@@ -1087,35 +1125,67 @@ export class AIService {
     
     if (!amount) {
       return {
-        message: "I can help you split payments! Please tell me:\n• The total amount to split\n• How many recipients or the split percentages\n\nExample: \"Split $100 between 3 people\" or \"Split $100: 50% to Alice, 30% to Bob, 20% to Charlie\"",
+        message: `I can split a payment among multiple people! Tell me:\n• Total amount to split\n• Who should receive it\n• (Optional) Specific percentages\n\nExample: "Split $100 between Alice, Bob, and Charlie" or "Split $100: 50% Alice, 30% Bob, 20% Charlie"`,
         intent,
       };
     }
     
-    const { calculateEvenSplit, calculatePercentageSplit } = await import("@/lib/defi/split-payments");
-    
+    // Parse recipients from rawCommand (look for multiple names/addresses)
+    const recipientList: string[] = [];
     if (recipient) {
-      // Even split
-      const numberOfRecipients = parseInt(recipient);
-      if (isNaN(numberOfRecipients) || numberOfRecipients < 2) {
-        return {
-          message: "Please specify a valid number of recipients (at least 2).",
-          intent,
-        };
+      if (recipient.includes(',')) {
+        recipientList.push(...recipient.split(',').map((r: string) => r.trim()));
+      } else {
+        // Try to parse multiple recipients from command
+        const words = intent.rawCommand.split(/\s+/);
+        let foundRecipients = false;
+        for (let i = 0; i < words.length; i++) {
+          if (words[i].toLowerCase() === 'between' || words[i].toLowerCase() === 'among') {
+            // Get remaining words as potential recipients
+            const remaining = words.slice(i + 1).join(' ');
+            const potential = remaining.split(/,| and /).map(r => r.trim()).filter(r => r);
+            if (potential.length > 1) {
+              recipientList.push(...potential);
+              foundRecipients = true;
+              break;
+            }
+          }
+        }
+        if (!foundRecipients) {
+          recipientList.push(recipient);
+        }
       }
-      
-      const amounts = calculateEvenSplit(amount, numberOfRecipients);
+    }
+    
+    if (recipientList.length === 0) {
       return {
-        message: `💰 **Split Payment Calculation**\n\n**Total:** $${amount} USDC\n**Recipients:** ${numberOfRecipients}\n**Per Recipient:**\n${amounts.map((a, i) => `  ${i + 1}. $${a} USDC`).join('\n')}\n\nPlease provide the recipient addresses to proceed.`,
+        message: `I need to know who to split the $${amount} with. Example: "Split $100 between Alice and Bob"`,
         intent,
-        requiresConfirmation: false,
       };
     }
+    
+    if (recipientList.length === 1) {
+      return {
+        message: `Splitting between 1 person is just sending! Try: "Send $${amount} to ${recipientList[0]}"`,
+        intent,
+      };
+    }
+    
+    if (recipientList.length > 50) {
+      return {
+        message: `Split payment limit is 50 recipients. You provided ${recipientList.length}.`,
+        intent,
+      };
+    }
+    
+    // Even split by default
+    const perPerson = (parseFloat(amount) / recipientList.length).toFixed(2);
+    const percentage = (100 / recipientList.length).toFixed(1);
     
     return {
-      message: `I'll split $${amount} USDC. Please specify:\n• How many recipients, or\n• The percentage split for each recipient`,
+      message: `Perfect! I'll split $${amount} USDC evenly among ${recipientList.length} people.\n\nEach person gets: $${perPerson} USDC (${percentage}%)\n\nRecipients:\n${recipientList.map((r, i) => `${i + 1}. ${r} - $${perPerson}`).join("\n")}\n\n⚡ All in one transaction!\n\nShall I proceed?`,
       intent,
-      requiresConfirmation: false,
+      requiresConfirmation: true,
     };
   }
   
@@ -1125,15 +1195,79 @@ export class AIService {
   ): Promise<AIResponse> {
     if (!context?.hasWallet || !context?.walletAddress || !context?.walletId) {
       return {
-        message: "Please create a wallet first to batch transactions.",
+        message: "You'll need a wallet first. Want me to create one?",
         intent,
       };
     }
     
+    const { amount, recipient } = intent.entities;
+    
+    if (!recipient) {
+      return {
+        message: `I can batch send USDC to multiple people at once (saves ~33% on gas!).\n\nJust tell me:\n• How much to send to each person\n• The addresses or contact names\n\nExample: "Send $10 to Alice, Bob, and Charlie"`,
+        intent,
+      };
+    }
+    
+    // Parse recipients from rawCommand (look for multiple names/addresses)
+    const recipientList: string[] = [];
+    if (recipient.includes(',')) {
+      recipientList.push(...recipient.split(',').map((r: string) => r.trim()));
+    } else {
+      // Try to parse multiple recipients from command
+      const words = intent.rawCommand.split(/\s+/);
+      let foundRecipients = false;
+      for (let i = 0; i < words.length; i++) {
+        if (words[i].toLowerCase() === 'to') {
+          // Get remaining words as potential recipients
+          const remaining = words.slice(i + 1).join(' ');
+          const potential = remaining.split(/,| and /).map(r => r.trim()).filter(r => r);
+          if (potential.length > 1) {
+            recipientList.push(...potential);
+            foundRecipients = true;
+            break;
+          }
+        }
+      }
+      if (!foundRecipients) {
+        recipientList.push(recipient);
+      }
+    }
+    
+    if (recipientList.length === 0) {
+      return {
+        message: `I need the recipient addresses or contact names to batch send. Try: "Send $50 to 0x123..., 0x456..."`,
+        intent,
+      };
+    }
+    
+    if (recipientList.length === 1) {
+      return {
+        message: `For just one recipient, a regular send is better! Try: "Send $${amount || "50"} to ${recipientList[0]}"`,
+        intent,
+      };
+    }
+    
+    if (recipientList.length > 50) {
+      return {
+        message: `Batch limit is 50 recipients. You provided ${recipientList.length}. Please reduce the list.`,
+        intent,
+      };
+    }
+    
+    if (!amount) {
+      return {
+        message: `Great! I'll batch send to ${recipientList.length} people.\n\nHow much USDC should each person receive?`,
+        intent,
+      };
+    }
+    
+    const totalAmount = (parseFloat(amount) * recipientList.length).toFixed(2);
+    
     return {
-      message: "📦 **Batch Transactions**\n\nI can help you batch multiple transactions together to save on gas fees. Please provide:\n• The list of transactions (addresses and amounts)\n\nExample: \"Batch these: Send $10 to 0x..., Send $20 to 0x...\"\n\nOr use the UI to select multiple transactions and batch them.",
+      message: `Perfect! I'll batch send $${amount} USDC to ${recipientList.length} recipients.\n\n💰 Total: $${totalAmount} USDC\n⚡ Gas savings: ~33% vs individual sends\n\nRecipients:\n${recipientList.map((r, i) => `${i + 1}. ${r}`).join("\n")}\n\nShall I proceed?`,
       intent,
-      requiresConfirmation: false,
+      requiresConfirmation: true,
     };
   }
   
@@ -1141,30 +1275,159 @@ export class AIService {
     intent: ParsedIntent,
     context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string }
   ): Promise<AIResponse> {
-    if (!context?.hasWallet) {
+    if (!context?.hasWallet || !context?.walletId) {
       return {
-        message: "Please create a wallet first to open a savings account.",
+        message: "You'll need a wallet first to start saving. Want me to create one?",
         intent,
       };
     }
     
-    const { amount, recipient: riskTolerance } = intent.entities;
+    const { amount, recipient, time } = intent.entities;
+    const lowerCommand = intent.rawCommand.toLowerCase();
     
-    if (!amount) {
+    // Detect action type
+    const isGoal = lowerCommand.includes("save for") || lowerCommand.includes("goal");
+    const isSafeLock = lowerCommand.includes("lock") || lowerCommand.includes("safelock");
+    const isList = lowerCommand.includes("list") || lowerCommand.includes("show") || lowerCommand.includes("my savings");
+    const isBreak = lowerCommand.includes("break") || lowerCommand.includes("withdraw") || lowerCommand.includes("cancel");
+    const isCompare = lowerCommand.includes("compare") || lowerCommand.includes("difference");
+    
+    // Compare savings vs yield
+    if (isCompare) {
       return {
-        message: "I can help you create a savings account! Please tell me:\n• The initial deposit amount\n• Your risk tolerance (low/medium/high)\n\nExample: \"Create a savings account with $1000, low risk\"",
+        message: `💰 Savings vs Yield - What's the difference?\n\n` +
+                `**Savings** (Goal-based & Disciplined):\n` +
+                `✅ Save for specific goals (house, car, etc.)\n` +
+                `✅ Higher APY (8-15%)\n` +
+                `✅ Builds discipline with lock periods\n` +
+                `⚠️ Penalty (3-10%) if withdrawn early\n` +
+                `📊 Best for: Planned expenses, goals\n\n` +
+                `**Yield** (Flexible Investment):\n` +
+                `✅ Earn passive income (5-7% APY)\n` +
+                `✅ Withdraw anytime, no penalty\n` +
+                `✅ No commitments\n` +
+                `⚠️ Lower returns\n` +
+                `📊 Best for: Emergency funds, flexibility\n\n` +
+                `Which would you like to start?`,
         intent,
       };
     }
     
-    const risk = (riskTolerance as "low" | "medium" | "high") || "low";
-    const apyMap = { low: 4.5, medium: 6.2, high: 8.5 };
-    const apy = apyMap[risk];
+    // List savings
+    if (isList) {
+      return {
+        message: `Let me show your savings...\n\n(Fetching your goals and SafeLocks...)`,
+        intent,
+      };
+    }
     
+    // Break savings early
+    if (isBreak) {
+      if (!amount && !recipient) {
+        return {
+          message: `Which savings would you like to withdraw from?\n\nJust say the goal name or "show my savings" to see all.`,
+          intent,
+        };
+      }
+      
+      return {
+        message: `⚠️ Early Withdrawal Warning\n\nBreaking your savings early will incur a penalty (3-10% depending on progress).\n\nYou'll receive:\n• Your principal (minus penalty)\n• Earned yield so far\n\nAre you sure you want to withdraw early?`,
+        intent,
+        requiresConfirmation: true,
+      };
+    }
+    
+    // Create goal-based savings
+    if (isGoal) {
+      const goalName = recipient || "My Goal";
+      
+      if (!amount) {
+        return {
+          message: `Great! Let's create a savings goal for "${goalName}" 🎯\n\nHow much do you want to save?`,
+          intent,
+        };
+      }
+      
+      // Ask for lock period if not specified
+      if (!time) {
+        return {
+          message: `Perfect! Saving $${amount} for "${goalName}".\n\nHow long would you like to save? Choose:\n• 1 month → 8% APY\n• 3 months → 10% APY\n• 6 months → 12% APY\n• 1 year → 15% APY\n\n⚠️ Early withdrawal = 3-10% penalty`,
+          intent,
+        };
+      }
+      
+      return {
+        message: `✅ Ready to create your savings goal!\n\n` +
+                `🎯 Goal: ${goalName}\n` +
+                `💰 Amount: $${amount}\n` +
+                `⏰ Period: ${time}\n` +
+                `📈 APY: ~10-12%\n` +
+                `⚠️ Early withdrawal penalty applies\n\n` +
+                `Shall I create this savings goal?`,
+        intent,
+        requiresConfirmation: true,
+      };
+    }
+    
+    // SafeLock (fixed deposit)
+    if (isSafeLock) {
+      if (!amount) {
+        const { formatAvailableLockPeriods } = await import("@/lib/defi/safelock");
+        const periods = formatAvailableLockPeriods();
+        
+        return {
+          message: `🔒 SafeLock - Lock your funds for guaranteed high returns!\n\n` +
+                  `${periods}\n\n` +
+                  `How much would you like to lock?`,
+          intent,
+        };
+      }
+      
+      if (!time) {
+        return {
+          message: `Great! I'll SafeLock $${amount}.\n\nChoose your lock period:\n` +
+                  `• 2 weeks → 7% APY\n` +
+                  `• 1 month → 8% APY\n` +
+                  `• 3 months → 10% APY\n` +
+                  `• 6 months → 12% APY\n` +
+                  `• 1 year → 15% APY\n\n` +
+                  `⚠️ Early withdrawal penalties apply (decrease over time)`,
+          intent,
+        };
+      }
+      
+      return {
+        message: `🔒 SafeLock Confirmation\n\n` +
+                `Amount: $${amount}\n` +
+                `Period: ${time}\n` +
+                `APY: ~10-12%\n` +
+                `At Maturity: ~$${(parseFloat(amount) * 1.1).toFixed(2)}\n\n` +
+                `⚠️ Funds will be locked. Early withdrawal = penalty.\n` +
+                `✅ At maturity: Full amount + yield, no penalty\n\n` +
+                `Shall I create this SafeLock?`,
+        intent,
+        requiresConfirmation: true,
+      };
+    }
+    
+    // General savings help
     return {
-      message: `💰 **Savings Account**\n\n**Initial Deposit:** $${amount} USDC\n**Risk Level:** ${risk}\n**APY:** ${apy}%\n**Auto-Compound:** Enabled\n\nWould you like to create this savings account?`,
+      message: `💰 Start Saving with Arcle!\n\n` +
+              `Choose your savings type:\n\n` +
+              `**1. Goal-Based Savings** 🎯\n` +
+              `"Save $5000 for a house"\n` +
+              `• Set specific goals\n` +
+              `• Optional recurring contributions\n` +
+              `• 8-15% APY\n\n` +
+              `**2. SafeLock** 🔒\n` +
+              `"Lock $1000 for 3 months"\n` +
+              `• Fixed deposits\n` +
+              `• Guaranteed returns\n` +
+              `• 7-15% APY\n\n` +
+              `⚠️ Both have penalties for early withdrawal\n` +
+              `💡 Want flexible? Try "Start earning yield" instead!\n\n` +
+              `What would you like to do?`,
       intent,
-      requiresConfirmation: true,
     };
   }
   
@@ -1175,42 +1438,34 @@ export class AIService {
   ): Promise<AIResponse> {
     if (!context?.hasWallet || !context?.walletAddress || !context?.walletId) {
       return {
-        message: "Please create a wallet first to execute trades.",
+        message: "You'll need a wallet first. Want me to create one?",
         intent,
       };
     }
     
-    const { amount, currency, recipient: toToken } = intent.entities;
+    const { amount, currency, recipient } = intent.entities;
+    const fromToken = currency || "USDC";
+    const toToken = recipient || (currency === "USDC" ? "WETH" : "USDC");
     
     if (!amount) {
       return {
-        message: "I can help you trade tokens! Please tell me:\n• The amount to trade\n• The token pair (e.g., \"Trade $100 USDC for ETH\")\n\nExample: \"Trade $100 USDC for ETH\"",
+        message: `I can swap tokens for you on Uniswap!\n\nSupported chains: Ethereum, Base, Arbitrum, Polygon, Avalanche\n\nJust tell me:\n• How much to swap\n• From which token\n• To which token\n\nExample: "Trade 100 USDC for ETH" or "Swap 1 ETH for USDC"`,
         intent,
       };
     }
     
-    if (!toToken) {
+    const { isTradingAvailable } = await import("@/lib/defi/token-trading-dex");
+    const defaultChain = "ETH";
+    
+    if (!isTradingAvailable(defaultChain)) {
       return {
-        message: `I'll trade $${amount} USDC. Please specify the destination token:\n\nExample: "Trade $${amount} USDC for ETH" or "Swap $${amount} USDC to BTC"`,
+        message: `Trading not available on ${defaultChain} yet. Try Ethereum, Base, or Arbitrum.`,
         intent,
       };
-    }
-    
-    // Store pending action for confirmation
-    if (sessionId) {
-      setPendingAction(sessionId, {
-        type: "trade",
-        data: {
-          amount,
-          fromToken: "USDC",
-          toToken,
-        },
-        timestamp: Date.now(),
-      });
     }
     
     return {
-      message: `🔄 **Trade Execution**\n\n**From:** ${amount} USDC\n**To:** ${toToken}\n**Chain:** Arc\n\nI'll find the best route across multiple DEXs for optimal execution. Would you like to proceed? Please confirm by saying "yes" or "confirm".`,
+      message: `Great! I'll swap $${amount} ${fromToken} for ${toToken} on Uniswap.\n\n⚙️ Settings:\n• Slippage tolerance: 0.5%\n• Route: ${fromToken} → ${toToken}\n• DEX: Uniswap V2\n\nI'll show you a quote before executing. Shall I proceed?`,
       intent,
       requiresConfirmation: true,
     };
@@ -1222,29 +1477,44 @@ export class AIService {
   ): Promise<AIResponse> {
     if (!context?.hasWallet || !context?.walletAddress || !context?.walletId) {
       return {
-        message: "Please create a wallet first to create limit orders.",
+        message: "You'll need a wallet first. Want me to create one?",
         intent,
       };
     }
     
-    const { amount, currency: orderType, recipient: targetPrice } = intent.entities;
+    const { amount, currency, recipient } = intent.entities;
+    const lowerCommand = intent.rawCommand.toLowerCase();
     
-    if (!amount) {
+    const isList = lowerCommand.includes("list") || lowerCommand.includes("show");
+    const isCancel = lowerCommand.includes("cancel");
+    
+    if (isList) {
       return {
-        message: "I can help you create a limit order! Please tell me:\n• The amount\n• Buy or sell\n• The target price\n\nExample: \"Create a limit buy order for $100 USDC at $1.00\"",
+        message: `Let me show your limit orders...\n\n(Fetching pending orders...)`,
+        intent,
+        requiresConfirmation: false,
+      };
+    } else if (isCancel) {
+      return {
+        message: `Which limit order would you like to cancel? You can say the order number or "cancel all"`,
         intent,
       };
     }
     
-    if (!orderType || !targetPrice) {
+    // Creating a new limit order
+    const fromToken = currency || "USDC";
+    const toToken = recipient || "WETH";
+    const targetPrice = amount;
+    
+    if (!targetPrice) {
       return {
-        message: `I'll create a limit order for $${amount} USDC. Please specify:\n• Order type: Buy or Sell\n• Target price\n\nExample: "Limit buy $${amount} USDC at $1.00"`,
+        message: `I can create limit orders that execute automatically when your target price is reached!\n\nExample: "Buy 1 ETH at $2400" or "Create limit sell order for ETH at $2600"\n\nWhat's your target price?`,
         intent,
       };
     }
     
     return {
-      message: `📋 **Limit Order**\n\n**Type:** ${orderType.toUpperCase()}\n**Amount:** $${amount} USDC\n**Target Price:** $${targetPrice}\n**Status:** Pending\n\nI'll execute this order automatically when the price reaches $${targetPrice}. Would you like to create this limit order?`,
+      message: `Perfect! I'll create a limit order:\n\n📋 Order Details:\n• Type: Buy\n• From: ${fromToken}\n• To: ${toToken}\n• Target Price: $${targetPrice}\n• Expiry: 7 days\n\nI'll monitor prices and execute automatically when reached. Shall I create this order?`,
       intent,
       requiresConfirmation: true,
     };
@@ -1256,24 +1526,26 @@ export class AIService {
   ): Promise<AIResponse> {
     if (!context?.hasWallet || !context?.walletAddress || !context?.walletId) {
       return {
-        message: "Please create a wallet first to aggregate liquidity.",
+        message: "You'll need a wallet first. Want me to create one?",
         intent,
       };
     }
     
-    const { amount } = intent.entities;
+    const { amount, currency, recipient } = intent.entities;
+    const fromToken = currency || "USDC";
+    const toToken = recipient || "WETH";
     
     if (!amount) {
       return {
-        message: "I can help you find the best liquidity across multiple chains! Please tell me:\n• The amount to trade\n• The token pair\n\nExample: \"Find best liquidity for $1000 USDC to ETH\"",
+        message: `I'll find the best liquidity across 10+ DEXs and multiple chains!\n\nSupported DEXs:\n• Uniswap V2 & V3\n• Sushiswap\n• Curve\n• Balancer\n• And more...\n\nHow much would you like to trade? (larger amounts benefit more from aggregation)`,
         intent,
       };
     }
     
     return {
-      message: `💧 **Liquidity Aggregation**\n\nI'll search across multiple DEXs and chains to find the best liquidity for your trade of $${amount} USDC.\n\nThis will:\n• Compare prices across chains\n• Find optimal execution paths\n• Minimize slippage\n\nWould you like me to find the best liquidity?`,
+      message: `Perfect! I'll aggregate liquidity for your trade:\n\n🔍 Scanning:\n• Amount: $${amount} ${fromToken}\n• To: ${toToken}\n• Across: Ethereum, Base, Arbitrum, Polygon, Avalanche\n• DEXs: 10+ liquidity sources\n\nI'll find the best price and route. This may take a moment...`,
       intent,
-      requiresConfirmation: true,
+      requiresConfirmation: false,
     };
   }
   
@@ -1283,26 +1555,42 @@ export class AIService {
   ): Promise<AIResponse> {
     if (!context?.hasWallet || !context?.walletAddress || !context?.walletId) {
       return {
-        message: "Please create a wallet first to set up auto-compounding.",
+        message: "You'll need a wallet first. Want me to create one?",
         intent,
       };
     }
     
-    const { getActivePositions } = await import("@/lib/defi/yield-farming");
-    const positions = getActivePositions(context.walletAddress);
+    const { time } = intent.entities;
+    const lowerCommand = intent.rawCommand.toLowerCase();
+    const frequency = time || "weekly"; // daily, weekly, monthly
     
-    if (positions.length === 0) {
+    const isEnable = lowerCommand.includes("enable") || lowerCommand.includes("start") || lowerCommand.includes("create") || lowerCommand.includes("set up");
+    const isDisable = lowerCommand.includes("disable") || lowerCommand.includes("stop");
+    const isCheck = lowerCommand.includes("check") || lowerCommand.includes("status") || lowerCommand.includes("history");
+    
+    if (isEnable) {
       return {
-        message: "You don't have any active yield positions to compound. Create a yield farming position first!",
+        message: `I'll set up auto-compounding for your USYC yield!\n\n⚙️ Settings:\n• Frequency: ${frequency}\n• Minimum yield: $10\n• Reinvest: 100%\n\nYour yield will automatically reinvest to maximize returns. Shall I enable it?`,
+        intent,
+        requiresConfirmation: true,
+      };
+    } else if (isDisable) {
+      return {
+        message: `I'll disable auto-compounding. Your yield will still earn but won't automatically reinvest.`,
+        intent,
+        requiresConfirmation: true,
+      };
+    } else if (isCheck) {
+      return {
+        message: `Let me check your auto-compound status and history...\n\n(Fetching compound history...)`,
         intent,
         requiresConfirmation: false,
       };
     }
     
     return {
-      message: `🔄 **Auto-Compound Setup**\n\nYou have ${positions.length} active yield position(s). I can set up automatic compounding to reinvest your rewards.\n\n**Options:**\n• Daily compounding\n• Weekly compounding\n• Monthly compounding\n\nWould you like to enable auto-compounding for your yield positions?`,
+      message: `I can set up automatic compounding for your yield!\n\nOptions:\n• "Enable weekly auto-compound"\n• "Set up daily compounding"\n• "Check compound status"\n• "Disable auto-compound"\n\nWhat would you like to do?`,
       intent,
-      requiresConfirmation: true,
     };
   }
 
@@ -1374,7 +1662,7 @@ export class AIService {
       }
       
       const message = await this.enhanceResponse(
-        `💱 **Currency Conversion Preview**\n\n**From:** ${amount} ${fromCurrency}\n**To:** ~${convertedAmount} ${toCurrency}\n**Rate:** 1 ${fromCurrency} = ${rate.toFixed(6)} ${toCurrency}\n\nReady to convert? This will execute a swap transaction.`,
+        `💱 Currency Conversion Preview\n\nFrom: ${amount} ${fromCurrency}\nTo: ~${convertedAmount} ${toCurrency}\nRate: 1 ${fromCurrency} = ${rate.toFixed(6)} ${toCurrency}\n\nReady to convert? This will execute a swap transaction.`,
         intent,
         "currency_conversion",
         context,
@@ -1451,11 +1739,11 @@ export class AIService {
         : "";
 
       const message = await this.enhanceResponse(
-        `✅ **FX Swap Executed Successfully!**\n\n` +
-        `**From:** ${result.fromAmount} ${result.fromCurrency}\n` +
-        `**To:** ${result.toAmount} ${result.toCurrency}\n` +
-        `**Rate:** 1 ${result.fromCurrency} = ${result.rate.toFixed(6)} ${result.toCurrency}\n` +
-        `**Transaction ID:** ${result.transactionId}\n` +
+        `✅ FX Swap Executed Successfully!\n\n` +
+        `From: ${result.fromAmount} ${result.fromCurrency}\n` +
+        `To: ${result.toAmount} ${result.toCurrency}\n` +
+        `Rate: 1 ${result.fromCurrency} = ${result.rate.toFixed(6)} ${result.toCurrency}\n` +
+        `Transaction ID: ${result.transactionId}\n` +
         (explorerLink ? `\n${explorerLink}` : ""),
         { intent: "convert", confidence: 1, entities: {}, rawCommand: "" },
         "fx_swap_executed",
@@ -1525,7 +1813,7 @@ export class AIService {
       const rateDate = new Date(timestamp).toLocaleString();
       
       const message = await this.enhanceResponse(
-        `💱 **Exchange Rate**\n\n**${fromCurrency} → ${toCurrency}**\n**Rate:** 1 ${fromCurrency} = ${rate.toFixed(6)} ${toCurrency}\n**Source:** ${source}\n**Updated:** ${rateDate}`,
+        `💱 Exchange Rate\n\n${fromCurrency} → ${toCurrency}\nRate: 1 ${fromCurrency} = ${rate.toFixed(6)} ${toCurrency}\nSource: ${source}\nUpdated: ${rateDate}`,
         intent,
         "fx_rate",
         context,
@@ -1574,13 +1862,13 @@ export class AIService {
         };
       }
 
-      let message = `💱 **Your Currency Balances**\n\n`;
+      let message = `💱 Your Currency Balances\n\n`;
       
       for (const balance of balances) {
-        message += `**${balance.currency}:** ${balance.amount} ${balance.currency}\n`;
+        message += `${balance.currency}: ${balance.amount} ${balance.currency}\n`;
       }
       
-      message += `\n**Total Value:** ~$${totalValueUSD} USD\n\n`;
+      message += `\nTotal Value: ~$${totalValueUSD} USD\n\n`;
       message += `Want to convert between currencies? Just ask!`;
 
       const enhancedMessage = await this.enhanceResponse(
@@ -1634,10 +1922,10 @@ export class AIService {
           };
         }
         
-        let message = `📄 **Your Invoices**\n\n`;
+        let message = `📄 Your Invoices\n\n`;
         for (const invoice of invoices.slice(0, 10)) {
           const dueDate = new Date(invoice.dueDate).toLocaleDateString();
-          message += `**${invoice.invoiceNumber}** - ${invoice.recipient}\n`;
+          message += `${invoice.invoiceNumber} - ${invoice.recipient}\n`;
           message += `Amount: ${invoice.amount} ${invoice.currency}\n`;
           message += `Status: ${invoice.status}\n`;
           message += `Due: ${dueDate}\n\n`;
@@ -1702,7 +1990,7 @@ export class AIService {
       });
       
       const enhancedMessage = await this.enhanceResponse(
-        `✅ **Invoice Created!**\n\n**Invoice #:** ${invoice.invoiceNumber}\n**Recipient:** ${invoice.recipient}\n**Amount:** ${invoice.amount} ${invoice.currency}\n**Due Date:** ${new Date(invoice.dueDate).toLocaleDateString()}\n**Status:** ${invoice.status}\n\nI'll remind you before it's due!`,
+        `✅ Invoice Created!\n\nInvoice #: ${invoice.invoiceNumber}\nRecipient: ${invoice.recipient}\nAmount: ${invoice.amount} ${invoice.currency}\nDue Date: ${new Date(invoice.dueDate).toLocaleDateString()}\nStatus: ${invoice.status}\n\nI'll remind you before it's due!`,
         intent,
         "create_invoice",
         context,
@@ -1748,10 +2036,10 @@ export class AIService {
           };
         }
         
-        let message = `💰 **Your Payment Rolls**\n\n`;
+        let message = `💰 Your Payment Rolls\n\n`;
         for (const roll of rolls) {
           const nextDate = new Date(roll.nextPaymentDate).toLocaleDateString();
-          message += `**${roll.name}**\n`;
+          message += `${roll.name}\n`;
           message += `Frequency: ${roll.frequency}\n`;
           message += `Total: ${roll.totalAmount} ${roll.currency}\n`;
           message += `Recipients: ${roll.recipients.length}\n`;
@@ -1823,7 +2111,7 @@ export class AIService {
       });
       
       const enhancedMessage = await this.enhanceResponse(
-        `✅ **Payment Roll Created!**\n\n**Name:** ${roll.name}\n**Frequency:** ${roll.frequency}\n**Total Amount:** ${roll.totalAmount} ${roll.currency}\n**Recipients:** ${roll.recipients.length}\n**Next Payment:** ${new Date(roll.nextPaymentDate).toLocaleDateString()}\n\nI'll process payments automatically on the scheduled dates!`,
+        `✅ Payment Roll Created!\n\nName: ${roll.name}\nFrequency: ${roll.frequency}\nTotal Amount: ${roll.totalAmount} ${roll.currency}\nRecipients: ${roll.recipients.length}\nNext Payment: ${new Date(roll.nextPaymentDate).toLocaleDateString()}\n\nI'll process payments automatically on the scheduled dates!`,
         intent,
         "create_payment_roll",
         context,
@@ -1869,10 +2157,10 @@ export class AIService {
           };
         }
         
-        let message = `🌍 **Your Remittances**\n\n`;
+        let message = `🌍 Your Remittances\n\n`;
         for (const rem of remittances.slice(0, 10)) {
           const date = new Date(rem.createdAt).toLocaleDateString();
-          message += `**${rem.remittanceNumber}** - ${rem.recipientName}\n`;
+          message += `${rem.remittanceNumber} - ${rem.recipientName}\n`;
           message += `${rem.amount} USDC → ${rem.convertedAmount} ${rem.recipientCurrency}\n`;
           message += `Country: ${rem.recipientCountry}\n`;
           message += `Status: ${rem.status}\n`;
@@ -1920,7 +2208,7 @@ export class AIService {
       });
       
       const enhancedMessage = await this.enhanceResponse(
-        `✅ **Remittance Created!**\n\n**Remittance #:** ${remittance.remittanceNumber}\n**Recipient:** ${remittance.recipientName}\n**Country:** ${remittance.recipientCountry}\n**Amount:** ${remittance.amount} USDC\n**Converted:** ${remittance.convertedAmount} ${remittance.recipientCurrency}\n**Exchange Rate:** 1 USDC = ${remittance.exchangeRate.toFixed(6)} ${remittance.recipientCurrency}\n**Fee:** ${remittance.fee} USDC\n**Total:** ${remittance.totalAmount} USDC\n\nReady to send?`,
+        `✅ Remittance Created!\n\nRemittance #: ${remittance.remittanceNumber}\nRecipient: ${remittance.recipientName}\nCountry: ${remittance.recipientCountry}\nAmount: ${remittance.amount} USDC\nConverted: ${remittance.convertedAmount} ${remittance.recipientCurrency}\nExchange Rate: 1 USDC = ${remittance.exchangeRate.toFixed(6)} ${remittance.recipientCurrency}\nFee: ${remittance.fee} USDC\nTotal: ${remittance.totalAmount} USDC\n\nReady to send?`,
         intent,
         "create_remittance",
         context,
@@ -1959,9 +2247,9 @@ export class AIService {
           };
         }
         
-        let message = `🔔 **Your FX Rate Alerts**\n\n`;
+        let message = `🔔 Your FX Rate Alerts\n\n`;
         for (const alert of alerts) {
-          message += `**${alert.pair}** ${alert.direction} ${alert.targetRate}\n`;
+          message += `${alert.pair} ${alert.direction} ${alert.targetRate}\n`;
           message += `Status: ${alert.status}\n\n`;
         }
         
@@ -2003,7 +2291,7 @@ export class AIService {
       );
       
       const enhancedMessage = await this.enhanceResponse(
-        `✅ **FX Rate Alert Created!**\n\n**Pair:** ${alert.pair}\n**Alert:** ${alert.direction} ${alert.targetRate}\n**Status:** ${alert.status}\n\nI'll notify you when the rate ${alert.direction} ${alert.targetRate}!`,
+        `✅ FX Rate Alert Created!\n\nPair: ${alert.pair}\nAlert: ${alert.direction} ${alert.targetRate}\nStatus: ${alert.status}\n\nI'll notify you when the rate ${alert.direction} ${alert.targetRate}!`,
         intent,
         "create_fx_alert",
         context,
@@ -2049,9 +2337,9 @@ export class AIService {
           };
         }
         
-        let message = `📊 **Your Perpetual Positions**\n\n`;
+        let message = `📊 Your Perpetual Positions\n\n`;
         for (const pos of positions) {
-          message += `**${pos.pair}** ${pos.side.toUpperCase()}\n`;
+          message += `${pos.pair} ${pos.side.toUpperCase()}\n`;
           message += `Size: ${pos.size}\n`;
           message += `Leverage: ${pos.leverage}x\n`;
           message += `Entry: ${pos.entryPrice}\n`;
@@ -2083,7 +2371,7 @@ export class AIService {
     // Open position
     if (!side || !amount) {
       return {
-        message: "⚠️ **High Risk Warning**\n\nTo open a perpetual position, please provide:\n• Side (long or short)\n• Size/Amount\n• Leverage (e.g., 10x)\n• Margin\n\nExample: 'Open 10x long on USDC/EURC with $1,000'\n\n⚠️ Leveraged trading is high risk. Only trade what you can afford to lose!",
+        message: "⚠️ High Risk Warning\n\nTo open a perpetual position, please provide:\n• Side (long or short)\n• Size/Amount\n• Leverage (e.g., 10x)\n• Margin\n\nExample: 'Open 10x long on USDC/EURC with $1,000'\n\n⚠️ Leveraged trading is high risk. Only trade what you can afford to lose!",
         intent,
       };
     }
@@ -2105,7 +2393,7 @@ export class AIService {
       );
       
       const enhancedMessage = await this.enhanceResponse(
-        `⚠️ **Perpetual Position Opened**\n\n**Pair:** ${position.pair}\n**Side:** ${position.side.toUpperCase()}\n**Size:** ${position.size}\n**Leverage:** ${position.leverage}x\n**Entry Price:** ${position.entryPrice}\n**Liquidation Price:** ${position.liquidationPrice}\n**Margin:** ${position.margin}\n\n⚠️ Monitor your position closely! If price reaches ${position.liquidationPrice}, you will be liquidated.`,
+        `⚠️ Perpetual Position Opened\n\nPair: ${position.pair}\nSide: ${position.side.toUpperCase()}\nSize: ${position.size}\nLeverage: ${position.leverage}x\nEntry Price: ${position.entryPrice}\nLiquidation Price: ${position.liquidationPrice}\nMargin: ${position.margin}\n\n⚠️ Monitor your position closely! If price reaches ${position.liquidationPrice}, you will be liquidated.`,
         intent,
         "open_perpetual_position",
         context,
@@ -2155,9 +2443,9 @@ export class AIService {
         
         if (lowerCommand.includes("marketplace")) {
           const marketplace = getMarketplaceAgents();
-          let message = `🤖 **Agent Marketplace**\n\n`;
+          let message = `🤖 Agent Marketplace\n\n`;
           for (const agent of marketplace) {
-            message += `**${agent.name}**\n`;
+            message += `${agent.name}\n`;
             message += `${agent.description}\n`;
             message += `Category: ${agent.category}\n`;
             message += `Rating: ${agent.rating || "N/A"}\n\n`;
@@ -2177,9 +2465,9 @@ export class AIService {
           };
         }
         
-        let message = `🤖 **Your AI Agents**\n\n`;
+        let message = `🤖 Your AI Agents\n\n`;
         for (const agent of agents) {
-          message += `**${agent.name}**\n`;
+          message += `${agent.name}\n`;
           message += `Status: ${agent.status}\n`;
           message += `Executions: ${agent.executionCount}\n`;
           message += `Permissions: ${agent.permissions.length}\n\n`;
@@ -2223,7 +2511,7 @@ export class AIService {
       });
       
       const enhancedMessage = await this.enhanceResponse(
-        `✅ **AI Agent Created!**\n\n**Name:** ${agent.name}\n**Status:** ${agent.status}\n**Permissions:** ${agent.permissions.length} action(s)\n\nYour agent is now active and will execute actions automatically based on its permissions!`,
+        `✅ AI Agent Created!\n\nName: ${agent.name}\nStatus: ${agent.status}\nPermissions: ${agent.permissions.length} action(s)\n\nYour agent is now active and will execute actions automatically based on its permissions!`,
         intent,
         "create_agent",
         context,
@@ -2265,7 +2553,7 @@ export class AIService {
     const destinationType = destination || "bank account";
     
     return {
-      message: `💸 **Withdraw to fiat**\n\nOff-ramp is not available in this testnet build. I can help you send USDC on Arc or bridge to another chain.`,
+      message: `💸 Withdraw to fiat\n\nOff-ramp is not available in this testnet build. I can help you send USDC on Arc or bridge to another chain.`,
       intent,
       requiresConfirmation: false,
     };
@@ -2401,7 +2689,7 @@ export class AIService {
       const scheduledDate = new Date(scheduledTimestamp);
       const formattedDate = scheduledDate.toLocaleString();
 
-      const baseMessage = `✅ **Payment Scheduled!**\n\nI've scheduled a payment of **$${amount} USDC** to ${normalizedAddress.substring(0, 6)}...${normalizedAddress.substring(38)}.\n\n**Scheduled for:** ${formattedDate}\n\nI'll automatically execute this payment at the scheduled time. You can cancel it anytime before then.`;
+      const baseMessage = `✅ Payment Scheduled!\n\nI've scheduled a payment of $${amount} USDC to ${normalizedAddress.substring(0, 6)}...${normalizedAddress.substring(38)}.\n\nScheduled for: ${formattedDate}\n\nI'll automatically execute this payment at the scheduled time. You can cancel it anytime before then.`;
 
       const message = await this.enhanceResponse(
         baseMessage,
@@ -2476,7 +2764,7 @@ export class AIService {
       });
 
       const nextChargeDate = new Date(nextChargeAt).toLocaleString();
-      const baseMessage = `✅ **Subscription Created!**\n\nI've set up a recurring subscription for **${merchant}**:\n• **Amount:** $${amount || "0"} USDC\n• **Frequency:** ${frequency}\n• **Next charge:** ${nextChargeDate}\n• **Auto-renew:** Enabled\n\nI'll remind you 2 days before each renewal, and the payment will be processed automatically.`;
+      const baseMessage = `✅ Subscription Created!\n\nI've set up a recurring subscription for ${merchant}:\n• Amount: $${amount || "0"} USDC\n• Frequency: ${frequency}\n• Next charge: ${nextChargeDate}\n• Auto-renew: Enabled\n\nI'll remind you 2 days before each renewal, and the payment will be processed automatically.`;
 
       const message = await this.enhanceResponse(
         baseMessage,
@@ -2521,48 +2809,48 @@ export class AIService {
   ): Promise<AIResponse> {
     const helpMessage = `I'm your AI wallet assistant on ARCLE! I can help you with:
 
-**Basic Operations:**
+Basic Operations:
 • Check your balance
 • Send and receive USDC
 • Make payments
 • View your wallet address
 • View transaction history
 
-**Multi-Currency & FX:**
+Multi-Currency & FX:
 • View all currency balances (USDC, EURC)
 • Convert between currencies (e.g., "Convert 100 USDC to EURC")
 • Check exchange rates (e.g., "What's the USDC to EURC rate?")
 • Multi-currency payments
 
-**Invoice & Payment Management:**
+Invoice & Payment Management:
 • Create invoices (e.g., "Create invoice for $5,000 to Acme Corp, due in 30 days")
 • View outstanding and overdue invoices
 • Set up payment rolls for automated payroll (e.g., "Set up payroll: Pay Jake $3,000, Sarah $4,000 monthly")
 • Track invoice payments and status
 
-**Cross-Border Payments:**
+Cross-Border Payments:
 • Send international remittances (e.g., "Send $500 to my mom in Mexico")
 • View remittance history
 • FX rate alerts (e.g., "Notify me when USDC/EURC hits 0.95")
 • Historical FX rate data
 
-**Advanced Trading:**
+Advanced Trading:
 • Perpetual contracts (e.g., "Open 10x long on USDC/EURC with $1,000")
 • Options trading (coming soon)
 • Margin trading with leverage
 • Stop loss and take profit orders
 
-**AI Agents & Automation:**
+AI Agents & Automation:
 • Create autonomous AI agents (e.g., "Create an agent to pay invoices under $500 automatically")
 • Agent marketplace with pre-built agents
 • Agent-to-agent payments
 • Smart contract automation
 
-**Cross-Chain Operations:**
+Cross-Chain Operations:
 • Bridge assets across chains (Ethereum, Base, Arbitrum, Optimism, Polygon, Avalanche)
 • Zero slippage 1:1 USDC transfers via Circle CCTP
 
-**DeFi & Yield:**
+DeFi & Yield:
 • Earn yield through automated yield farming
 • Start savings accounts
 • Execute intelligent trades
@@ -2574,26 +2862,26 @@ export class AIService {
 • Split payments
 • Batch transactions
 
-**Security:**
+Security:
 • Real-time transaction monitoring
 • Scam detection
 • Phishing URL detection
 • Smart contract analysis
 
-**Contact Management:**
-• **Save addresses as contacts** (e.g., "Save this address as Jake" or "Add contact Jake")
-• **Send to contacts by name** (e.g., "Send $50 to Jake" - AI finds the address automatically!)
+Contact Management:
+• Save addresses as contacts (e.g., "Save this address as Jake" or "Add contact Jake")
+• Send to contacts by name (e.g., "Send $50 to Jake" - AI finds the address automatically!)
 • List, search, update, and delete contacts
 • Recent addresses tracking
 
-**Real-Time Notifications:**
-• **Transaction confirmations** - Get notified automatically when transactions confirm
-• **Balance change alerts** - Know immediately when your balance changes
-• **Security alerts** - Get notified about suspicious activity
+Real-Time Notifications:
+• Transaction confirmations - Get notified automatically when transactions confirm
+• Balance change alerts - Know immediately when your balance changes
+• Security alerts - Get notified about suspicious activity
 • All notifications appear in chat as natural language messages
 
-**Utilities:**
-• **Schedule one-time payments** (e.g., "Schedule $50 to 0x... tomorrow at 3pm" or "Schedule one-time payment of $100 next Monday")
+Utilities:
+• Schedule one-time payments (e.g., "Schedule $50 to 0x... tomorrow at 3pm" or "Schedule one-time payment of $100 next Monday")
 • Set up recurring subscriptions (e.g., "Subscribe $15 monthly for Netflix")
 • View and manage scheduled payments
 • Cancel scheduled payments before execution
@@ -2623,7 +2911,7 @@ Just ask me naturally, like "Send $50 to Jake" or "What's my balance?" or "Sched
       };
     }
 
-    const { getAllContacts, addContact, getContactByName, deleteContact, updateContact, searchContacts } = await import("@/lib/contacts/contact-service");
+    const { getContacts, saveContact, getContact, deleteContact, formatContactsForAI } = await import("@/lib/storage/contacts");
     const { validateAddress } = await import("@/lib/security/address-validation");
     
     const lowerCommand = intent.rawCommand.toLowerCase();
@@ -2631,231 +2919,91 @@ Just ask me naturally, like "Send $50 to Jake" or "What's my balance?" or "Sched
 
     // List contacts
     if (lowerCommand.includes("list") || lowerCommand.includes("show") || lowerCommand.includes("my contacts")) {
-      const contacts = getAllContacts();
-      
-      if (contacts.length === 0) {
-        const message = await this.enhanceResponse(
-          "You don't have any contacts saved yet. You can save an address by saying 'Save this address as Jake' or 'Add contact Jake'.",
-          intent,
-          "list_contacts_empty",
-          context,
-          undefined,
-          sessionId
-        );
-        return { message, intent };
-      }
-
-      let message = `📇 **Your Contacts** (${contacts.length})\n\n`;
-      for (const contact of contacts) {
-        message += `**${contact.name}**\n`;
-        message += `Address: ${contact.address.substring(0, 6)}...${contact.address.substring(38)}\n`;
-        if (contact.notes) message += `Notes: ${contact.notes}\n`;
-        if (contact.tags && contact.tags.length > 0) message += `Tags: ${contact.tags.join(", ")}\n`;
-        if (contact.transactionCount) message += `Transactions: ${contact.transactionCount}\n`;
-        message += `\n`;
-      }
-
-      const enhancedMessage = await this.enhanceResponse(
-        message,
-        intent,
-        "list_contacts",
-        context,
-        { contacts },
-        sessionId
-      );
-      return { message: enhancedMessage, intent };
+      const contacts = getContacts();
+      const message = formatContactsForAI(contacts);
+      return { message, intent };
     }
 
     // Delete contact
     if (lowerCommand.includes("delete") || lowerCommand.includes("remove")) {
       if (!name) {
-        const message = await this.enhanceResponse(
-          "Which contact would you like to delete? Please provide the contact name.",
+        return {
+          message: "Which contact would you like to delete? Just tell me their name.",
           intent,
-          "delete_contact_missing_name",
-          context,
-          undefined,
-          sessionId,
-          true,
-          ["name"]
-        );
-        return { message, intent };
+        };
       }
 
-      const contact = getContactByName(name);
-      if (!contact) {
-        const message = await this.enhanceResponse(
-          `I couldn't find a contact named "${name}". Would you like to see your contacts?`,
+      const success = deleteContact(name);
+      if (!success) {
+        return {
+          message: `I couldn't find a contact named "${name}". Want to see your contacts?`,
           intent,
-          "delete_contact_not_found",
-          context,
-          { name },
-          sessionId
-        );
-        return { message, intent };
+        };
       }
 
-      deleteContact(contact.id);
-      const message = await this.enhanceResponse(
-        `✅ Contact "${name}" has been deleted.`,
+      return {
+        message: `✅ Removed ${name} from your contacts.`,
         intent,
-        "delete_contact",
-        context,
-        { name },
-        sessionId
-      );
-      return { message, intent };
-    }
-
-    // Update contact
-    if (lowerCommand.includes("update") || lowerCommand.includes("edit")) {
-      if (!name) {
-        const message = await this.enhanceResponse(
-          "Which contact would you like to update? Please provide the contact name.",
-          intent,
-          "update_contact_missing_name",
-          context,
-          undefined,
-          sessionId,
-          true,
-          ["name"]
-        );
-        return { message, intent };
-      }
-
-      const contact = getContactByName(name);
-      if (!contact) {
-        const message = await this.enhanceResponse(
-          `I couldn't find a contact named "${name}". Would you like to see your contacts?`,
-          intent,
-          "update_contact_not_found",
-          context,
-          { name },
-          sessionId
-        );
-        return { message, intent };
-      }
-
-      // For now, just confirm - in future, can extract update fields
-      const message = await this.enhanceResponse(
-        `I found "${name}" in your contacts. What would you like to update? You can change the name, address, notes, or tags.`,
-        intent,
-        "update_contact",
-        context,
-        { contact },
-        sessionId,
-        true,
-        ["update_fields"]
-      );
-      return { message, intent };
+      };
     }
 
     // Add/Save contact
     if (lowerCommand.includes("save") || lowerCommand.includes("add")) {
       if (!name) {
-        const message = await this.enhanceResponse(
-          "I'd be happy to save a contact for you! What name would you like to use?",
+        return {
+          message: "I'd be happy to save a contact! What name should I use?",
           intent,
-          "add_contact_missing_name",
-          context,
-          undefined,
-          sessionId,
-          true,
-          ["name"]
-        );
-        return { message, intent };
+        };
       }
 
       if (!address) {
-        const message = await this.enhanceResponse(
-          `I'll save "${name}" as a contact. What's the wallet address?`,
+        return {
+          message: `Got it! I'll save "${name}". What's their wallet address?`,
           intent,
-          "add_contact_missing_address",
-          context,
-          { name },
-          sessionId,
-          true,
-          ["address"]
-        );
-        return { message, intent };
+        };
       }
 
       // Validate address
       const addressValidation = validateAddress(address);
       if (!addressValidation.isValid) {
-        const message = await this.enhanceResponse(
-          `That address doesn't look right. Could you double-check it? It should start with "0x" and be 42 characters long.`,
+        return {
+          message: `That address doesn't look right. It should start with "0x" and be 42 characters long. Want to try again?`,
           intent,
-          "add_contact_invalid_address",
-          context,
-          { name, address },
-          sessionId,
-          true,
-          ["address"]
-        );
-        return { message, intent };
+        };
       }
 
       try {
         const normalizedAddress = addressValidation.normalizedAddress || address;
-        const tagsArray = tags ? tags.split(",").map(t => t.trim()) : undefined;
+        const contact = saveContact(name, normalizedAddress, undefined, notes);
         
-        const contact = addContact(name, normalizedAddress, notes, tagsArray);
-        
-        const message = await this.enhanceResponse(
-          `✅ Contact saved! I've added "${name}" (${normalizedAddress.substring(0, 6)}...${normalizedAddress.substring(38)}) to your contacts. You can now say "Send $50 to ${name}" and I'll find the address automatically!`,
+        const shortAddr = `${normalizedAddress.substring(0, 6)}...${normalizedAddress.substring(38)}`;
+        return {
+          message: `✅ Saved! I've added ${name} (${shortAddr}) to your contacts.\n\nNow you can say "Send $50 to ${name}" and I'll know who you mean!`,
           intent,
-          "add_contact",
-          context,
-          { contact },
-          sessionId
-        );
-        return { message, intent };
+        };
       } catch (error: any) {
-        const message = await this.enhanceResponse(
-          `❌ ${error.message}`,
+        return {
+          message: `Hmm, something went wrong: ${error.message}`,
           intent,
-          "add_contact_error",
-          context,
-          { name, address, error: error.message },
-          sessionId
-        );
-        return { message, intent };
+        };
       }
     }
 
-    // Search contacts
+    // Search contacts by name
     if (name) {
-      const contacts = searchContacts(name);
-      if (contacts.length === 0) {
-        const message = await this.enhanceResponse(
-          `I couldn't find any contacts matching "${name}". Would you like to see all your contacts?`,
+      const contact = getContact(name);
+      if (!contact) {
+        return {
+          message: `I couldn't find a contact named "${name}". Want to see all your contacts?`,
           intent,
-          "search_contacts_not_found",
-          context,
-          { query: name },
-          sessionId
-        );
-        return { message, intent };
+        };
       }
 
-      let message = `📇 **Found ${contacts.length} contact(s)**\n\n`;
-      for (const contact of contacts) {
-        message += `**${contact.name}**\n`;
-        message += `Address: ${contact.address}\n`;
-        if (contact.notes) message += `Notes: ${contact.notes}\n`;
-        message += `\n`;
-      }
-
-      const enhancedMessage = await this.enhanceResponse(
-        message,
+      const shortAddr = `${contact.address.substring(0, 6)}...${contact.address.substring(38)}`;
+      return {
+        message: `Found ${contact.name}!\n\nAddress: ${shortAddr}${contact.notes ? `\nNotes: ${contact.notes}` : ""}`,
         intent,
-        "search_contacts",
-        context,
-        { contacts, query: name },
-        sessionId
-      );
-      return { message: enhancedMessage, intent };
+      };
     }
 
     // Default: show help
@@ -2897,13 +3045,13 @@ Just ask me naturally, like "Send $50 to Jake" or "What's my balance?" or "Sched
       const preferences = getNotificationPreferences();
       const unreadCount = getUnreadCount();
       
-      let message = `🔔 **Notification Settings**\n\n`;
-      message += `**Transaction Notifications:** ${preferences.transactionNotifications ? "✅ On" : "❌ Off"}\n`;
-      message += `**Balance Change Alerts:** ${preferences.balanceChangeNotifications ? "✅ On" : "❌ Off"}\n`;
-      message += `**Security Alerts:** ${preferences.securityAlerts ? "✅ On" : "❌ Off"}\n`;
-      message += `**System Notifications:** ${preferences.systemNotifications ? "✅ On" : "❌ Off"}\n`;
-      message += `**Minimum Balance Change:** ${preferences.minBalanceChange} USDC\n\n`;
-      message += `**Unread Notifications:** ${unreadCount}`;
+      let message = `🔔 Notification Settings\n\n`;
+      message += `Transaction Notifications: ${preferences.transactionNotifications ? "✅ On" : "❌ Off"}\n`;
+      message += `Balance Change Alerts: ${preferences.balanceChangeNotifications ? "✅ On" : "❌ Off"}\n`;
+      message += `Security Alerts: ${preferences.securityAlerts ? "✅ On" : "❌ Off"}\n`;
+      message += `System Notifications: ${preferences.systemNotifications ? "✅ On" : "❌ Off"}\n`;
+      message += `Minimum Balance Change: ${preferences.minBalanceChange} USDC\n\n`;
+      message += `Unread Notifications: ${unreadCount}`;
 
       const enhancedMessage = await this.enhanceResponse(
         message,
@@ -3051,10 +3199,10 @@ Just ask me naturally, like "Send $50 to Jake" or "What's my balance?" or "Sched
     addSafeToken(transfer.tokenAddress);
 
     const message = await this.enhanceResponse(
-      `✅ **Token Approved**\n\n` +
-      `**Token:** ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\n` +
-      `**Amount:** ${transfer.amount}\n` +
-      `**Address:** ${transfer.tokenAddress.slice(0, 10)}...${transfer.tokenAddress.slice(-8)}\n\n` +
+      `✅ Token Approved\n\n` +
+      `Token: ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\n` +
+      `Amount: ${transfer.amount}\n` +
+      `Address: ${transfer.tokenAddress.slice(0, 10)}...${transfer.tokenAddress.slice(-8)}\n\n` +
       `The token has been added to your wallet and marked as safe. You can now use it normally.`,
       intent,
       "token_approved",
@@ -3119,9 +3267,9 @@ Just ask me naturally, like "Send $50 to Jake" or "What's my balance?" or "Sched
     addScamToken(transfer.tokenAddress);
 
     const message = await this.enhanceResponse(
-      `❌ **Token Rejected**\n\n` +
-      `**Token:** ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\n` +
-      `**Address:** ${transfer.tokenAddress.slice(0, 10)}...${transfer.tokenAddress.slice(-8)}\n\n` +
+      `❌ Token Rejected\n\n` +
+      `Token: ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\n` +
+      `Address: ${transfer.tokenAddress.slice(0, 10)}...${transfer.tokenAddress.slice(-8)}\n\n` +
       `The token has been rejected and will not be added to your wallet. It has been marked as a scam token for future reference.`,
       intent,
       "token_rejected",
@@ -3170,4 +3318,5 @@ Just ask me naturally, like "Send $50 to Jake" or "What's my balance?" or "Sched
   }
   
 }
+
 

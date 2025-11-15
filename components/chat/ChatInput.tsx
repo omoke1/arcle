@@ -1,27 +1,42 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, Mic, Plus, List, Loader2 } from "lucide-react";
+import { Send, Mic, Plus, List, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { startVoiceRecognition, isVoiceRecognitionSupported } from "@/lib/voice/voice-recognition";
 
 interface ChatInputProps {
-  onSendMessage: (message: string) => void;
+  onSendMessage: (message: string, replyTo?: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  replyTo?: {
+    id: string;
+    content: string;
+    role: "user" | "assistant";
+  } | null; // Message being replied to
+  onCancelReply?: () => void; // Cancel reply
 }
 
 export function ChatInput({
   onSendMessage,
   disabled = false,
   placeholder = "Chat with ARCLE...",
+  replyTo,
+  onCancelReply,
 }: ChatInputProps) {
   const [message, setMessage] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const stopRecognitionRef = useRef<(() => void) | null>(null);
+  
+  // Update placeholder when replying
+  useEffect(() => {
+    if (replyTo && textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  }, [replyTo]);
 
   // Determine voice support on client only to avoid SSR/CSR mismatch
   useEffect(() => {
@@ -52,11 +67,15 @@ export function ChatInput({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (message.trim() && !disabled) {
-      onSendMessage(message.trim());
+      onSendMessage(message.trim(), replyTo?.id);
       setMessage("");
       // Reset height after sending
       if (textareaRef.current) {
         textareaRef.current.style.height = "48px";
+      }
+      // Clear reply after sending
+      if (onCancelReply) {
+        onCancelReply();
       }
     }
   };
@@ -64,9 +83,39 @@ export function ChatInput({
   return (
     <form
       onSubmit={handleSubmit}
-      className="fixed bottom-0 left-0 right-0 bg-onyx border-t border-dark-grey/30 p-3 sm:p-4 backdrop-blur-sm z-50 pb-safe"
+      className="fixed bottom-0 left-0 right-0 bg-onyx border-t border-dark-grey/30 backdrop-blur-sm z-50 pb-safe"
     >
-      <div className="flex items-center gap-2 max-w-full">
+      {/* Reply Preview */}
+      {replyTo && (
+        <div className="px-3 sm:px-4 pt-3 pb-2 border-b border-dark-grey/30">
+          <div className="flex items-start gap-2 max-w-full">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-medium text-casper">
+                  Replying to {replyTo.role === "assistant" ? "ARCLE" : "you"}
+                </span>
+              </div>
+              <p className="text-xs text-casper/70 line-clamp-2 truncate">
+                {replyTo.content.length > 100
+                  ? replyTo.content.substring(0, 100) + "..."
+                  : replyTo.content}
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onCancelReply}
+              className="h-6 w-6 rounded-full text-casper hover:text-white hover:bg-dark-grey/50 flex-shrink-0"
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+      )}
+      
+      <div className="p-3 sm:p-4">
+        <div className="flex items-center gap-2 max-w-full">
         {/* Left Icons */}
         <Button
           type="button"
@@ -191,6 +240,7 @@ export function ChatInput({
         >
           <Send className="w-5 h-5" />
         </Button>
+        </div>
       </div>
       
       {/* Bottom gesture bar indicator */}

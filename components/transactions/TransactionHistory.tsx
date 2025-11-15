@@ -15,17 +15,18 @@ import { cn } from "@/lib/utils";
 
 interface TransactionHistoryProps {
   walletId: string;
+  walletAddress?: string; // Add wallet address to properly identify incoming transactions
   limit?: number;
   className?: string;
 }
 
-export function TransactionHistory({ walletId, limit = 50, className }: TransactionHistoryProps) {
+export function TransactionHistory({ walletId, walletAddress, limit = 50, className }: TransactionHistoryProps) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchTransactions = async () => {
+    const fetchTransactions = async (forceFresh = false) => {
       if (!walletId) {
         setTransactions([]);
         return;
@@ -35,14 +36,36 @@ export function TransactionHistory({ walletId, limit = 50, className }: Transact
       setError(null);
       
       try {
+        // Add cache-busting parameter to force fresh data when needed
+        const cacheBuster = forceFresh ? `&_t=${Date.now()}` : '';
         const response = await fetch(
-          `/api/circle/transactions?walletId=${walletId}&limit=${limit}`
+          `/api/circle/transactions?walletId=${walletId}&limit=${limit}${cacheBuster}`
         );
         
         const data = await response.json();
-        console.log(`[TransactionHistory] API response for wallet ${walletId}:`, data);
+        console.log(`[TransactionHistory] API response for wallet ${walletId} (forceFresh: ${forceFresh}):`, data);
+        console.log(`[TransactionHistory] Wallet address: ${walletAddress || 'not provided'}`);
         
         if (data.success && data.data?.data) {
+          // Handle empty array case - but first check if we have cached transactions
+          if (Array.isArray(data.data.data) && data.data.data.length === 0) {
+            // API returned empty, but we might have cached transactions
+            console.log('[TransactionHistory] API returned empty, checking cache...');
+            if (typeof window !== 'undefined' && walletId) {
+              const { getCachedTransactions } = await import('@/lib/storage/transaction-cache');
+              const cached = getCachedTransactions(walletId);
+              if (cached.length > 0) {
+                console.log(`[TransactionHistory] 💾 Found ${cached.length} cached transactions`);
+                setTransactions(cached);
+              } else {
+                setTransactions([]);
+              }
+            } else {
+              setTransactions([]);
+            }
+            setIsLoading(false);
+            return;
+          }
           // Map API response to Transaction type
           // Circle API response structure: 
           // - List: { data: { data: [{ transaction: {...} }] } } or { data: [{ transaction: {...} }] }
@@ -86,17 +109,76 @@ export function TransactionHistory({ walletId, limit = 50, className }: Transact
                              circleState === "FAILED" || circleState === "DENIED" || circleState === "CANCELLED" ? "failed" : "pending");
               
               // Extract amount - Circle API uses amounts array or amount object
-              const amountValue = actualTx.amounts && actualTx.amounts.length > 0 
+              // Amount is in smallest unit (6 decimals for USDC), need to format it
+              const amountRaw = actualTx.amounts && actualTx.amounts.length > 0 
                 ? actualTx.amounts[0] 
                 : (actualTx.amount?.amount || actualTx.amount || "0");
+              
+              // Format amount from smallest unit to readable format (6 decimals for USDC)
+              let txAmount = amountRaw;
+              try {
+                if (typeof amountRaw === "string" && amountRaw !== "0") {
+                  const amountBigInt = BigInt(amountRaw);
+                  const decimals = 6n; // USDC has 6 decimals
+                  const divisor = 10n ** decimals;
+                  const whole = amountBigInt / divisor;
+                  const fraction = amountBigInt % divisor;
+                  const fractionStr = fraction.toString().padStart(6, "0");
+                  txAmount = `${whole.toString()}.${fractionStr}`;
+                }
+              } catch (e) {
+                // If parsing fails, use raw value
+                txAmount = amountRaw.toString();
+              }
               
               // Extract all transaction details
               const txId = actualTx.id || tx.id || "";
               const txHash = blockchainHash || "";
-              const fromAddress = actualTx.sourceAddress || tx.sourceAddress || actualTx.walletId || tx.walletId || actualTx.from || tx.from || "";
-              const toAddress = actualTx.destinationAddress || actualTx.destination?.address || tx.destinationAddress || tx.destination?.address || actualTx.to || tx.to || "";
-              const txAmount = amountValue;
-              const txToken = actualTx.amount?.currency || tx.amount?.currency || actualTx.token || tx.token || "USDC";
+              
+              // Extract source and destination addresses - handle multiple possible field names
+              const sourceAddress = actualTx.sourceAddress || 
+                                   actualTx.source?.address || 
+                                   tx.sourceAddress || 
+                                   tx.source?.address ||
+                                   actualTx.from || 
+                                   tx.from || 
+                                   "";
+              
+              const destinationAddress = actualTx.destinationAddress || 
+                                        actualTx.destination?.address || 
+                                        tx.destinationAddress || 
+                                        tx.destination?.address || 
+                                        actualTx.to || 
+                                        tx.to || 
+                                        "";
+              
+              // Determine if this is an incoming or outgoing transaction
+              // Compare with walletAddress if provided, otherwise use walletId as fallback
+              const normalizedWalletAddress = (walletAddress || "").toLowerCase();
+              const normalizedDestination = destinationAddress.toLowerCase();
+              const normalizedSource = sourceAddress.toLowerCase();
+              
+              // Transaction is incoming if destination matches wallet address
+              // Transaction is outgoing if source matches wallet address
+              const isIncoming = normalizedDestination === normalizedWalletAddress && normalizedDestination !== "";
+              const isOutgoing = normalizedSource === normalizedWalletAddress && normalizedSource !== "";
+              
+              // For incoming transactions: from = source (who sent it), to = wallet (this wallet)
+              // For outgoing transactions: from = wallet (this wallet), to = destination (where it went)
+              const fromAddress = isIncoming ? sourceAddress : (isOutgoing ? (walletAddress || sourceAddress) : sourceAddress);
+              const toAddress = isIncoming ? (walletAddress || destinationAddress) : destinationAddress;
+              
+              // Extract token information - check multiple possible locations
+              const txToken = actualTx.amount?.currency || 
+                             tx.amount?.currency || 
+                             actualTx.token?.symbol ||
+                             tx.token?.symbol ||
+                             actualTx.tokenSymbol ||
+                             tx.tokenSymbol ||
+                             actualTx.token || 
+                             tx.token || 
+                             "USDC";
+              
               const txStatus = (status || "pending") as "pending" | "confirmed" | "failed";
               
               return {
@@ -108,10 +190,21 @@ export function TransactionHistory({ walletId, limit = 50, className }: Transact
                 token: txToken,
                 status: txStatus,
                 timestamp: new Date(actualTx.createDate || actualTx.createdAt || tx.createdAt || Date.now()),
+                isIncoming, // Add flag to track direction
               };
             });
           
-          setTransactions(mappedTransactions);
+          console.log(`[TransactionHistory] Mapped ${mappedTransactions.length} API transactions`);
+          
+          // Merge with cached transactions to ensure we never lose transactions
+          if (typeof window !== 'undefined' && walletId) {
+            const { mergeWithAPITransactions } = await import('@/lib/storage/transaction-cache');
+            const merged = mergeWithAPITransactions(walletId, mappedTransactions);
+            console.log(`[TransactionHistory] 💾 Merged result: ${merged.length} total transactions`);
+            setTransactions(merged);
+          } else {
+            setTransactions(mappedTransactions);
+          }
         } else {
           setTransactions([]);
         }
@@ -122,20 +215,29 @@ export function TransactionHistory({ walletId, limit = 50, className }: Transact
       }
     };
     
-    fetchTransactions();
+    fetchTransactions(false); // Initial fetch
 
     // Listen for refresh events dispatched from the chat view
-    const onRefresh = () => fetchTransactions();
+    const onRefresh = () => {
+      console.log('[TransactionHistory] Refresh event received');
+      fetchTransactions(true); // Force fresh data on manual refresh
+    };
     if (typeof window !== 'undefined') {
       window.addEventListener('arcle:transactions:refresh', onRefresh);
     }
+    
+    // Also poll periodically to catch new transactions (every 3 seconds for faster updates)
+    const pollInterval = setInterval(() => {
+      fetchTransactions(false); // Regular polling doesn't force fresh
+    }, 3000); // Reduced from 5000ms to 3000ms for faster updates
     
     return () => {
       if (typeof window !== 'undefined') {
         window.removeEventListener('arcle:transactions:refresh', onRefresh);
       }
+      clearInterval(pollInterval);
     };
-  }, [walletId, limit]);
+  }, [walletId, walletAddress, limit]);
 
   const formatAmount = (amount: string): string => {
     try {
@@ -216,26 +318,46 @@ export function TransactionHistory({ walletId, limit = 50, className }: Transact
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3 flex-1">
-              <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
-                {tx.status === "confirmed" ? (
-                  <ArrowUpRight className="w-5 h-5 text-white" />
+              <div className={cn(
+                "w-10 h-10 rounded-full flex items-center justify-center",
+                (tx as any).isIncoming 
+                  ? "bg-green-500/20" 
+                  : "bg-white/20"
+              )}>
+                {(tx as any).isIncoming ? (
+                  <ArrowDownLeft className={cn(
+                    "w-5 h-5",
+                    tx.status === "confirmed" ? "text-green-400" : "text-casper"
+                  )} />
                 ) : (
-                  <ArrowDownLeft className="w-5 h-5 text-casper" />
+                  <ArrowUpRight className={cn(
+                    "w-5 h-5",
+                    tx.status === "confirmed" ? "text-white" : "text-casper"
+                  )} />
                 )}
               </div>
               
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-white font-medium">
-                    {formatAmount(tx.amount)} {tx.token}
+                  <span className={cn(
+                    "text-white font-medium",
+                    (tx as any).isIncoming ? "text-green-400" : "text-white"
+                  )}>
+                    {(tx as any).isIncoming ? "+" : "-"} {formatAmount(tx.amount)} {tx.token}
                   </span>
                   <span className={cn("text-xs", getStatusColor(tx.status))}>
                     {tx.status}
                   </span>
                 </div>
-                <div className="text-sm text-casper mt-1">
-                  To: {formatAddress(tx.to)}
-                </div>
+                {(tx as any).isIncoming ? (
+                  <div className="text-sm text-casper mt-1">
+                    From: {formatAddress(tx.from || "")}
+                  </div>
+                ) : (
+                  <div className="text-sm text-casper mt-1">
+                    To: {formatAddress(tx.to || "")}
+                  </div>
+                )}
                 <div className="text-xs text-casper mt-1">
                   {formatDate(tx.timestamp)}
                 </div>

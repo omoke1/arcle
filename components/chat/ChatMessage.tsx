@@ -11,6 +11,14 @@ interface ChatMessageProps {
   content: string;
   timestamp?: Date;
   isPending?: boolean;
+  replyTo?: string; // ID of the message this is replying to
+  repliedMessage?: {
+    id: string;
+    content: string;
+    role: "user" | "assistant";
+  }; // The message being replied to (for display)
+  onReply?: (messageId: string) => void; // Callback when message is clicked to reply
+  messageId?: string; // ID of this message (needed for reply functionality)
   children?: React.ReactNode; // For transaction previews, QR codes, etc.
 }
 
@@ -19,10 +27,21 @@ export function ChatMessage({
   content,
   timestamp,
   isPending = false,
+  replyTo,
+  repliedMessage,
+  onReply,
+  messageId,
   children,
 }: ChatMessageProps) {
   const isUser = role === "user";
   const isAI = role === "assistant";
+  
+  // Handle click on AI messages to reply
+  const handleClick = () => {
+    if (isAI && onReply && messageId && !isPending) {
+      onReply(messageId);
+    }
+  };
 
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString([], {
@@ -90,16 +109,41 @@ export function ChatMessage({
         // Allow container to fit content
         "w-full"
       )}>
+        {/* Reply indicator - show the message being replied to */}
+        {replyTo && repliedMessage && (
+          <div className={cn(
+            "mb-2 px-3 py-2 rounded-lg border text-sm max-w-[85%] sm:max-w-[80%] md:max-w-[75%] lg:max-w-[70%]",
+            isUser
+              ? "bg-dark-grey/50 border-casper/20 text-casper"
+              : "bg-white/50 border-dark-grey/20 text-onyx/70"
+          )}>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-xs font-medium">
+                {repliedMessage.role === "assistant" ? "ARCLE" : "You"}
+              </span>
+              <span className="text-xs">→</span>
+            </div>
+            <p className="text-xs line-clamp-2 truncate">
+              {repliedMessage.content.length > 100
+                ? repliedMessage.content.substring(0, 100) + "..."
+                : repliedMessage.content}
+            </p>
+          </div>
+        )}
+        
         {/* Message Bubble with Tail */}
         <div className="relative">
           {/* Bubble */}
           <div
+            onClick={handleClick}
             className={cn(
               "px-4 py-3 shadow-sm",
               isUser
                 ? "bg-dark-grey text-white border border-casper/20"
                 : "bg-white text-onyx border border-dark-grey/20",
               isPending && "opacity-60",
+              // Make AI messages clickable
+              isAI && onReply && messageId && !isPending && "cursor-pointer hover:shadow-md transition-all hover:scale-[1.01]",
               // Force rectangular shape - minimum width ensures wider than tall
               "inline-block",
               "min-w-[120px] sm:min-w-[140px]",

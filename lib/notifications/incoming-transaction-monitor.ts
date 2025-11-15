@@ -43,7 +43,7 @@ export function startIncomingTransactionMonitoring(
   const {
     walletId,
     walletAddress,
-    pollInterval = 15000, // 15 seconds
+    pollInterval = 10000, // 10 seconds (reduced from 15s for faster detection)
     enabled = true,
     onIncomingToken,
     onSuspiciousToken,
@@ -95,29 +95,70 @@ export function startIncomingTransactionMonitoring(
         }
 
         // Check if this is an incoming transaction (to our wallet)
-        const destination = txData.destinationAddress || txData.destination?.address;
-        const normalizedDestination = destination?.toLowerCase();
+        // Circle API can return destination in multiple formats
+        const destination = txData.destinationAddress || 
+                           txData.destination?.address || 
+                           txData.destinationAddress ||
+                           txData.to;
+        const normalizedDestination = destination?.toLowerCase() || "";
         const normalizedWalletAddress = walletAddress.toLowerCase();
 
-        if (normalizedDestination !== normalizedWalletAddress) {
+        // Also check if walletId matches (for developer-controlled wallets)
+        const txWalletId = txData.walletId || tx.walletId;
+        const isIncomingByAddress = normalizedDestination === normalizedWalletAddress && normalizedDestination !== "";
+        const isIncomingByWalletId = txWalletId === walletId;
+
+        // Transaction is incoming if destination matches wallet address OR walletId matches
+        // But we need to ensure it's actually incoming (not outgoing)
+        // For outgoing, source would be our wallet, for incoming, destination is our wallet
+        const source = txData.sourceAddress || txData.source?.address || txData.from || "";
+        const normalizedSource = source.toLowerCase();
+        const isOutgoing = normalizedSource === normalizedWalletAddress && normalizedSource !== "";
+        
+        // Only process if it's incoming (destination is our wallet) and not outgoing (source is not our wallet)
+        if (!isIncomingByAddress && !isIncomingByWalletId) {
           continue; // Not an incoming transaction
+        }
+        
+        if (isOutgoing && !isIncomingByAddress) {
+          continue; // This is an outgoing transaction, skip
         }
 
         // Check transaction state (only process completed transactions)
-        const state = txData.state || txData.status;
-        if (state !== "COMPLETE" && state !== "COMPLETED" && state !== "CONFIRMED") {
+        // Also check nested transaction object
+        const actualTx = txData.transaction || txData;
+        const state = actualTx.state || txData.state || actualTx.status || txData.status;
+        if (state !== "COMPLETE" && state !== "COMPLETED" && state !== "CONFIRMED" && state !== "SENT") {
           continue; // Transaction not yet confirmed
         }
 
-        // Extract token information
-        const tokenId = txData.tokenId;
-        const tokenAddress = txData.tokenAddress || txData.token?.address;
-        const amounts = txData.amounts || [];
-        const amount = amounts[0] || txData.amount?.amount || "0";
+        // Extract token information - Circle API can return token info in multiple formats
+        // Check both txData and nested transaction object
+        const tokenId = actualTx.tokenId || txData.tokenId || actualTx.token?.id || txData.token?.id;
+        const tokenAddress = actualTx.tokenAddress || 
+                            txData.tokenAddress || 
+                            actualTx.token?.address || 
+                            txData.token?.address || 
+                            actualTx.token?.tokenAddress ||
+                            txData.token?.tokenAddress;
+        const tokenCurrency = actualTx.amount?.currency || 
+                             txData.amount?.currency || 
+                             actualTx.token?.symbol || 
+                             txData.token?.symbol || 
+                             actualTx.tokenCurrency ||
+                             txData.tokenCurrency; // USDC, EURC, etc.
+        const amounts = actualTx.amounts || txData.amounts || [];
+        const amount = amounts[0] || actualTx.amount?.amount || txData.amount?.amount || "0";
 
-        if (!tokenAddress && !tokenId) {
-          continue; // No token information
+        // For USDC transactions, tokenCurrency might be "USDC" even if tokenAddress is missing
+        // Also check if amount exists (transactions with amounts are valid even without explicit token info)
+        if (!tokenAddress && !tokenId && !tokenCurrency && !amount) {
+          continue; // No token or amount information
         }
+        
+        // If we have USDC currency but no address, use the USDC address
+        const isUSDC = tokenCurrency === "USDC" || tokenCurrency === "USD Coin";
+        const finalTokenAddress = tokenAddress || tokenId || (isUSDC ? "0x3600000000000000000000000000000000000000" : "");
 
         // Mark as processed
         if (txHash) {
@@ -125,51 +166,175 @@ export function startIncomingTransactionMonitoring(
         }
 
         // Get token metadata
-        const tokenMetadata = tokenAddress
-          ? await getTokenMetadata(tokenAddress)
+        const tokenMetadata = finalTokenAddress
+          ? await getTokenMetadata(finalTokenAddress)
           : {};
 
+        // For USDC, set default metadata if not found
+        if (isUSDC && !tokenMetadata.name) {
+          tokenMetadata.name = "USD Coin";
+          tokenMetadata.symbol = "USDC";
+          tokenMetadata.decimals = 6;
+        }
+
         // Create incoming transfer object
+        // Extract source address from multiple possible locations
+        const sourceAddress = actualTx.sourceAddress || 
+                             txData.sourceAddress || 
+                             actualTx.source?.address || 
+                             txData.source?.address || 
+                             actualTx.from ||
+                             txData.from ||
+                             "unknown";
+        
         const transfer: IncomingTokenTransfer = {
-          tokenAddress: tokenAddress || tokenId || "",
-          tokenName: tokenMetadata.name,
-          tokenSymbol: tokenMetadata.symbol,
+          tokenAddress: finalTokenAddress || tokenId || "",
+          tokenName: tokenMetadata.name || tokenCurrency || "Unknown Token",
+          tokenSymbol: tokenMetadata.symbol || tokenCurrency || "UNKNOWN",
           amount: formatTokenAmount(amount, tokenMetadata.decimals || 6),
-          decimals: tokenMetadata.decimals,
-          fromAddress: txData.sourceAddress || txData.source?.address || "unknown",
+          decimals: tokenMetadata.decimals || 6,
+          fromAddress: sourceAddress,
           transactionHash: txHash,
           timestamp: Date.now(),
         };
 
         // Analyze token for scams
-        const analysis = await analyzeToken(
-          transfer.tokenAddress,
-          transfer.tokenName,
-          transfer.tokenSymbol,
-          transfer.decimals
-        );
+        try {
+          const analysis = await analyzeToken(
+            transfer.tokenAddress,
+            transfer.tokenName,
+            transfer.tokenSymbol,
+            transfer.decimals
+          );
 
-        transfer.analysis = analysis;
+          transfer.analysis = analysis;
 
-        // Create notification
-        if (analysis.blocked || analysis.isScam) {
-          // Suspicious/scam token - requires approval
-          createSuspiciousTokenNotification(transfer);
-          
-          if (onSuspiciousToken) {
-            onSuspiciousToken(transfer);
+          // Create notification - ALWAYS notify, even for suspicious tokens
+          if (analysis.blocked || analysis.isScam) {
+            // Suspicious/scam token - requires approval
+            // IMPORTANT: Always call onSuspiciousToken callback to ensure user is notified
+            console.log("[IncomingMonitor] 🚨 Suspicious/scam token detected:", {
+              tokenSymbol: transfer.tokenSymbol,
+              tokenName: transfer.tokenName,
+              tokenAddress: transfer.tokenAddress,
+              riskScore: analysis.riskScore,
+              riskLevel: analysis.riskLevel,
+              blocked: analysis.blocked,
+              isScam: analysis.isScam,
+            });
+            
+            createSuspiciousTokenNotification(transfer);
+            
+            // Call callback to show notification in chat - CRITICAL for user notification
+            if (onSuspiciousToken) {
+              console.log("[IncomingMonitor] Calling onSuspiciousToken callback");
+              onSuspiciousToken(transfer);
+            } else {
+              console.error("[IncomingMonitor] ⚠️ Suspicious token detected but onSuspiciousToken callback not provided!");
+            }
+            
+            // 🔥 CRITICAL: Cache suspicious incoming transaction so receiver sees it in history immediately
+            if (typeof window !== 'undefined' && txHash) {
+              (async () => {
+                try {
+                  const { cacheTransaction } = await import('@/lib/storage/transaction-cache');
+                  const incomingTx = {
+                    id: actualTx.id || txHash,
+                    hash: txHash,
+                    from: transfer.fromAddress,
+                    to: walletAddress,
+                    amount: transfer.amount,
+                    token: (transfer.tokenSymbol === "EURC" ? "EURC" : "USDC") as "USDC" | "EURC",
+                    status: (actualTx.state === "COMPLETED" ? "confirmed" : "pending") as "pending" | "confirmed" | "failed",
+                    timestamp: new Date(actualTx.createDate || actualTx.createdAt || Date.now()),
+                  };
+                  cacheTransaction(walletId, incomingTx);
+                  console.log(`[IncomingTxMonitor] 💾 Cached suspicious incoming tx for receiver: ${txHash.substring(0, 10)}...`);
+                  
+                  // Also trigger transaction history refresh immediately
+                  window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
+                  console.log(`[IncomingTxMonitor] 🔄 Triggered transaction history refresh`);
+                } catch (error) {
+                  console.error('[IncomingTxMonitor] Error caching suspicious transaction:', error);
+                }
+              })();
+            }
+          } else if (analysis.riskLevel === "medium") {
+            // Medium risk - warn but don't block
+            console.log("[IncomingMonitor] ⚠️ Medium risk token detected:", transfer.tokenSymbol);
+            createWarningTokenNotification(transfer);
+            
+            if (onIncomingToken) {
+              console.log("[IncomingMonitor] Calling onIncomingToken callback for medium risk token");
+              onIncomingToken(transfer);
+            }
+            
+            // 🔥 CRITICAL: Cache medium-risk incoming transaction so receiver sees it in history immediately
+            if (typeof window !== 'undefined' && txHash) {
+              (async () => {
+                try {
+                  const { cacheTransaction } = await import('@/lib/storage/transaction-cache');
+                  const incomingTx = {
+                    id: actualTx.id || txHash,
+                    hash: txHash,
+                    from: transfer.fromAddress,
+                    to: walletAddress,
+                    amount: transfer.amount,
+                    token: (transfer.tokenSymbol === "EURC" ? "EURC" : "USDC") as "USDC" | "EURC",
+                    status: (actualTx.state === "COMPLETED" ? "confirmed" : "pending") as "pending" | "confirmed" | "failed",
+                    timestamp: new Date(actualTx.createDate || actualTx.createdAt || Date.now()),
+                  };
+                  cacheTransaction(walletId, incomingTx);
+                  console.log(`[IncomingTxMonitor] 💾 Cached medium-risk incoming tx for receiver: ${txHash.substring(0, 10)}...`);
+                  
+                  // Also trigger transaction history refresh immediately
+                  window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
+                  console.log(`[IncomingTxMonitor] 🔄 Triggered transaction history refresh`);
+                } catch (error) {
+                  console.error('[IncomingTxMonitor] Error caching medium-risk transaction:', error);
+                }
+              })();
+            }
+          } else {
+            // Low risk - safe token
+            console.log("[IncomingMonitor] ✅ Safe token detected:", transfer.tokenSymbol);
+            createSafeTokenNotification(transfer);
+            
+            if (onIncomingToken) {
+              console.log("[IncomingMonitor] Calling onIncomingToken callback for safe token");
+              onIncomingToken(transfer);
+            }
+            
+            // 🔥 CRITICAL: Cache safe incoming transaction so receiver sees it in history immediately
+            if (typeof window !== 'undefined' && txHash) {
+              (async () => {
+                try {
+                  const { cacheTransaction } = await import('@/lib/storage/transaction-cache');
+                  const incomingTx = {
+                    id: actualTx.id || txHash,
+                    hash: txHash,
+                    from: transfer.fromAddress,
+                    to: walletAddress,
+                    amount: transfer.amount,
+                    token: (transfer.tokenSymbol === "EURC" ? "EURC" : "USDC") as "USDC" | "EURC",
+                    status: (actualTx.state === "COMPLETED" ? "confirmed" : "pending") as "pending" | "confirmed" | "failed",
+                    timestamp: new Date(actualTx.createDate || actualTx.createdAt || Date.now()),
+                  };
+                  cacheTransaction(walletId, incomingTx);
+                  console.log(`[IncomingTxMonitor] 💾 Cached safe incoming tx for receiver: ${txHash.substring(0, 10)}...`);
+                  
+                  // Also trigger transaction history refresh immediately
+                  window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
+                  console.log(`[IncomingTxMonitor] 🔄 Triggered transaction history refresh`);
+                } catch (error) {
+                  console.error('[IncomingTxMonitor] Error caching safe transaction:', error);
+                }
+              })();
+            }
           }
-        } else if (analysis.riskLevel === "medium") {
-          // Medium risk - warn but don't block
-          createWarningTokenNotification(transfer);
-          
-          if (onIncomingToken) {
-            onIncomingToken(transfer);
-          }
-        } else {
-          // Low risk - safe token
-          createSafeTokenNotification(transfer);
-          
+        } catch (analysisError: any) {
+          console.error("[IncomingMonitor] Error analyzing token:", analysisError);
+          // Even if analysis fails, still notify about the incoming token
           if (onIncomingToken) {
             onIncomingToken(transfer);
           }

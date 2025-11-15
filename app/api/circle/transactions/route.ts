@@ -592,6 +592,9 @@ export async function GET(request: NextRequest) {
     } else if (walletId) {
       // For developer-controlled wallets, try multiple endpoints
       // Try developer wallets endpoint first, then fallback to regular wallets endpoint
+      // Add blockchain parameter to filter transactions on Arc Testnet
+      // Try without blockchain filter first, then with filter if needed
+      // Some transactions might not be immediately indexed with blockchain filter
       endpoint = `/v1/w3s/developer/wallets/${walletId}/transactions?limit=${limit}`;
     }
 
@@ -600,38 +603,51 @@ export async function GET(request: NextRequest) {
       
       // For wallet transactions, try multiple endpoints if the first one fails
       if (walletId && !transactionId) {
+        console.log(`[GET Transactions] Fetching transactions for walletId: ${walletId}, limit: ${limit}`);
         try {
           // Try 1: Developer-controlled wallets endpoint
           transactions = await circleApiRequest(endpoint, {
             method: "GET",
           });
-          console.log(`[GET Transactions] Successfully fetched from developer wallets endpoint`);
+          console.log(`[GET Transactions] ✅ Developer wallets endpoint - found ${transactions.data?.data?.length || 0} transactions`);
         } catch (devError: any) {
-          console.log(`[GET Transactions] Developer wallets endpoint failed, trying regular wallets endpoint...`);
+          console.log(`[GET Transactions] ⚠️ Developer wallets endpoint failed, trying regular wallets endpoint...`);
           // Try 2: Regular wallets endpoint
           try {
             endpoint = `/v1/w3s/wallets/${walletId}/transactions?limit=${limit}`;
             transactions = await circleApiRequest(endpoint, {
               method: "GET",
             });
-            console.log(`[GET Transactions] Successfully fetched from regular wallets endpoint`);
+            console.log(`[GET Transactions] ✅ Regular wallets endpoint - found ${transactions.data?.data?.length || 0} transactions`);
           } catch (regularError: any) {
             // Try 3: Developer transactions endpoint (all transactions for entity)
-            console.log(`[GET Transactions] Regular wallets endpoint failed, trying developer transactions endpoint...`);
+            console.log(`[GET Transactions] ⚠️ Regular wallets endpoint failed, trying developer transactions endpoint...`);
             try {
               endpoint = `/v1/w3s/developer/transactions?limit=${limit}`;
               transactions = await circleApiRequest(endpoint, {
                 method: "GET",
               });
-              console.log(`[GET Transactions] Successfully fetched from developer transactions endpoint`);
+              console.log(`[GET Transactions] ✅ Developer transactions endpoint - found ${transactions.data?.data?.length || 0} transactions`);
               
               // Filter transactions by walletId if we got all developer transactions
+              // Also filter by ARC-TESTNET blockchain if available, but include all if blockchain not specified
               if (transactions.data?.data) {
                 const allTxs = Array.isArray(transactions.data.data) ? transactions.data.data : [transactions.data.data];
+                console.log(`[GET Transactions] Filtering ${allTxs.length} transactions for wallet ${walletId}`);
                 const filteredTxs = allTxs.filter((tx: any) => {
                   const actualTx = tx.transaction || tx;
-                  return actualTx.walletId === walletId;
+                  const matchesWallet = actualTx.walletId === walletId;
+                  // If blockchain field exists, prefer ARC-TESTNET, but include all if not specified
+                  const blockchain = actualTx.blockchain || actualTx.chain || tx.blockchain || tx.chain;
+                  const matchesBlockchain = !blockchain || blockchain === "ARC-TESTNET" || blockchain === "ARC";
+                  
+                  if (matchesWallet && matchesBlockchain) {
+                    console.log(`[GET Transactions] ✓ Match: tx ${actualTx.id} for wallet ${actualTx.walletId}`);
+                  }
+                  
+                  return matchesWallet && matchesBlockchain;
                 });
+                console.log(`[GET Transactions] Filtered down to ${filteredTxs.length} transactions`);
                 transactions.data.data = filteredTxs;
               }
             } catch (devTxError: any) {
@@ -728,7 +744,51 @@ export async function GET(request: NextRequest) {
           if (txData !== actualTx) {
             txData.status = mappedStatus;
           }
-          console.log(`[GET Transaction] ${actualTx.id || txData.id} - Circle state: ${circleState} -> Mapped status: ${mappedStatus}, Hash: ${blockchainHash || 'none'}`);
+          
+          // Ensure source and destination addresses are properly set for incoming transaction detection
+          // Circle API may return these in different formats
+          if (!actualTx.sourceAddress) {
+            actualTx.sourceAddress = actualTx.source?.address || 
+                                    actualTx.from?.address ||
+                                    actualTx.from ||
+                                    txData.sourceAddress ||
+                                    txData.source?.address ||
+                                    txData.from?.address ||
+                                    txData.from ||
+                                    "";
+          }
+          if (!actualTx.destinationAddress) {
+            actualTx.destinationAddress = actualTx.destination?.address || 
+                                         actualTx.to?.address ||
+                                         actualTx.to ||
+                                         txData.destinationAddress ||
+                                         txData.destination?.address ||
+                                         txData.to?.address ||
+                                         txData.to ||
+                                         "";
+          }
+          
+          // Log transaction details for debugging
+          console.log(`[GET Transactions] TX ${actualTx.id}:`, {
+            from: actualTx.sourceAddress,
+            to: actualTx.destinationAddress,
+            amount: actualTx.amount?.amount || actualTx.amounts?.[0],
+            status: mappedStatus,
+            walletId: actualTx.walletId,
+            blockchain: actualTx.blockchain || actualTx.chain,
+          });
+          
+          // Also ensure amounts and token info are accessible
+          if (actualTx.amounts && actualTx.amounts.length > 0 && !actualTx.amount) {
+            actualTx.amount = { amount: actualTx.amounts[0], currency: actualTx.amount?.currency || "USDC" };
+          }
+          
+          // Log transaction details for debugging
+          console.log(`[GET Transaction] ${actualTx.id || txData.id} - Circle state: ${circleState} -> Mapped status: ${mappedStatus}`);
+          console.log(`[GET Transaction] Hash: ${blockchainHash || 'none'}`);
+          console.log(`[GET Transaction] Source: ${actualTx.sourceAddress || 'none'}`);
+          console.log(`[GET Transaction] Destination: ${actualTx.destinationAddress || 'none'}`);
+          console.log(`[GET Transaction] Amount: ${actualTx.amounts?.[0] || actualTx.amount?.amount || 'none'}`);
         });
       }
 

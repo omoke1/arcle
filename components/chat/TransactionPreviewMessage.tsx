@@ -38,7 +38,7 @@ export function TransactionPreviewMessage({
         riskReasons={riskReasons}
         onConfirm={onConfirm}
         onCancel={onCancel}
-        status={blocked || (riskScore !== undefined && riskScore >= 80) ? "blocked" : "preview"}
+        status="preview"
       />
     </div>
   );

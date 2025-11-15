@@ -24,6 +24,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
+  replyTo?: string; // ID of the message this is replying to
   transactionPreview?: {
     amount: string;
     to: string;

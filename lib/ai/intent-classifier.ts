@@ -10,6 +10,7 @@ export type IntentType =
   | "send"
   | "receive"
   | "balance"
+  | "tokens"
   | "address"
   | "transaction_history"
   | "bridge"
@@ -151,6 +152,16 @@ export class IntentClassifier {
     if (this.matchesBalance(lowerCommand)) {
       return {
         intent: "balance",
+        confidence: 0.95,
+        entities: {},
+        rawCommand: command,
+      };
+    }
+    
+    // Tokens intent (all tokens, not just balance)
+    if (this.matchesTokens(lowerCommand)) {
+      return {
+        intent: "tokens",
         confidence: 0.95,
         entities: {},
         rawCommand: command,
@@ -368,6 +379,25 @@ export class IntentClassifier {
       };
     }
     
+    // Scan intent (check before help to avoid conflicts)
+    if (this.matchesScan(lowerCommand)) {
+      return {
+        intent: "scan",
+        confidence: 0.9,
+        entities: this.extractScanEntities(command, lowerCommand),
+        rawCommand: command,
+      };
+    }
+    
+    // Withdraw intent
+    if (this.matchesWithdraw(lowerCommand)) {
+      return {
+        intent: "withdraw",
+        confidence: 0.9,
+        entities: this.extractWithdrawEntities(command, lowerCommand),
+        rawCommand: command,
+      };
+    }
     
     // Confirm intent (check early to catch "yes", "confirm", etc.)
     if (this.matchesConfirm(lowerCommand)) {
@@ -504,6 +534,11 @@ export class IntentClassifier {
     return withdrawKeywords.some(keyword => command.includes(keyword));
   }
   
+  private static matchesScan(command: string): boolean {
+    const scanKeywords = ["scan", "scan address", "check address", "analyze address", "security check", "risk check"];
+    return scanKeywords.some(keyword => command.includes(keyword));
+  }
+  
   private static matchesReceive(command: string): boolean {
     const receiveKeywords = ["receive", "get", "show address", "qr", "qr code", "my address"];
     return receiveKeywords.some(keyword => command.includes(keyword));
@@ -512,6 +547,15 @@ export class IntentClassifier {
   private static matchesBalance(command: string): boolean {
     const balanceKeywords = ["balance", "how much", "what's my balance", "check balance", "funds"];
     return balanceKeywords.some(keyword => command.includes(keyword));
+  }
+  
+  private static matchesTokens(command: string): boolean {
+    const tokenKeywords = [
+      "what tokens", "show tokens", "list tokens", "my tokens", 
+      "all tokens", "tokens i have", "token balances",
+      "what do i have", "show me my tokens", "what assets"
+    ];
+    return tokenKeywords.some(keyword => command.includes(keyword));
   }
   
   private static matchesAddress(command: string): boolean {
@@ -525,9 +569,24 @@ export class IntentClassifier {
   }
   
   private static matchesConfirm(command: string): boolean {
-    const confirmKeywords = ["yes", "confirm", "proceed", "ok", "okay", "sure", "go ahead", "do it", "execute", "continue"];
+    const confirmKeywords = [
+      "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "okey",
+      "confirm", "confirmed", "confirmation",
+      "proceed", "proceed with", "go ahead", "go for it",
+      "do it", "execute", "run it", "send it", "make it happen",
+      "continue", "let's do it", "let's go", "sounds good",
+      "that's right", "correct", "affirmative", "absolutely",
+      "approve", "approved", "accept", "accepted"
+    ];
     const trimmed = command.trim().toLowerCase();
-    return confirmKeywords.some(keyword => trimmed === keyword || trimmed.startsWith(keyword + " "));
+    // Check for exact matches or if command starts with any keyword
+    return confirmKeywords.some(keyword => {
+      const keywordLower = keyword.toLowerCase();
+      return trimmed === keywordLower || 
+             trimmed.startsWith(keywordLower + " ") ||
+             trimmed.startsWith(keywordLower + ",") ||
+             trimmed.startsWith(keywordLower + ".");
+    });
   }
 
   private static matchesCancel(command: string): boolean {
@@ -840,6 +899,13 @@ export class IntentClassifier {
       entities.currency = "USDC";
     } else if (lower.includes("eurc")) {
       entities.currency = "EURC";
+    }
+    
+    // Extract destination address (Ethereum address format: 0x followed by 40 hex chars)
+    const addressPattern = /0x[a-fA-F0-9]{40}/i;
+    const addressMatch = original.match(addressPattern);
+    if (addressMatch) {
+      entities.address = addressMatch[0];
     }
     
     return entities;
@@ -1536,6 +1602,21 @@ export class IntentClassifier {
       entities.currency = "compound_yield";
     } else if (lower.includes("rebalance")) {
       entities.currency = "rebalance_portfolio";
+    }
+    
+    return entities;
+  }
+
+  /**
+   * Extract entities from scan command
+   */
+  private static extractScanEntities(original: string, lower: string): ParsedIntent["entities"] {
+    const entities: ParsedIntent["entities"] = {};
+    
+    // Extract address (0x followed by 40 hex chars)
+    const addressMatch = original.match(/0x[a-fA-F0-9]{40}/);
+    if (addressMatch) {
+      entities.address = addressMatch[0];
     }
     
     return entities;

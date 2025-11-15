@@ -23,9 +23,14 @@
     "test-transaction-direct": "tsx scripts/test-transaction-direct.ts",
     "test-transaction-with-new-wallet": "tsx scripts/test-transaction-with-new-wallet.ts",
     "diagnose-transaction-issue": "tsx scripts/diagnose-transaction-issue.ts",
-    "test-all": "tsx scripts/test-all-features.ts"
+    "test-all": "tsx scripts/test-all-features.ts",
+    "check-bridge-status": "tsx scripts/check-bridge-status.ts",
+    "verify-bridge-completion": "tsx scripts/verify-bridge-completion.ts",
+    "check-recent-bridge": "tsx scripts/check-recent-bridge-transactions.ts",
+    "test-bridge-routes": "tsx scripts/test-all-bridge-routes.ts"
   },
   "dependencies": {
+    "@circle-fin/bridge-kit": "^1.1.1",
     "@circle-fin/developer-controlled-wallets": "^9.2.1",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",

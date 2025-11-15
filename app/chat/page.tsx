@@ -16,10 +16,22 @@ import { monitorTransaction } from "@/lib/notifications/transaction-monitor";
 import { startBalanceMonitoring, stopBalanceMonitoring } from "@/lib/notifications/balance-monitor";
 import { startIncomingTransactionMonitoring, stopIncomingTransactionMonitoring } from "@/lib/notifications/incoming-transaction-monitor";
 import { getAllNotifications, markAsRead, getUnreadCount } from "@/lib/notifications/notification-service";
+import { hasValidAccess } from "@/lib/auth/invite-codes";
 
 export default function ChatPage() {
   const router = useRouter();
   const { createWallet, sendTransaction, getBalance, getTransactionStatus, requestTestnetTokens, bridgeTransaction, getBridgeStatus } = useCircle();
+  
+  // Check invite code verification on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const hasAccess = hasValidAccess();
+      if (!hasAccess) {
+        // User doesn't have valid access, redirect to landing page
+        router.push('/');
+      }
+    }
+  }, [router]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [hasWallet, setHasWallet] = useState(false);
   const [walletId, setWalletId] = useState<string | null>(null);
@@ -91,8 +103,8 @@ export default function ChatPage() {
                 id: crypto.randomUUID(),
                 role: "assistant",
                 content: isIncrease
-                  ? `💰 **Balance Increased!**\n\nYour balance increased by ${change} USDC!\n\n**New balance:** ${newBalance} USDC`
-                  : `💸 **Balance Decreased**\n\nYour balance decreased by ${Math.abs(changeNum)} USDC.\n\n**New balance:** ${newBalance} USDC`,
+                  ? `💰 Balance Increased!\n\nYour balance increased by ${change} USDC!\n\nNew balance: ${newBalance} USDC`
+                  : `💸 Balance Decreased\n\nYour balance decreased by ${Math.abs(changeNum)} USDC.\n\nNew balance: ${newBalance} USDC`,
                 timestamp: new Date(),
               };
               setMessages((prev) => [...prev, notificationMsg]);
@@ -103,15 +115,15 @@ export default function ChatPage() {
           startIncomingTransactionMonitoring({
             walletId: storedWalletId,
             walletAddress: storedWalletAddress,
-            pollInterval: 20000, // Check every 20 seconds
+            pollInterval: 8000, // Check every 8 seconds (faster for better UX)
             enabled: true,
             onIncomingToken: (transfer) => {
               // Safe or medium risk token - just notify
               let content = "";
               if (transfer.analysis?.riskLevel === "medium") {
-                content = `⚠️ **Token Received (Medium Risk)**\n\n**Token:** ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\n**Amount:** ${transfer.amount}\n**Risk Score:** ${transfer.analysis?.riskScore}/100\n\n**Warnings:**\n${transfer.analysis?.riskReasons.map(r => `• ${r}`).join('\n')}\n\nPlease review this token carefully.`;
+                content = `⚠️ Token Received (Medium Risk)\n\nToken: ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\nAmount: ${transfer.amount}\nRisk Score: ${transfer.analysis?.riskScore}/100\n\nWarnings:\n${transfer.analysis?.riskReasons.map(r => `• ${r}`).join('\n')}\n\nPlease review this token carefully.`;
               } else {
-                content = `✅ **Token Received**\n\n**Token:** ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\n**Amount:** ${transfer.amount}\n\nToken has been added to your wallet.`;
+                content = `✅ Token Received\n\nToken: ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\nAmount: ${transfer.amount}\n\nToken has been added to your wallet.`;
               }
               
               const notificationMsg: ChatMessage = {
@@ -128,7 +140,7 @@ export default function ChatPage() {
               const notificationMsg: ChatMessage = {
                 id: crypto.randomUUID(),
                 role: "assistant",
-                content: `🚨 **SUSPICIOUS TOKEN DETECTED**\n\n**Token:** ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\n**Amount:** ${transfer.amount}\n**From:** ${transfer.fromAddress.slice(0, 10)}...${transfer.fromAddress.slice(-8)}\n**Risk Score:** ${analysis.riskScore}/100 (${analysis.riskLevel.toUpperCase()})\n\n**Risk Reasons:**\n${analysis.riskReasons.map(r => `• ${r}`).join('\n')}\n\n⚠️ **This token has been blocked for your safety.**\n\nTo approve it, say: "Approve token" or "Accept token"\nTo reject it, say: "Reject token" or "Block token"`,
+                content: `🚨 SUSPICIOUS TOKEN DETECTED\n\nToken: ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\nAmount: ${transfer.amount}\nFrom: ${transfer.fromAddress.slice(0, 10)}...${transfer.fromAddress.slice(-8)}\nRisk Score: ${analysis.riskScore}/100 (${analysis.riskLevel.toUpperCase()})\n\nRisk Reasons:\n${analysis.riskReasons.map(r => `• ${r}`).join('\n')}\n\n⚠️ This token has been blocked for your safety.\n\nTo approve it, say: "Approve token" or "Accept token"\nTo reject it, say: "Reject token" or "Block token"`,
                 timestamp: new Date(),
               };
               setMessages((prev) => [...prev, notificationMsg]);
@@ -512,9 +524,126 @@ export default function ChatPage() {
         setMessages((prev) => [...prev, errorMessage]);
       }
     } else if (aiResponse.intent.intent === "bridge" && walletId && walletAddress) {
-      // Handle bridge intent
-      const { amount, recipient: destinationChain } = aiResponse.intent.entities;
+      // Handle bridge intent with conversational messaging
+      const { amount, recipient: destinationChain, address } = aiResponse.intent.entities;
       
+      // If bridgeData is provided (user has confirmed), execute the bridge
+      if (aiResponse.bridgeData && aiResponse.requiresConfirmation) {
+        // Show bridge confirmation message
+        const aiMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: aiResponse.message,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, aiMessage]);
+        
+        // Check if user is confirming
+        const isConfirming = /^(yes|confirm|proceed|ok|okay|sure|go ahead|do it|let's go|lets go)$/i.test(content.trim());
+        
+        if (isConfirming) {
+          // Show initiating message with friendly status
+          const initMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `Alright! Firing up the bridge... 🚀\n\n${aiResponse.bridgeData.amount ? `Bridging your $${aiResponse.bridgeData.amount} USDC. ` : ""}This might take 10-30 seconds. I'll keep you updated!`,
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, initMessage]);
+          
+          try {
+            // Execute bridge with conversational status updates
+            const response = await fetch("/api/circle/bridge", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                walletId: aiResponse.bridgeData.walletId,
+                walletAddress: aiResponse.bridgeData.walletAddress,
+                amount: aiResponse.bridgeData.amount,
+                fromChain: aiResponse.bridgeData.fromChain,
+                toChain: aiResponse.bridgeData.toChain,
+                destinationAddress: aiResponse.bridgeData.destinationAddress,
+              }),
+            });
+            
+            const bridgeResult = await response.json();
+            
+            if (bridgeResult.success) {
+              // Show success message with conversational tone
+              const successMessage: ChatMessage = {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: `🎉 Bridge initiated successfully!\n\n` +
+                        `Your ${aiResponse.bridgeData.amount} USDC is on its way to ${destinationChain}!\n\n` +
+                        `${bridgeResult.firstTimeUser ? "✨ First bridge complete! Next time it'll be even faster.\n\n" : ""}` +
+                        `I'm monitoring the bridge - I'll let you know when it arrives (usually 10-30 seconds).`,
+                timestamp: new Date(),
+              };
+              setMessages((prev) => [...prev, successMessage]);
+              
+              // Start bridge monitoring with conversational callbacks
+              if (bridgeResult.data?.bridgeId) {
+                const { startBridgeMonitoring } = await import("@/lib/notifications/bridge-monitor");
+                startBridgeMonitoring({
+                  bridgeId: bridgeResult.data.bridgeId,
+                  transactionHash: bridgeResult.data.transactionHash,
+                  amount: aiResponse.bridgeData.amount,
+                  fromChain: aiResponse.bridgeData.fromChain,
+                  toChain: aiResponse.bridgeData.toChain,
+                  destinationAddress: aiResponse.bridgeData.destinationAddress,
+                  onComplete: (status) => {
+                    const completeMessage: ChatMessage = {
+                      id: crypto.randomUUID(),
+                      role: "assistant",
+                      content: `✅ Bridge complete!\n\nYour ${aiResponse.bridgeData?.amount || amount} USDC has arrived on ${destinationChain}. All done! 🎊`,
+                      timestamp: new Date(),
+                    };
+                    setMessages((prev) => [...prev, completeMessage]);
+                  },
+                  onError: (error) => {
+                    const errorMessage: ChatMessage = {
+                      id: crypto.randomUUID(),
+                      role: "assistant",
+                      content: `Hmm, something went wrong with the bridge: ${error}\n\nDon't worry, your funds are safe. Want me to help you try again?`,
+                      timestamp: new Date(),
+                    };
+                    setMessages((prev) => [...prev, errorMessage]);
+                  },
+                  onUpdate: (status) => {
+                    // Optional: Show progress updates
+                    if (status.progress && status.progress > 0 && status.progress < 100) {
+                      console.log(`Bridge progress: ${status.progress}%`);
+                    }
+                  },
+                });
+              }
+            } else {
+              // Show error with helpful message
+              const errorMessage: ChatMessage = {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: `Oops, ran into an issue: ${bridgeResult.message || "Unknown error"}\n\n` +
+                        `${bridgeResult.message?.includes("balance") ? "Looks like you might not have enough USDC. Want to check your balance?" : ""}` +
+                        `\nWant to try again or need help troubleshooting?`,
+                timestamp: new Date(),
+              };
+              setMessages((prev) => [...prev, errorMessage]);
+            }
+          } catch (error: any) {
+            const errorMessage: ChatMessage = {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: `Uh oh, something went wrong: ${error.message}\n\nNo worries though - your funds are safe. Want me to help you retry?`,
+              timestamp: new Date(),
+            };
+            setMessages((prev) => [...prev, errorMessage]);
+          }
+        }
+        setIsLoading(false);
+        return;
+      }
+      
+      // If not ready to execute yet, show AI response
       if (!amount || !destinationChain) {
         const aiMessage: ChatMessage = {
           id: crypto.randomUUID(),
@@ -524,31 +653,14 @@ export default function ChatPage() {
         };
         setMessages((prev) => [...prev, aiMessage]);
       } else {
-        // Map chain names to our format
-        const chainMap: Record<string, "BASE" | "ARBITRUM" | "ETH"> = {
-          "ethereum": "ETH",
-          "eth": "ETH",
-          "base": "BASE",
-          "arbitrum": "ARBITRUM",
-          "polygon": "ETH", // Default to ETH for now
-          "optimism": "ETH",
-          "avalanche": "ETH",
-        };
-        
-        const toChain = chainMap[destinationChain.toLowerCase()] || "ETH";
-        
-        // Extract destination address from message or use a placeholder
-        // In a real scenario, the user should provide the destination address
-        const bridgeMessage: ChatMessage = {
+        // Show next step message
+        const aiMessage: ChatMessage = {
           id: crypto.randomUUID(),
           role: "assistant",
-          content: `🌉 Initiating bridge of ${amount} USDC from Arc to ${destinationChain}...\n\nPlease provide the destination address on ${destinationChain}.`,
+          content: aiResponse.message,
           timestamp: new Date(),
         };
-        setMessages((prev) => [...prev, bridgeMessage]);
-        
-        // Note: In a complete implementation, we'd wait for the user to provide the destination address
-        // For now, we'll show a message that they need to provide it
+        setMessages((prev) => [...prev, aiMessage]);
       }
     } else if (lowerContent.includes("logout") || lowerContent.includes("log out") || lowerContent.includes("sign out")) {
       // Handle logout
@@ -616,7 +728,7 @@ export default function ChatPage() {
       const warningMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: `⚠️ **HIGH RISK TRANSACTION**\n\nYou're about to proceed with a high-risk transaction (Risk Score: ${message.transactionPreview.riskScore}/100).\n\n**Risk Factors:**\n${message.transactionPreview.riskReasons?.map(r => `• ${r}`).join('\n')}\n\nPlease verify the recipient address is correct. Proceeding with this transaction is at your own risk.`,
+        content: `⚠️ HIGH RISK TRANSACTION\n\nYou're about to proceed with a high-risk transaction (Risk Score: ${message.transactionPreview.riskScore}/100).\n\nRisk Factors:\n${message.transactionPreview.riskReasons?.map(r => `• ${r}`).join('\n')}\n\nPlease verify the recipient address is correct. Proceeding with this transaction is at your own risk.`,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, warningMessage]);
@@ -639,18 +751,34 @@ export default function ChatPage() {
     // Use normalized checksummed address
     const normalizedAddress = addressValidation.normalizedAddress || previewTo;
     
-    // Safety Check 3: Re-validate risk score before execution
+    // Safety Check 3: Re-validate risk score before execution (informational only)
+    // User has already confirmed, so we allow the transaction to proceed
+    // Only block if risk score increases significantly or if it's a zero address
     try {
       const currentRiskResult = await calculateRiskScore(normalizedAddress, previewAmount);
-      if (currentRiskResult.blocked || currentRiskResult.score >= 80) {
+      
+      // Only block zero address (truly invalid)
+      if (normalizedAddress === "0x0000000000000000000000000000000000000000") {
         const errorMessage: ChatMessage = {
           id: crypto.randomUUID(),
           role: "assistant",
-          content: `⚠️ **Transaction Blocked**\n\nRisk score has changed to ${currentRiskResult.score}/100 (High Risk).\n\n**Reasons:**\n${currentRiskResult.reasons.map(r => `• ${r}`).join('\n')}\n\nTransaction cancelled for your safety.`,
+          content: `⚠️ Invalid Address\n\nCannot send to zero address. Transaction cancelled.`,
           timestamp: new Date(),
         };
         setMessages((prev) => [...prev, errorMessage]);
         return;
+      }
+      
+      // If risk score increased significantly, show warning but still allow
+      if (currentRiskResult.score > (message.transactionPreview.riskScore || 0) + 20) {
+        const warningMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `⚠️ Risk Score Updated\n\nRisk score has increased to ${currentRiskResult.score}/100. Proceeding with transaction as you've confirmed.`,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, warningMessage]);
+        // Don't return - allow transaction to proceed
       }
     } catch (error) {
       console.error("Error re-validating risk score:", error);
@@ -773,33 +901,88 @@ export default function ChatPage() {
       );
       
       if (transaction) {
+        // 🔥 CRITICAL: Cache transaction immediately so it never "disappears" from history
+        // This ensures the transaction shows up in history instantly, even if Circle API is slow to index
+        if (typeof window !== 'undefined') {
+          const { cacheTransaction } = await import('@/lib/storage/transaction-cache');
+          cacheTransaction(walletId, transaction);
+          console.log(`[Transaction] 💾 Cached transaction immediately: ${transaction.id}`);
+        }
+        
         // Update address history for future risk scoring (using normalized address)
         updateAddressHistory(normalizedAddress);
         
-        // Refresh balance after successful transaction
-        if (walletAddress) {
-          const updatedBalance = await getBalance(walletId, walletAddress);
-          if (updatedBalance) {
-            setBalance(updatedBalance);
-          }
+        // Optimistic balance update - immediately reflect the transaction
+        if (walletAddress && balance && pendingTransaction) {
+          const currentBalance = parseFloat(balance);
+          const sentAmount = parseFloat(pendingTransaction.amount);
+          const newBalance = (currentBalance - sentAmount).toFixed(2);
+          setBalance(newBalance); // Immediate optimistic update
+          console.log(`[Transaction] Optimistic balance update: ${balance} -> ${newBalance}`);
         }
         
-        // Update message to show confirmed state
+        // Refresh balance aggressively after successful transaction
+        const refreshBalance = async () => {
+          if (walletAddress) {
+            try {
+              // Add cache-busting parameter to force fresh balance
+              const timestamp = Date.now();
+              const response = await fetch(
+                `/api/circle/balance?walletId=${walletId}&address=${walletAddress}&useBlockchain=true&_t=${timestamp}`
+              );
+              const data = await response.json();
+              if (data.success && data.data?.balance) {
+                setBalance(data.data.balance);
+                console.log(`[Transaction] Balance refreshed: ${data.data.balance}`);
+              }
+            } catch (error) {
+              console.error('[Transaction] Error refreshing balance:', error);
+            }
+          }
+        };
+        
+        // Refresh balance multiple times to ensure we catch Circle API updates
+        refreshBalance(); // Immediate
+        setTimeout(refreshBalance, 2000); // 2s
+        setTimeout(refreshBalance, 5000); // 5s
+        setTimeout(refreshBalance, 10000); // 10s
+        setTimeout(refreshBalance, 20000); // 20s (extra aggressive)
+        
+        // Update message to show confirmed state with link to verify
         if (pendingTransaction) {
+          const txHash = transaction.hash || transaction.id;
+          const explorerUrl = `https://testnet.arcscan.app/tx/${txHash}`;
+          
           setMessages((prev) => prev.map(msg =>
             msg.id === pendingTransaction.messageId
               ? {
                   ...msg,
-                  content: `✅ Transaction sent successfully!\n\nHash: ${transaction.hash}\nAmount: $${pendingTransaction.amount} USDC\nTo: ${pendingTransaction.to.substring(0, 6)}...${pendingTransaction.to.substring(38)}`,
+                  content: `✅ Payment sent successfully!\n\nAmount: $${pendingTransaction.amount} USDC\nTo: ${pendingTransaction.to.substring(0, 6)}...${pendingTransaction.to.substring(38)}\n\n[Verify on ArcScan](${explorerUrl})`,
                   transactionPreview: undefined,
                 }
               : msg
           ));
         }
         
-        // Notify transaction history to refresh
+        // Notify transaction history to refresh immediately and aggressively
         if (typeof window !== 'undefined') {
+          // Dispatch multiple refresh events at different intervals to catch Circle API indexing
           window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
+          }, 2000);
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
+          }, 5000);
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
+          }, 10000);
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
+          }, 20000);
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
+          }, 30000); // Extra aggressive - 30s
         }
         
         // Monitor transaction with notification system
@@ -820,7 +1003,7 @@ export default function ChatPage() {
                 const confirmMessage: ChatMessage = {
                   id: crypto.randomUUID(),
                   role: "assistant",
-                  content: `✅ Transaction confirmed on Arc!\n\n**Transaction ID:** ${transaction.id}\n${isValidBlockchainHash ? `**Transaction Hash:** ${hash}` : ''}\n**Network:** Arc (sub-second finality)\n**Gas Paid:** USDC (no ETH needed)${explorerLink}`,
+                  content: `✅ Transaction confirmed on Arc!\n\nTransaction ID: ${transaction.id}\n${isValidBlockchainHash ? `Transaction Hash: ${hash}` : ''}\nNetwork: Arc (sub-second finality)\nGas Paid: USDC (no ETH needed)${explorerLink}`,
                   timestamp: new Date(),
                 };
                 setMessages((prev) => [...prev, confirmMessage]);
@@ -943,7 +1126,7 @@ export default function ChatPage() {
           const confirmMessage: ChatMessage = {
             id: crypto.randomUUID(),
             role: "assistant",
-            content: `✅ **Transaction confirmed on Arc!**\n\n**Transaction Hash:** ${status.hash}\n**Network:** Arc (sub-second finality)\n**Gas Paid:** USDC (no ETH needed)${explorerLink}`,
+            content: `✅ Transaction confirmed on Arc!\n\nTransaction Hash: ${status.hash}\nNetwork: Arc (sub-second finality)\nGas Paid: USDC (no ETH needed)${explorerLink}`,
             timestamp: new Date(),
           };
           
