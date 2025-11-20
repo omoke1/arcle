@@ -34,18 +34,55 @@ export interface CreateUserRequest {
  */
 export async function POST(request: NextRequest) {
   try {
+    // Enhanced validation and logging for Vercel debugging
+    console.log("=== USER CREATION REQUEST ===");
+    console.log("App ID configured:", !!circleConfig.appId);
+    console.log("App ID value:", circleConfig.appId ? `${circleConfig.appId.substring(0, 8)}...` : "NOT SET");
+    console.log("API Key configured:", !!circleConfig.apiKey);
+    console.log("API Key prefix:", circleConfig.apiKey ? circleConfig.apiKey.split(":")[0] : "NOT SET");
+    console.log("Environment:", circleConfig.environment);
+    
     if (!circleConfig.appId) {
+      console.error("❌ NEXT_PUBLIC_CIRCLE_APP_ID is missing!");
       return NextResponse.json(
         {
           success: false,
-          error: "Circle App ID not configured. Set NEXT_PUBLIC_CIRCLE_APP_ID in .env",
+          error: "Circle App ID not configured. Set NEXT_PUBLIC_CIRCLE_APP_ID in Vercel environment variables.",
+          hint: "Go to Vercel Dashboard → Settings → Environment Variables and add NEXT_PUBLIC_CIRCLE_APP_ID",
         },
         { status: 400 }
       );
     }
 
+    if (!circleConfig.apiKey) {
+      console.error("❌ CIRCLE_API_KEY is missing!");
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Circle API key not configured. Set CIRCLE_API_KEY or NEXT_PUBLIC_CIRCLE_API_KEY in Vercel environment variables.",
+          hint: "Go to Vercel Dashboard → Settings → Environment Variables and add CIRCLE_API_KEY",
+        },
+        { status: 401 }
+      );
+    }
+
     const body: CreateUserRequest = await request.json();
-    const client = getUserCircleClient();
+    
+    let client;
+    try {
+      client = getUserCircleClient();
+      console.log("✅ User-Controlled Wallets SDK client initialized successfully");
+    } catch (sdkError: any) {
+      console.error("❌ Failed to initialize SDK:", sdkError.message);
+      return NextResponse.json(
+        {
+          success: false,
+          error: `SDK initialization failed: ${sdkError.message}`,
+          hint: "Check that NEXT_PUBLIC_CIRCLE_APP_ID and CIRCLE_API_KEY are correctly set in Vercel",
+        },
+        { status: 401 }
+      );
+    }
     
     // Handle email authentication
     if (body.action === "email-login" && body.email) {
@@ -214,13 +251,36 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     );
   } catch (error: any) {
-    console.error("Error creating user:", {
-      message: error.message,
-      response: error.response,
-      status: error.response?.status,
-      data: error.response?.data,
-      stack: error.stack,
-    });
+    console.error("=== ERROR CREATING USER ===");
+    console.error("Error message:", error.message);
+    console.error("Error type:", error.constructor?.name);
+    console.error("HTTP Status:", error.response?.status);
+    console.error("Error data:", error.response?.data);
+    console.error("Error code:", error.response?.data?.code);
+    console.error("Full error:", error);
+    
+    // Check for authentication errors (401)
+    const is401 = error.response?.status === 401 || 
+                  error.message?.includes("401") || 
+                  error.message?.includes("Unauthorized") ||
+                  error.response?.data?.code === 155001; // Circle's authentication error code
+    
+    if (is401) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Authentication failed. Check your Circle API key and App ID.",
+          details: {
+            message: error.response?.data?.message || error.message,
+            code: error.response?.data?.code,
+            hint: "Verify NEXT_PUBLIC_CIRCLE_APP_ID and CIRCLE_API_KEY are set correctly in Vercel environment variables",
+            appIdConfigured: !!circleConfig.appId,
+            apiKeyConfigured: !!circleConfig.apiKey,
+          },
+        },
+        { status: 401 }
+      );
+    }
     
     return NextResponse.json(
       {
