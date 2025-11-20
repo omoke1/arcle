@@ -85,6 +85,17 @@ export const DAILY_INVITE_CODES = [
   'Q8XR8NMT', // Code 58
   '8JG6WWVA', // Code 59
   'NFT4WNJW', // Code 60
+  // New codes added: 2025-11-20 (second batch)
+  '25X3D7Y9', // Code 61
+  'WH74BL4Z', // Code 62
+  'A9U7CFLN', // Code 63
+  'CDNQ4JY2', // Code 64
+  'DQWKRUKH', // Code 65
+  'ALPZAAMK', // Code 66
+  'BUY2SRBB', // Code 67
+  '6P25DDK6', // Code 68
+  'XW3HD72B', // Code 69
+  '4M9GFQ6X', // Code 70
 ];
 
 // Get all invite codes from environment or fallback to default
