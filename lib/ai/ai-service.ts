@@ -283,7 +283,7 @@ export class AIService {
         // The actual transaction execution should happen in the chat page
         // This just confirms we're ready
         return {
-          message: `✅ Confirmed! Executing ${pendingAction.type === "send" ? "send" : "payment"} transaction...`,
+          message: `Confirmed! Executing ${pendingAction.type === "send" ? "send" : "payment"} transaction...`,
           intent,
           requiresConfirmation: false,
           transactionPreview: pendingAction.data.transactionPreview,
@@ -292,13 +292,13 @@ export class AIService {
       case "trade":
         // Execute trade
         return {
-          message: `✅ Confirmed! Executing trade...`,
+          message: `Confirmed! Executing trade...`,
           intent,
         };
       
       default:
         return {
-          message: `✅ Confirmed! Processing your request...`,
+          message: `Confirmed! Processing your request...`,
           intent,
         };
     }
@@ -513,7 +513,7 @@ export class AIService {
     // Don't block - let user decide after seeing the risks
     let highRiskWarning = "";
     if (riskResult.blocked || riskResult.score >= 80) {
-      highRiskWarning = `🚨 HIGH RISK TRANSACTION DETECTED\n\nRisk Score: ${riskResult.score}/100\n\nReasons:\n${riskResult.reasons.map(r => `• ${r}`).join('\n')}\n\n⚠️ WARNING: This transaction has been flagged as high risk. Please carefully verify the recipient address before proceeding. You can still approve this transaction if you're certain it's safe.\n\n`;
+      highRiskWarning = `🚨 HIGH RISK TRANSACTION DETECTED\n\nRisk Score: ${riskResult.score}/100\n\nReasons:\n${riskResult.reasons.map(r => `• ${r}`).join('\n')}\n\nWARNING: This transaction has been flagged as high risk. Please carefully verify the recipient address before proceeding. You can still approve this transaction if you're certain it's safe.\n\n`;
     }
     
     // Build risk message
@@ -546,7 +546,7 @@ export class AIService {
     
     // Add confirmation prompt based on whether it's a new wallet
     if (isNewWallet) {
-      baseMessage += `⚠️ This is a new wallet address. Do you want to proceed with this transaction?\n\nPlease confirm by saying "yes", "confirm", or "proceed" to continue, or "no", "cancel", or "stop" to abort.`;
+      baseMessage += `This is a new wallet address. Do you want to proceed with this transaction?\n\nPlease confirm by saying "yes", "confirm", or "proceed" to continue, or "no", "cancel", or "stop" to abort.`;
     } else {
       baseMessage += `Please review and confirm:`;
     }
@@ -670,7 +670,7 @@ export class AIService {
     
     // Guide user through wallet creation with PIN explanation
     const message = await this.enhanceResponse(
-      `Great! I'd love to help you set up your wallet. 🎉
+      `Great! I'd love to help you set up your wallet.
 
 Before we create your wallet, you'll need to set up a secure 6-digit PIN. Think of it like the PIN for your bank card - it's your personal key that keeps your wallet safe and secure.
 
@@ -811,7 +811,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
     
     if (!amount) {
       return {
-        message: "I can help you bridge USDC across chains! 🌉\n\nJust tell me:\n• How much to bridge\n• Which chain you're sending to\n\nExample: \"Bridge $50 to Ethereum\" or \"Bridge 100 USDC to Base\"",
+        message: "I can help you bridge USDC across chains!\n\nJust tell me:\n• How much to bridge\n• Which chain you're sending to\n\nExample: \"Bridge $50 to Ethereum\" or \"Bridge 100 USDC to Base\"",
         intent,
       };
     }
@@ -832,11 +832,11 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       // Check if this is first-time bridge user (will need Gateway deposit)
       // The bridge API will handle auto-deposit, we just set expectations
       const speedInfo = wantsFast
-        ? `⚡ Fast Transfer: Settles in seconds (~$0.25 fee)`
-        : `🐢 Standard Transfer: 13-19 minutes (~$0.08 fee)`;
+        ? `Fast Transfer: Settles in seconds (~$0.25 fee)`
+        : `Standard Transfer: 13-19 minutes (~$0.08 fee)`;
       
       return {
-        message: `Perfect! Bridging $${amount} USDC from Arc to ${destinationChain} 🚀\n\n` +
+        message: `Perfect! Bridging $${amount} USDC from Arc to ${destinationChain}\n\n` +
                 `${speedInfo}\n\n` +
                 `Here's what's happening:\n` +
                 `• If this is your first bridge, I'll set up instant bridging for you (takes a moment)\n` +
@@ -993,7 +993,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
     // Only block zero address (truly invalid)
     if (normalizedAddress === "0x0000000000000000000000000000000000000000") {
       return {
-        message: `⚠️ Invalid Address\n\nCannot send to zero address. Please provide a valid recipient address.`,
+        message: `Invalid Address\n\nCannot send to zero address. Please provide a valid recipient address.`,
         intent,
         requiresConfirmation: false,
       };
@@ -1004,14 +1004,14 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
     if (riskResult.level === "high") {
       riskMessage = `⚠️ HIGH RISK (${riskResult.score}/100)`;
     } else if (riskResult.level === "medium") {
-      riskMessage = `⚠️ MEDIUM RISK (${riskResult.score}/100)`;
+      riskMessage = `MEDIUM RISK (${riskResult.score}/100)`;
     } else {
-      riskMessage = `✅ LOW RISK (${riskResult.score}/100)`;
+      riskMessage = `LOW RISK (${riskResult.score}/100)`;
     }
     
     // Build message with new wallet warning if applicable
     let message = phishingWarning; // Add phishing warning first if present
-    message += `💳 I'll pay $${amount} USDC to ${normalizedAddress.substring(0, 6)}...${normalizedAddress.substring(38)}.\n\n`;
+    message += `I'll pay $${amount} USDC to ${normalizedAddress.substring(0, 6)}...${normalizedAddress.substring(38)}.\n\n`;
     
     // Add new wallet warning if this is a new address
     if (isNewWallet) {
@@ -1022,7 +1022,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
     
     // Add confirmation prompt based on whether it's a new wallet
     if (isNewWallet) {
-      message += `⚠️ This is a new wallet address. Do you want to proceed with this payment?\n\nPlease confirm by saying "yes", "confirm", or "proceed" to continue, or "no", "cancel", or "stop" to abort.`;
+      message += `This is a new wallet address. Do you want to proceed with this payment?\n\nPlease confirm by saying "yes", "confirm", or "proceed" to continue, or "no", "cancel", or "stop" to abort.`;
     } else {
       message += `Please review and confirm:`;
     }
@@ -1090,7 +1090,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       // User wants to deposit/subscribe to earn yield
       if (!amount) {
         return {
-          message: `Great! Let's get you earning yield with USYC (Circle's yield token).\n\n💰 Current APY: ~5% (overnight federal funds rate)\n✅ Available on: ${availableChains.join(", ")}\n✅ Backed by US government securities\n\nHow much USDC would you like to deposit? (e.g., "$1000")`,
+          message: `Great! Let's get you earning yield with USYC (Circle's yield token).\n\n💰 Current APY: ~5% (overnight federal funds rate)\nAvailable on: ${availableChains.join(", ")}\nBacked by US government securities\n\nHow much USDC would you like to deposit? (e.g., "$1000")`,
           intent,
         };
       }
@@ -1129,7 +1129,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       };
     } else {
       return {
-        message: `I'll scan for arbitrage opportunities! 🔍\n\nScanning for:\n• Cross-chain price differences\n• DEX-to-DEX arbitrage\n• Minimum profit: ${minProfitMargin}%\n\nThis may take a moment...`,
+        message: `I'll scan for arbitrage opportunities!\n\nScanning for:\n• Cross-chain price differences\n• DEX-to-DEX arbitrage\n• Minimum profit: ${minProfitMargin}%\n\nThis may take a moment...`,
         intent,
         requiresConfirmation: false,
       };
@@ -1247,7 +1247,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
     const percentage = (100 / recipientList.length).toFixed(1);
     
     return {
-      message: `Perfect! I'll split $${amount} USDC evenly among ${recipientList.length} people.\n\nEach person gets: $${perPerson} USDC (${percentage}%)\n\nRecipients:\n${recipientList.map((r, i) => `${i + 1}. ${r} - $${perPerson}`).join("\n")}\n\n⚡ All in one transaction!\n\nShall I proceed?`,
+      message: `Perfect! I'll split $${amount} USDC evenly among ${recipientList.length} people.\n\nEach person gets: $${perPerson} USDC (${percentage}%)\n\nRecipients:\n${recipientList.map((r, i) => `${i + 1}. ${r} - $${perPerson}`).join("\n")}\n\nAll in one transaction!\n\nShall I proceed?`,
       intent,
       requiresConfirmation: true,
     };
@@ -1329,7 +1329,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
     const totalAmount = (parseFloat(amount) * recipientList.length).toFixed(2);
     
     return {
-      message: `Perfect! I'll batch send $${amount} USDC to ${recipientList.length} recipients.\n\n💰 Total: $${totalAmount} USDC\n⚡ Gas savings: ~33% vs individual sends\n\nRecipients:\n${recipientList.map((r, i) => `${i + 1}. ${r}`).join("\n")}\n\nShall I proceed?`,
+      message: `Perfect! I'll batch send $${amount} USDC to ${recipientList.length} recipients.\n\n💰 Total: $${totalAmount} USDC\nGas savings: ~33% vs individual sends\n\nRecipients:\n${recipientList.map((r, i) => `${i + 1}. ${r}`).join("\n")}\n\nShall I proceed?`,
       intent,
       requiresConfirmation: true,
     };
@@ -1361,17 +1361,17 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       return {
         message: `💰 Savings vs Yield - What's the difference?\n\n` +
                 `**Savings** (Goal-based & Disciplined):\n` +
-                `✅ Save for specific goals (house, car, etc.)\n` +
-                `✅ Higher APY (8-15%)\n` +
-                `✅ Builds discipline with lock periods\n` +
-                `⚠️ Penalty (3-10%) if withdrawn early\n` +
-                `📊 Best for: Planned expenses, goals\n\n` +
+                `• Save for specific goals (house, car, etc.)\n` +
+                `• Higher APY (8-15%)\n` +
+                `• Builds discipline with lock periods\n` +
+                `• Penalty (3-10%) if withdrawn early\n` +
+                `Best for: Planned expenses, goals\n\n` +
                 `**Yield** (Flexible Investment):\n` +
-                `✅ Earn passive income (5-7% APY)\n` +
-                `✅ Withdraw anytime, no penalty\n` +
-                `✅ No commitments\n` +
-                `⚠️ Lower returns\n` +
-                `📊 Best for: Emergency funds, flexibility\n\n` +
+                `• Earn passive income (5-7% APY)\n` +
+                `• Withdraw anytime, no penalty\n` +
+                `• No commitments\n` +
+                `• Lower returns\n` +
+                `Best for: Emergency funds, flexibility\n\n` +
                 `Which would you like to start?`,
         intent,
       };
@@ -1407,7 +1407,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       
       if (!amount) {
         return {
-          message: `Great! Let's create a savings goal for "${goalName}" 🎯\n\nHow much do you want to save?`,
+          message: `Great! Let's create a savings goal for "${goalName}"\n\nHow much do you want to save?`,
           intent,
         };
       }
@@ -1421,11 +1421,11 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       }
       
       return {
-        message: `✅ Ready to create your savings goal!\n\n` +
-                `🎯 Goal: ${goalName}\n` +
+        message: `Ready to create your savings goal!\n\n` +
+                `Goal: ${goalName}\n` +
                 `💰 Amount: $${amount}\n` +
-                `⏰ Period: ${time}\n` +
-                `📈 APY: ~10-12%\n` +
+                `Period: ${time}\n` +
+                `APY: ~10-12%\n` +
                 `⚠️ Early withdrawal penalty applies\n\n` +
                 `Shall I create this savings goal?`,
         intent,
@@ -1467,7 +1467,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
                 `APY: ~10-12%\n` +
                 `At Maturity: ~$${(parseFloat(amount) * 1.1).toFixed(2)}\n\n` +
                 `⚠️ Funds will be locked. Early withdrawal = penalty.\n` +
-                `✅ At maturity: Full amount + yield, no penalty\n\n` +
+                `At maturity: Full amount + yield, no penalty\n\n` +
                 `Shall I create this SafeLock?`,
         intent,
         requiresConfirmation: true,
@@ -1478,18 +1478,18 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
     return {
       message: `💰 Start Saving with Arcle!\n\n` +
               `Choose your savings type:\n\n` +
-              `**1. Goal-Based Savings** 🎯\n` +
+              `**1. Goal-Based Savings**\n` +
               `"Save $5000 for a house"\n` +
               `• Set specific goals\n` +
               `• Optional recurring contributions\n` +
               `• 8-15% APY\n\n` +
-              `**2. SafeLock** 🔒\n` +
+              `**2. SafeLock**\n` +
               `"Lock $1000 for 3 months"\n` +
               `• Fixed deposits\n` +
               `• Guaranteed returns\n` +
               `• 7-15% APY\n\n` +
               `⚠️ Both have penalties for early withdrawal\n` +
-              `💡 Want flexible? Try "Start earning yield" instead!\n\n` +
+              `Want flexible? Try "Start earning yield" instead!\n\n` +
               `What would you like to do?`,
       intent,
     };
@@ -1529,7 +1529,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
     }
     
     return {
-      message: `Great! I'll swap $${amount} ${fromToken} for ${toToken} on Uniswap.\n\n⚙️ Settings:\n• Slippage tolerance: 0.5%\n• Route: ${fromToken} → ${toToken}\n• DEX: Uniswap V2\n\nI'll show you a quote before executing. Shall I proceed?`,
+      message: `Great! I'll swap $${amount} ${fromToken} for ${toToken} on Uniswap.\n\nSettings:\n• Slippage tolerance: 0.5%\n• Route: ${fromToken} → ${toToken}\n• DEX: Uniswap V2\n\nI'll show you a quote before executing. Shall I proceed?`,
       intent,
       requiresConfirmation: true,
     };
@@ -1578,7 +1578,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
     }
     
     return {
-      message: `Perfect! I'll create a limit order:\n\n📋 Order Details:\n• Type: Buy\n• From: ${fromToken}\n• To: ${toToken}\n• Target Price: $${targetPrice}\n• Expiry: 7 days\n\nI'll monitor prices and execute automatically when reached. Shall I create this order?`,
+      message: `Perfect! I'll create a limit order:\n\nOrder Details:\n• Type: Buy\n• From: ${fromToken}\n• To: ${toToken}\n• Target Price: $${targetPrice}\n• Expiry: 7 days\n\nI'll monitor prices and execute automatically when reached. Shall I create this order?`,
       intent,
       requiresConfirmation: true,
     };
@@ -1607,7 +1607,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
     }
     
     return {
-      message: `Perfect! I'll aggregate liquidity for your trade:\n\n🔍 Scanning:\n• Amount: $${amount} ${fromToken}\n• To: ${toToken}\n• Across: Ethereum, Base, Arbitrum, Polygon, Avalanche\n• DEXs: 10+ liquidity sources\n\nI'll find the best price and route. This may take a moment...`,
+      message: `Perfect! I'll aggregate liquidity for your trade:\n\nScanning:\n• Amount: $${amount} ${fromToken}\n• To: ${toToken}\n• Across: Ethereum, Base, Arbitrum, Polygon, Avalanche\n• DEXs: 10+ liquidity sources\n\nI'll find the best price and route. This may take a moment...`,
       intent,
       requiresConfirmation: false,
     };
@@ -1634,7 +1634,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
     
     if (isEnable) {
       return {
-        message: `I'll set up auto-compounding for your USYC yield!\n\n⚙️ Settings:\n• Frequency: ${frequency}\n• Minimum yield: $10\n• Reinvest: 100%\n\nYour yield will automatically reinvest to maximize returns. Shall I enable it?`,
+        message: `I'll set up auto-compounding for your USYC yield!\n\nSettings:\n• Frequency: ${frequency}\n• Minimum yield: $10\n• Reinvest: 100%\n\nYour yield will automatically reinvest to maximize returns. Shall I enable it?`,
         intent,
         requiresConfirmation: true,
       };
@@ -1701,7 +1701,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
 
       if (!result.success || !result.convertedAmount || !result.rate) {
         return {
-          message: `❌ Conversion failed: ${result.error || "Unknown error"}`,
+          message: `Conversion failed: ${result.error || "Unknown error"}`,
           intent,
         };
       }
@@ -1726,7 +1726,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       }
       
       const message = await this.enhanceResponse(
-        `💱 Currency Conversion Preview\n\nFrom: ${amount} ${fromCurrency}\nTo: ~${convertedAmount} ${toCurrency}\nRate: 1 ${fromCurrency} = ${rate.toFixed(6)} ${toCurrency}\n\nReady to convert? This will execute a swap transaction.`,
+        `Currency Conversion Preview\n\nFrom: ${amount} ${fromCurrency}\nTo: ~${convertedAmount} ${toCurrency}\nRate: 1 ${fromCurrency} = ${rate.toFixed(6)} ${toCurrency}\n\nReady to convert? This will execute a swap transaction.`,
         intent,
         "currency_conversion",
         context,
@@ -1747,7 +1747,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       };
     } catch (error) {
       return {
-        message: `❌ Error fetching conversion rate: ${error instanceof Error ? error.message : "Unknown error"}`,
+        message: `Error fetching conversion rate: ${error instanceof Error ? error.message : "Unknown error"}`,
         intent,
       };
     }
@@ -1792,7 +1792,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
 
       if (!result.success) {
         return {
-          message: `❌ FX swap failed: ${result.error || "Unknown error"}`,
+          message: `FX swap failed: ${result.error || "Unknown error"}`,
           intent: { intent: "convert", confidence: 1, entities: {}, rawCommand: "" },
         };
       }
@@ -1805,7 +1805,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
         : "";
 
       const message = await this.enhanceResponse(
-        `✅ FX Swap Executed Successfully!\n\n` +
+        `FX Swap Executed Successfully!\n\n` +
         `From: ${result.fromAmount} ${result.fromCurrency}\n` +
         `To: ${result.toAmount} ${result.toCurrency}\n` +
         `Rate: 1 ${result.fromCurrency} = ${result.rate.toFixed(6)} ${result.toCurrency}\n` +
@@ -1839,7 +1839,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
     } catch (error) {
       console.error("FX swap execution error:", error);
       return {
-        message: `❌ Error executing FX swap: ${error instanceof Error ? error.message : "Unknown error"}`,
+        message: `Error executing FX swap: ${error instanceof Error ? error.message : "Unknown error"}`,
         intent: { intent: "convert", confidence: 1, entities: {}, rawCommand: "" },
       };
     }
@@ -1870,7 +1870,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
 
       if (!result.success || !result.rate) {
         return {
-          message: `❌ Could not fetch exchange rate: ${result.error || "Unknown error"}`,
+          message: `Could not fetch exchange rate: ${result.error || "Unknown error"}`,
           intent,
         };
       }
@@ -1879,7 +1879,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       const rateDate = new Date(timestamp).toLocaleString();
       
       const message = await this.enhanceResponse(
-        `💱 Exchange Rate\n\n${fromCurrency} → ${toCurrency}\nRate: 1 ${fromCurrency} = ${rate.toFixed(6)} ${toCurrency}\nSource: ${source}\nUpdated: ${rateDate}`,
+        `Exchange Rate\n\n${fromCurrency} → ${toCurrency}\nRate: 1 ${fromCurrency} = ${rate.toFixed(6)} ${toCurrency}\nSource: ${source}\nUpdated: ${rateDate}`,
         intent,
         "fx_rate",
         context,
@@ -1897,7 +1897,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       };
     } catch (error) {
       return {
-        message: `❌ Error fetching exchange rate: ${error instanceof Error ? error.message : "Unknown error"}`,
+        message: `Error fetching exchange rate: ${error instanceof Error ? error.message : "Unknown error"}`,
         intent,
       };
     }
@@ -1928,7 +1928,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
         };
       }
 
-      let message = `💱 Your Currency Balances\n\n`;
+      let message = `Your Currency Balances\n\n`;
       
       for (const balance of balances) {
         message += `${balance.currency}: ${balance.amount} ${balance.currency}\n`;
@@ -1954,7 +1954,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       };
     } catch (error) {
       return {
-        message: `❌ Error fetching currency balances: ${error instanceof Error ? error.message : "Unknown error"}`,
+        message: `Error fetching currency balances: ${error instanceof Error ? error.message : "Unknown error"}`,
         intent,
       };
     }
@@ -2011,7 +2011,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
         };
       } catch (error) {
         return {
-          message: `❌ Error fetching invoices: ${error instanceof Error ? error.message : "Unknown error"}`,
+          message: `Error fetching invoices: ${error instanceof Error ? error.message : "Unknown error"}`,
           intent,
         };
       }
@@ -2056,7 +2056,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       });
       
       const enhancedMessage = await this.enhanceResponse(
-        `✅ Invoice Created!\n\nInvoice #: ${invoice.invoiceNumber}\nRecipient: ${invoice.recipient}\nAmount: ${invoice.amount} ${invoice.currency}\nDue Date: ${new Date(invoice.dueDate).toLocaleDateString()}\nStatus: ${invoice.status}\n\nI'll remind you before it's due!`,
+        `Invoice Created!\n\nInvoice #: ${invoice.invoiceNumber}\nRecipient: ${invoice.recipient}\nAmount: ${invoice.amount} ${invoice.currency}\nDue Date: ${new Date(invoice.dueDate).toLocaleDateString()}\nStatus: ${invoice.status}\n\nI'll remind you before it's due!`,
         intent,
         "create_invoice",
         context,
@@ -2069,7 +2069,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       };
     } catch (error) {
       return {
-        message: `❌ Error creating invoice: ${error instanceof Error ? error.message : "Unknown error"}`,
+        message: `Error creating invoice: ${error instanceof Error ? error.message : "Unknown error"}`,
         intent,
       };
     }
@@ -2102,7 +2102,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
           };
         }
         
-        let message = `💰 Your Payment Rolls\n\n`;
+        let message = `Your Payment Rolls\n\n`;
         for (const roll of rolls) {
           const nextDate = new Date(roll.nextPaymentDate).toLocaleDateString();
           message += `${roll.name}\n`;
@@ -2126,7 +2126,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
         };
       } catch (error) {
         return {
-          message: `❌ Error fetching payment rolls: ${error instanceof Error ? error.message : "Unknown error"}`,
+          message: `Error fetching payment rolls: ${error instanceof Error ? error.message : "Unknown error"}`,
           intent,
         };
       }
@@ -2177,7 +2177,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       });
       
       const enhancedMessage = await this.enhanceResponse(
-        `✅ Payment Roll Created!\n\nName: ${roll.name}\nFrequency: ${roll.frequency}\nTotal Amount: ${roll.totalAmount} ${roll.currency}\nRecipients: ${roll.recipients.length}\nNext Payment: ${new Date(roll.nextPaymentDate).toLocaleDateString()}\n\nI'll process payments automatically on the scheduled dates!`,
+        `Payment Roll Created!\n\nName: ${roll.name}\nFrequency: ${roll.frequency}\nTotal Amount: ${roll.totalAmount} ${roll.currency}\nRecipients: ${roll.recipients.length}\nNext Payment: ${new Date(roll.nextPaymentDate).toLocaleDateString()}\n\nI'll process payments automatically on the scheduled dates!`,
         intent,
         "create_payment_roll",
         context,
@@ -2190,7 +2190,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       };
     } catch (error) {
       return {
-        message: `❌ Error creating payment roll: ${error instanceof Error ? error.message : "Unknown error"}`,
+        message: `Error creating payment roll: ${error instanceof Error ? error.message : "Unknown error"}`,
         intent,
       };
     }
@@ -2247,7 +2247,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
         };
       } catch (error) {
         return {
-          message: `❌ Error fetching remittances: ${error instanceof Error ? error.message : "Unknown error"}`,
+          message: `Error fetching remittances: ${error instanceof Error ? error.message : "Unknown error"}`,
           intent,
         };
       }
@@ -2274,7 +2274,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       });
       
       const enhancedMessage = await this.enhanceResponse(
-        `✅ Remittance Created!\n\nRemittance #: ${remittance.remittanceNumber}\nRecipient: ${remittance.recipientName}\nCountry: ${remittance.recipientCountry}\nAmount: ${remittance.amount} USDC\nConverted: ${remittance.convertedAmount} ${remittance.recipientCurrency}\nExchange Rate: 1 USDC = ${remittance.exchangeRate.toFixed(6)} ${remittance.recipientCurrency}\nFee: ${remittance.fee} USDC\nTotal: ${remittance.totalAmount} USDC\n\nReady to send?`,
+        `Remittance Created!\n\nRemittance #: ${remittance.remittanceNumber}\nRecipient: ${remittance.recipientName}\nCountry: ${remittance.recipientCountry}\nAmount: ${remittance.amount} USDC\nConverted: ${remittance.convertedAmount} ${remittance.recipientCurrency}\nExchange Rate: 1 USDC = ${remittance.exchangeRate.toFixed(6)} ${remittance.recipientCurrency}\nFee: ${remittance.fee} USDC\nTotal: ${remittance.totalAmount} USDC\n\nReady to send?`,
         intent,
         "create_remittance",
         context,
@@ -2287,7 +2287,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       };
     } catch (error) {
       return {
-        message: `❌ Error creating remittance: ${error instanceof Error ? error.message : "Unknown error"}`,
+        message: `Error creating remittance: ${error instanceof Error ? error.message : "Unknown error"}`,
         intent,
       };
     }
@@ -2333,7 +2333,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
         };
       } catch (error) {
         return {
-          message: `❌ Error fetching alerts: ${error instanceof Error ? error.message : "Unknown error"}`,
+          message: `Error fetching alerts: ${error instanceof Error ? error.message : "Unknown error"}`,
           intent,
         };
       }
@@ -2357,7 +2357,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       );
       
       const enhancedMessage = await this.enhanceResponse(
-        `✅ FX Rate Alert Created!\n\nPair: ${alert.pair}\nAlert: ${alert.direction} ${alert.targetRate}\nStatus: ${alert.status}\n\nI'll notify you when the rate ${alert.direction} ${alert.targetRate}!`,
+        `FX Rate Alert Created!\n\nPair: ${alert.pair}\nAlert: ${alert.direction} ${alert.targetRate}\nStatus: ${alert.status}\n\nI'll notify you when the rate ${alert.direction} ${alert.targetRate}!`,
         intent,
         "create_fx_alert",
         context,
@@ -2370,7 +2370,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       };
     } catch (error) {
       return {
-        message: `❌ Error creating alert: ${error instanceof Error ? error.message : "Unknown error"}`,
+        message: `Error creating alert: ${error instanceof Error ? error.message : "Unknown error"}`,
         intent,
       };
     }
@@ -2403,7 +2403,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
           };
         }
         
-        let message = `📊 Your Perpetual Positions\n\n`;
+        let message = `Your Perpetual Positions\n\n`;
         for (const pos of positions) {
           message += `${pos.pair} ${pos.side.toUpperCase()}\n`;
           message += `Size: ${pos.size}\n`;
@@ -2428,7 +2428,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
         };
       } catch (error) {
         return {
-          message: `❌ Error fetching positions: ${error instanceof Error ? error.message : "Unknown error"}`,
+          message: `Error fetching positions: ${error instanceof Error ? error.message : "Unknown error"}`,
           intent,
         };
       }
