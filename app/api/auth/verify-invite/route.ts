@@ -34,7 +34,18 @@ export async function POST(request: NextRequest) {
     const isValid = isValidInviteCode(trimmedCode);
 
     if (!isValid) {
+      // Log more details for debugging
+      const { getInviteCodes } = await import("@/lib/auth/invite-codes");
+      const allCodes = getInviteCodes();
       console.log(`[Invite] Invalid code attempt: ${trimmedCode}`);
+      console.log(`[Invite] Total valid codes: ${allCodes.length}`);
+      console.log(`[Invite] Code format check: length=${trimmedCode.length}, matches pattern=${/^[A-Z0-9]{8}$/.test(trimmedCode)}`);
+      
+      // In development, show first few codes for debugging
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[Invite] First 5 valid codes: ${allCodes.slice(0, 5).join(', ')}`);
+      }
+      
       return NextResponse.json({
         valid: false,
         message: "Invalid invite code. Please check and try again.",

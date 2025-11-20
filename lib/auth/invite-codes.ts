@@ -74,6 +74,17 @@ export const DAILY_INVITE_CODES = [
   '6ZYLEAX4', // Code 48
   'J48MYZFR', // Code 49
   '7TL97FVN', // Code 50
+  // New codes added: 2025-11-20
+  'G2LKFBXD', // Code 51
+  '2F88PMVE', // Code 52
+  '3NEMTDF7', // Code 53
+  'X6JNNB2F', // Code 54
+  'CW97FJ99', // Code 55
+  'M4753KUP', // Code 56
+  'ACUBEL3F', // Code 57
+  'Q8XR8NMT', // Code 58
+  '8JG6WWVA', // Code 59
+  'NFT4WNJW', // Code 60
 ];
 
 // Get all invite codes from environment or fallback to default
@@ -83,19 +94,26 @@ export function getInviteCodes(): string[] {
     return [];
   }
   
-  // Server-side: Merge environment codes with default codes
-  // This ensures new codes added to DAILY_INVITE_CODES work even if env var is set
+  // Server-side: ALWAYS start with DAILY_INVITE_CODES as the base
+  // This ensures new codes added to DAILY_INVITE_CODES always work
+  // Environment variable codes are ADDED to the base, not replacing it
   const allCodes = new Set<string>(DAILY_INVITE_CODES);
   
+  // Add environment codes if they exist (for additional codes beyond DAILY_INVITE_CODES)
   const envCodes = process.env.INVITE_CODES;
   if (envCodes) {
     // Add environment codes to the set (automatically handles duplicates)
     envCodes.split(',').forEach(code => {
-      const trimmed = code.trim();
+      const trimmed = code.trim().toUpperCase();
       if (trimmed) {
         allCodes.add(trimmed);
       }
     });
+  }
+  
+  // Log for debugging (only in development or when explicitly enabled)
+  if (process.env.NODE_ENV === 'development' || process.env.DEBUG_INVITE_CODES === 'true') {
+    console.log(`[Invite Codes] Total codes available: ${allCodes.size} (${DAILY_INVITE_CODES.length} from DAILY_INVITE_CODES + ${envCodes ? envCodes.split(',').length : 0} from env)`);
   }
   
   return Array.from(allCodes);
@@ -103,8 +121,27 @@ export function getInviteCodes(): string[] {
 
 // Verify if a code is valid (server-side only)
 export function isValidInviteCode(code: string): boolean {
+  if (!code || typeof code !== 'string') {
+    return false;
+  }
+  
+  const trimmedCode = code.toUpperCase().trim();
+  if (!trimmedCode || trimmedCode.length !== 8) {
+    return false;
+  }
+  
   const validCodes = getInviteCodes();
-  return validCodes.includes(code.toUpperCase().trim());
+  const isValid = validCodes.includes(trimmedCode);
+  
+  // Log for debugging (only in development or when explicitly enabled)
+  if (process.env.NODE_ENV === 'development' || process.env.DEBUG_INVITE_CODES === 'true') {
+    console.log(`[Invite Code Validation] Code: ${trimmedCode}, Valid: ${isValid}, Total codes: ${validCodes.length}`);
+    if (!isValid) {
+      console.log(`[Invite Code Validation] Code not found. First 5 codes: ${validCodes.slice(0, 5).join(', ')}`);
+    }
+  }
+  
+  return isValid;
 }
 
 // Check if code has been used (localStorage)
