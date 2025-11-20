@@ -55,7 +55,20 @@ async function saveUsedCodes(codes: UsedCodeEntry[]): Promise<void> {
  */
 export async function isCodeUsedOnServer(code: string): Promise<boolean> {
   const usedCodes = await loadUsedCodes();
-  return usedCodes.some(entry => entry.code.toUpperCase() === code.toUpperCase());
+  const normalizedCode = code.toUpperCase().trim();
+  const isUsed = usedCodes.some(entry => entry.code.toUpperCase() === normalizedCode);
+  
+  // Log for debugging (only in development or when explicitly enabled)
+  if (process.env.NODE_ENV === 'development' || process.env.DEBUG_INVITE_CODES === 'true') {
+    if (isUsed) {
+      const entry = usedCodes.find(e => e.code.toUpperCase() === normalizedCode);
+      console.log(`[Used Codes] Code ${normalizedCode} is marked as used. Used at: ${entry?.usedAt}, IP: ${entry?.ipAddress}`);
+    } else {
+      console.log(`[Used Codes] Code ${normalizedCode} is NOT in used codes list. Total used codes: ${usedCodes.length}`);
+    }
+  }
+  
+  return isUsed;
 }
 
 /**
@@ -131,5 +144,15 @@ export async function resetCode(code: string): Promise<boolean> {
  */
 export async function getAllUsedCodes(): Promise<UsedCodeEntry[]> {
   return await loadUsedCodes();
+}
+
+/**
+ * Admin function: Clear all used codes (use with extreme caution)
+ * This will reset the used codes file, allowing all codes to be used again
+ */
+export async function clearAllUsedCodes(): Promise<void> {
+  await ensureDataDir();
+  await fs.writeFile(USED_CODES_FILE, JSON.stringify([], null, 2), 'utf-8');
+  console.log('[Invite Admin] All used codes have been cleared');
 }
 

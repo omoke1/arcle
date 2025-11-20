@@ -56,7 +56,20 @@ export async function POST(request: NextRequest) {
     const alreadyUsed = await isCodeUsedOnServer(trimmedCode);
 
     if (alreadyUsed) {
+      // Get more details for debugging
+      const { getAllUsedCodes } = await import("@/lib/auth/used-codes-store");
+      const allUsed = await getAllUsedCodes();
+      const usedEntry = allUsed.find(e => e.code.toUpperCase() === trimmedCode);
+      
       console.log(`[Invite] Code already used: ${trimmedCode}`);
+      console.log(`[Invite] Used at: ${usedEntry?.usedAt || 'Unknown'}`);
+      console.log(`[Invite] Total codes in used list: ${allUsed.length}`);
+      
+      // In development, show which codes are used
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[Invite] First 5 used codes: ${allUsed.slice(0, 5).map(e => e.code).join(', ')}`);
+      }
+      
       return NextResponse.json({
         valid: false,
         message: "This invite code has already been used. Each code can only be used once.",
