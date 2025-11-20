@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getCircleClient } from "@/lib/circle-sdk";
+import { getUserCircleClient } from "@/lib/circle-user-sdk";
 
 interface FaucetRequest {
   walletId?: string;
@@ -14,6 +14,7 @@ interface FaucetRequest {
   blockchain?: string;
   native?: boolean;
   usdc?: boolean;
+  userToken?: string; // Required for User-Controlled Wallets
 }
 
 /**
@@ -24,7 +25,7 @@ export async function POST(request: NextRequest) {
   try {
     const body: FaucetRequest = await request.json();
     
-    const { address, walletId, blockchain = "ARC-TESTNET", native = true, usdc = true } = body;
+    const { address, walletId, blockchain = "ARC-TESTNET", native = true, usdc = true, userToken } = body;
 
     if (!address) {
       return NextResponse.json(
@@ -47,19 +48,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get Circle SDK client
-    const client = getCircleClient();
+    // Get User-Controlled Wallets SDK client
+    const client = getUserCircleClient();
 
     // Request testnet tokens via Circle SDK
     console.log(`Requesting testnet tokens for ${address} on ${blockchain}...`);
     
     try {
-      const faucetResponse = await client.requestTestnetTokens({
+      // Build request params
+      const faucetParams: any = {
         address,
         blockchain: blockchain as any,
         native, // Request native tokens (for gas)
         usdc,   // Request USDC tokens
-      });
+      };
+      
+      // Add userToken if provided (User-Controlled Wallets)
+      if (userToken) {
+        faucetParams.userToken = userToken;
+      }
+      
+      const faucetResponse = await (client as any).requestTestnetTokens(faucetParams);
 
       return NextResponse.json({
         success: true,
@@ -83,11 +92,14 @@ export async function POST(request: NextRequest) {
           { status: 401 }
         );
       }
-      if (faucetError?.response?.status === 429) {
+      if (faucetError?.response?.status === 429 || faucetError?.response?.data?.code === 5) {
         return NextResponse.json(
           {
             success: false,
-            error: "Rate limit exceeded. Please wait a few minutes before requesting again.",
+            error: "⏳ Rate limit exceeded. Circle's faucet has a cooldown period (typically 5-10 minutes). Please wait before requesting again, or use the manual faucet at https://faucet.circle.com",
+            errorCode: "RATE_LIMIT_EXCEEDED",
+            retryAfter: 600, // 10 minutes in seconds
+            manualFaucet: "https://faucet.circle.com",
           },
           { status: 429 }
         );

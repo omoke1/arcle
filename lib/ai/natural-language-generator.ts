@@ -1,14 +1,15 @@
 /**
  * Natural Language Generator
  * 
- * Uses Google Gemini to generate natural, conversational responses
+ * Uses Groq (Llama 3.3 70B) to generate natural, conversational responses
  * with reasoning and context awareness
  */
 
+import Groq from "groq-sdk";
 import { buildContextString, type AgentContext } from "./agent-prompts";
 import { getConversationSummary } from "./conversation-context";
 
-const GOOGLE_AI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent";
+const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 export interface NaturalLanguageResponse {
   message: string;
@@ -35,10 +36,11 @@ export interface GenerationContext {
 export async function generateNaturalResponse(
   generationContext: GenerationContext
 ): Promise<NaturalLanguageResponse> {
-  const googleApiKey = process.env.GOOGLE_AI_API_KEY;
+  const groqApiKey = process.env.GROQ_API_KEY || process.env.NEXT_PUBLIC_GROQ_API_KEY;
 
-  if (!googleApiKey) {
+  if (!groqApiKey) {
     // Fallback to simple response if no API key
+    console.warn("GROQ_API_KEY not found, using fallback response");
     return {
       message: generationContext.data?.message || "I understand. Let me help you with that.",
     };
@@ -55,6 +57,30 @@ export async function generateNaturalResponse(
   // Build a detailed prompt for natural language generation
   const systemPrompt = `You are ARCLE, a friendly and highly interactive AI wallet assistant. You're like ChatGPT - conversational, helpful, engaging, and proactive. You remember previous conversations and ask clarifying questions when needed.
 
+RESPONSE STYLE - STRUCTURED & VISUAL:
+Every response must follow this format:
+
+  Main message with emoji and context
+  
+  Section 1 with emoji and details:
+    - Detail 1
+    - Detail 2
+  
+  Section 2 with emoji:
+    - Cost comparison (ALWAYS show savings vs traditional methods!)
+    - Time estimates
+  
+  Options/Confirmation:
+    Confirm? [Yes] [No] [Customize]
+
+REQUIRED IN EVERY RESPONSE:
+1. Heavy Emoji Usage - Use emojis liberally throughout (money, speed, data, world, phone, bank, time, checkmark, warning, chart, briefcase, target, robot)
+2. Cost Comparisons - ALWAYS include fees vs traditional methods
+3. Structured Sections - Use clear visual sections with spacing
+4. Confirmation Buttons - END with: [Yes] [No] or [Yes] [No] [Customize]
+5. Calculations - Show math with emojis for amounts, fees, and totals
+6. Savings Highlighted - Always show savings vs traditional methods
+
 CONVERSATION STYLE:
 - Be conversational and natural, like chatting with a friend
 - Ask follow-up questions when information is missing (don't just list requirements)
@@ -62,18 +88,19 @@ CONVERSATION STYLE:
 - Be proactive and helpful - suggest next steps
 - Show personality and be engaging
 - When information is missing, ask ONE clarifying question at a time (don't overwhelm)
-- Use emojis sparingly and naturally
+- Use emojis HEAVILY and strategically for visual structure
 - Be concise but warm
 - NEVER mention technical implementation details, protocols, or stack technologies (e.g., CCTP, Circle, smart contracts, APIs, etc.)
 - Focus on what the user can DO, not HOW it works technically
 - Use simple, user-friendly language instead of technical jargon
 
 ARCLE CAPABILITIES:
+- **Send Money**: Send USDC instantly to any address (e.g., "Send $50 to 0x...", "Send money to John", "Transfer $100")
 - **Scheduled Payments**: Schedule one-time payments for future dates/times (e.g., "Schedule $50 payment tomorrow at 3pm")
 - **Invoices**: Create, list, and manage invoices (e.g., "Create invoice for $500 to Acme Corp")
 - **Payment Rolls**: Automated payroll and recurring payments (e.g., "Create payment roll for my team")
 - **Subscriptions**: Set up recurring payments (e.g., "Subscribe $10 monthly to Netflix")
-- **Send/Pay**: Send USDC to addresses immediately
+- **Send/Pay**: Send USDC to addresses immediately (same as Send Money)
 - **Balance**: Check wallet balance
 - **Transaction History**: View past transactions
 - **FX Conversion**: Convert between USDC and EURC
@@ -82,6 +109,8 @@ ARCLE CAPABILITIES:
 - **Cross-Border**: International remittances with FX rates
 - **Trading**: Perpetual positions and derivatives
 - **AI Agents**: Create autonomous agents for automated tasks
+
+IMPORTANT: When user says "send money", "send funds", "transfer money", etc., they mean sending USDC. Always default to USDC unless they specify EURC.
 
 WALLET CONTEXT:
 ${contextString}
@@ -202,40 +231,31 @@ Example 8 - Unclear/Unknown Request (Be Conversational):
 Now generate a response following this format. Be conversational, engaging, and helpful - like ChatGPT!`;
 
   try {
-    const geminiBody = {
-      contents: [
-        {
-          parts: [
-            {
-              text: systemPrompt,
-            },
-          ],
-        },
-      ],
-      generationConfig: {
-        temperature: 0.8, // Higher for more natural, creative conversation
-        maxOutputTokens: 1000, // More tokens for richer responses
-        responseMimeType: "application/json",
-      },
-    };
-
-    const res = await fetch(`${GOOGLE_AI_URL}?key=${googleApiKey}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(geminiBody),
+    // Use Groq SDK for better type safety and error handling
+    // Allow browser usage since we're using NEXT_PUBLIC_GROQ_API_KEY for client-side
+    const groq = new Groq({
+      apiKey: groqApiKey,
+      dangerouslyAllowBrowser: true, // Explicitly allow browser usage for client-side calls
     });
 
-    if (!res.ok) {
-      console.warn("Google AI error, using fallback:", res.status);
-      return {
-        message: generationContext.data?.message || "I understand. Let me help you with that.",
-      };
-    }
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile", // Use the 70B model for better quality
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt,
+        },
+        {
+          role: "user",
+          content: generationContext.userMessage,
+        },
+      ],
+      temperature: 0.8, // Higher for more natural, creative conversation
+      max_tokens: 1000, // More tokens for richer responses
+      response_format: { type: "json_object" },
+    });
 
-    const data = await res.json();
-    const content = data?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+    const content = completion.choices[0]?.message?.content || "{}";
 
     try {
       const parsed = JSON.parse(content);
@@ -251,8 +271,8 @@ Now generate a response following this format. Be conversational, engaging, and 
         message: content || generationContext.data?.message || "I understand. Let me help you with that.",
       };
     }
-  } catch (error) {
-    console.warn("Error generating natural response, using fallback:", error);
+  } catch (error: any) {
+    console.warn("Error generating natural response with Groq, using fallback:", error?.message || error);
     return {
       message: generationContext.data?.message || "I understand. Let me help you with that.",
     };

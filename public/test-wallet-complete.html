@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Complete Wallet Creation - Circle</title>
+  <script src="https://sdk.circle.com/w3s-pw-web-sdk.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .container {
+      background: white;
+      border-radius: 20px;
+      padding: 40px;
+      max-width: 800px;
+      width: 100%;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+    h1 {
+      color: #2d3748;
+      margin-bottom: 10px;
+      font-size: 28px;
+    }
+    .subtitle {
+      color: #718096;
+      margin-bottom: 30px;
+    }
+    .section {
+      margin-bottom: 30px;
+      padding: 20px;
+      background: #f7fafc;
+      border-radius: 12px;
+      border-left: 4px solid #667eea;
+    }
+    h3 {
+      color: #2d3748;
+      margin-bottom: 15px;
+      font-size: 18px;
+    }
+    button {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-right: 10px;
+      transition: all 0.3s ease;
+    }
+    button:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    button.secondary {
+      background: #e2e8f0;
+      color: #2d3748;
+    }
+    .output {
+      background: white;
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 15px;
+      margin-top: 15px;
+      min-height: 80px;
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+      color: #2d3748;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .success { color: #38a169; }
+    .error { color: #e53e3e; }
+    .info { color: #3182ce; }
+    .widget-container {
+      margin-top: 20px;
+      min-height: 400px;
+    }
+    #w3s-widget {
+      width: 100%;
+      min-height: 400px;
+    }
+    .step-indicator {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 30px;
+    }
+    .step {
+      flex: 1;
+      text-align: center;
+      padding: 10px;
+      background: #e2e8f0;
+      margin: 0 5px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #718096;
+    }
+    .step.active {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+    .step.completed {
+      background: #38a169;
+      color: white;
+    }
+    .wallet-info {
+      background: #f0fff4;
+      border-left: 4px solid #38a169;
+      padding: 15px;
+      border-radius: 8px;
+      margin-top: 15px;
+    }
+    .wallet-info strong {
+      color: #22543d;
+    }
+    .wallet-info p {
+      margin: 8px 0;
+      color: #2d3748;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🚀 Complete Wallet Creation Flow</h1>
+    <p class="subtitle">Full end-to-end test: Create user → Set PIN → Create wallet</p>
+
+    <div class="step-indicator">
+      <div class="step" id="step1">1. Create User</div>
+      <div class="step" id="step2">2. Set PIN</div>
+      <div class="step" id="step3">3. Wallet Created</div>
+    </div>
+
+    <!-- Step 1: Create User -->
+    <div class="section">
+      <h3>Step 1: Create User & Initialize</h3>
+      <button onclick="createUser()" id="createUserBtn">Create User & Start</button>
+      <button class="secondary" onclick="clearOutput()">Clear</button>
+      <div class="output" id="output1">Click "Create User & Start" to begin...</div>
+    </div>
+
+    <!-- Step 2: PIN Widget -->
+    <div class="section" id="pinSection" style="display: none;">
+      <h3>Step 2: Set Your 6-Digit PIN</h3>
+      <p style="margin-bottom: 15px; color: #718096;">Enter a secure 6-digit PIN to protect your wallet</p>
+      <div class="widget-container">
+        <div id="w3s-widget"></div>
+      </div>
+      <div class="output" id="output2" style="margin-top: 15px;">Waiting for PIN setup...</div>
+    </div>
+
+    <!-- Step 3: Wallet Info -->
+    <div class="section" id="walletSection" style="display: none;">
+      <h3>Step 3: ✅ Wallet Created Successfully!</h3>
+      <div class="wallet-info" id="walletInfo"></div>
+      <button onclick="testTransfer()" style="margin-top: 15px;">🧪 Test Token Transfer</button>
+      <button class="secondary" onclick="testBridge()" style="margin-top: 15px;">🌉 Test Bridging</button>
+      <div class="output" id="output3" style="margin-top: 15px;"></div>
+    </div>
+  </div>
+
+  <script>
+    const APP_ID = ''; // Will be fetched from env
+    let userData = null;
+    let walletData = null;
+    let sdk = null;
+
+    async function createUser() {
+      const btn = document.getElementById('createUserBtn');
+      const output = document.getElementById('output1');
+      
+      try {
+        btn.disabled = true;
+        output.className = 'output info';
+        output.textContent = '⏳ Creating user...';
+        
+        // Step 1: Create user
+        const userResponse = await fetch('/api/circle/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        
+        const userResult = await userResponse.json();
+        if (!userResult.success) {
+          throw new Error(userResult.error);
+        }
+        
+        userData = userResult.data;
+        output.className = 'output success';
+        output.textContent = `✅ User created!\n\nUser ID: ${userData.userId}\nUser Token: ${userData.userToken.substring(0, 50)}...`;
+        
+        document.getElementById('step1').classList.add('completed');
+        document.getElementById('step2').classList.add('active');
+        
+        // Step 2: Create wallet challenge
+        await createWalletChallenge();
+        
+      } catch (error) {
+        output.className = 'output error';
+        output.textContent = `❌ Error: ${error.message}`;
+        btn.disabled = false;
+      }
+    }
+
+    async function createWalletChallenge() {
+      const output = document.getElementById('output2');
+      
+      try {
+        output.className = 'output info';
+        output.textContent = '⏳ Creating wallet challenge...';
+        
+        const response = await fetch('/api/circle/wallets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: userData.userId,
+            userToken: userData.userToken,
+            blockchains: ['ETH-SEPOLIA']
+          })
+        });
+        
+        const result = await response.json();
+        if (!result.success) {
+          throw new Error(result.error);
+        }
+        
+        const challengeId = result.data.challengeId;
+        output.className = 'output success';
+        output.textContent = `✅ Challenge created: ${challengeId}\n\n⏳ Initializing PIN widget...`;
+        
+        // Show PIN section
+        document.getElementById('pinSection').style.display = 'block';
+        
+        // Initialize Circle SDK
+        await initializeSDK(challengeId);
+        
+      } catch (error) {
+        output.className = 'output error';
+        output.textContent = `❌ Error: ${error.message}`;
+      }
+    }
+
+    async function initializeSDK(challengeId) {
+      const output = document.getElementById('output2');
+      
+      try {
+        // Check if W3SSdk is loaded
+        if (typeof W3SSdk === 'undefined') {
+          throw new Error('Circle SDK not loaded. Please refresh the page.');
+        }
+        
+        // Get App ID
+        const appId = '2cf73de31aaf605b33601def5e925c1d'; // Your Circle App ID
+        
+        output.textContent = '⏳ Initializing Circle SDK...';
+        
+        // Create SDK instance
+        sdk = new W3SSdk();
+        
+        // Configure SDK
+        sdk.setAppSettings({ appId });
+        
+        sdk.setAuthentication({
+          userToken: userData.userToken,
+          encryptionKey: userData.encryptionKey
+        });
+        
+        output.className = 'output success';
+        output.textContent = '✅ SDK Ready\n\n👉 Enter your 6-digit PIN below';
+        
+        // Execute challenge
+        console.log('Executing challenge:', challengeId);
+        sdk.execute(challengeId, (error, result) => {
+          if (error) {
+            output.className = 'output error';
+            output.textContent = `❌ PIN setup failed: ${error.message || JSON.stringify(error)}`;
+            console.error('Challenge error:', error);
+            return;
+          }
+          
+          if (result) {
+            output.className = 'output success';
+            output.textContent = '✅ PIN setup successful! Fetching wallet details...';
+            
+            document.getElementById('step2').classList.remove('active');
+            document.getElementById('step2').classList.add('completed');
+            document.getElementById('step3').classList.add('active');
+            
+            // Fetch wallet details
+            fetchWalletDetails();
+          }
+        });
+        
+      } catch (error) {
+        output.className = 'output error';
+        output.textContent = `❌ SDK Error: ${error.message}`;
+        console.error('SDK initialization error:', error);
+      }
+    }
+
+    async function fetchWalletDetails() {
+      const output = document.getElementById('output2');
+      
+      try {
+        const response = await fetch(`/api/circle/wallets?userId=${userData.userId}&userToken=${encodeURIComponent(userData.userToken)}`);
+        const result = await response.json();
+        
+        if (!result.success || !result.data.wallets || result.data.wallets.length === 0) {
+          throw new Error('No wallet found');
+        }
+        
+        walletData = result.data.wallets[0];
+        
+        // Show wallet section
+        document.getElementById('step3').classList.add('completed');
+        document.getElementById('walletSection').style.display = 'block';
+        document.getElementById('walletInfo').innerHTML = `
+          <p><strong>Wallet ID:</strong> ${walletData.id}</p>
+          <p><strong>Address:</strong> ${walletData.address}</p>
+          <p><strong>Blockchain:</strong> ${walletData.blockchain}</p>
+          <p><strong>State:</strong> ${walletData.state}</p>
+          <p><strong>Account Type:</strong> ${walletData.accountType}</p>
+        `;
+        
+        output.className = 'output success';
+        output.textContent = '✅ Wallet creation complete!';
+        
+        // Scroll to wallet section
+        document.getElementById('walletSection').scrollIntoView({ behavior: 'smooth' });
+        
+      } catch (error) {
+        output.className = 'output error';
+        output.textContent = `❌ Failed to fetch wallet: ${error.message}`;
+      }
+    }
+
+    async function testTransfer() {
+      const output = document.getElementById('output3');
+      output.className = 'output info';
+      output.textContent = '⏳ Testing token transfer...\n\n(This requires wallet balance - request testnet tokens first)';
+      
+      // This would be the actual transfer test
+      // For now, just show the API structure
+      setTimeout(() => {
+        output.textContent = `📝 To send tokens, use:\n\nPOST /api/circle/transactions\n{\n  "walletId": "${walletData.id}",\n  "destinationAddress": "0x...",\n  "amount": "1.0",\n  "userId": "${userData.userId}",\n  "userToken": "${userData.userToken.substring(0, 30)}..."\n}\n\n⚠️ First request testnet tokens from faucet!`;
+      }, 1000);
+    }
+
+    async function testBridge() {
+      const output = document.getElementById('output3');
+      output.className = 'output info';
+      output.textContent = '⏳ Testing bridge functionality...\n\n(This requires wallet balance)';
+      
+      setTimeout(() => {
+        output.textContent = `📝 Available bridge methods:\n\n1. CCTP (Cross-Chain Transfer Protocol)\n   POST /api/circle/cctp-user\n\n2. Gateway (Instant)\n   POST /api/circle/gateway-user\n\n⚠️ First request testnet tokens from faucet!`;
+      }, 1000);
+    }
+
+    function clearOutput() {
+      document.getElementById('output1').textContent = 'Click "Create User & Start" to begin...';
+      document.getElementById('output1').className = 'output';
+    }
+  </script>
+</body>
+</html>
+

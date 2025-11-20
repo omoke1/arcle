@@ -8,6 +8,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFXRate, getMultipleFXRates } from "@/lib/fx/fx-rates";
 
+// Force dynamic rendering since we use request.url
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);

@@ -13,22 +13,69 @@ import { ArrowUpRight, ArrowDownLeft, Loader2, ExternalLink } from "lucide-react
 import type { Transaction } from "@/types";
 import { cn } from "@/lib/utils";
 
+const ARC_USDC_DECIMALS = Number(process.env.NEXT_PUBLIC_ARC_USDC_DECIMALS ?? "6");
+const ARC_USDC_DECIMALS_BIGINT = BigInt(ARC_USDC_DECIMALS);
+
 interface TransactionHistoryProps {
   walletId: string;
   walletAddress?: string; // Add wallet address to properly identify incoming transactions
   limit?: number;
   className?: string;
+  userId?: string;
+  userToken?: string;
 }
 
-export function TransactionHistory({ walletId, walletAddress, limit = 50, className }: TransactionHistoryProps) {
+export function TransactionHistory({ walletId, walletAddress, limit = 50, className, userId: userIdProp, userToken: userTokenProp }: TransactionHistoryProps) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [authParams, setAuthParams] = useState<{ userId?: string; userToken?: string; loaded: boolean }>({
+    userId: userIdProp,
+    userToken: userTokenProp,
+    loaded: !!(userIdProp && userTokenProp),
+  });
+
+  useEffect(() => {
+    // Load credentials from props or localStorage
+    const storedUserId = typeof window !== 'undefined' ? localStorage.getItem('arcle_user_id') : null;
+    const storedUserToken = typeof window !== 'undefined' ? localStorage.getItem('arcle_user_token') : null;
+    
+    // Prefer props, fallback to localStorage
+    const finalUserId = userIdProp || storedUserId || undefined;
+    const finalUserToken = userTokenProp || storedUserToken || undefined;
+    
+    setAuthParams({
+      userId: finalUserId,
+      userToken: finalUserToken,
+      loaded: true,
+    });
+    
+    // Log for debugging (only in dev)
+    if (process.env.NODE_ENV === 'development') {
+      if (!finalUserId) {
+        console.warn("[TransactionHistory] No userId found in props or localStorage");
+      }
+      if (!finalUserToken) {
+        console.warn("[TransactionHistory] No userToken found in props or localStorage");
+      }
+    }
+  }, [userIdProp, userTokenProp]);
 
   useEffect(() => {
     const fetchTransactions = async (forceFresh = false) => {
       if (!walletId) {
         setTransactions([]);
+        return;
+      }
+
+      if (!authParams.loaded) {
+        return;
+      }
+
+      if (!authParams.userId || !authParams.userToken) {
+        setTransactions([]);
+        setIsLoading(false);
+        setError("Missing user authentication. Please refresh to continue.");
         return;
       }
       
@@ -38,10 +85,73 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
       try {
         // Add cache-busting parameter to force fresh data when needed
         const cacheBuster = forceFresh ? `&_t=${Date.now()}` : '';
-        const response = await fetch(
-          `/api/circle/transactions?walletId=${walletId}&limit=${limit}${cacheBuster}`
-        );
-        
+        const queryParams = new URLSearchParams({
+          walletId,
+          limit: limit.toString(),
+          userId: authParams.userId,
+          userToken: authParams.userToken,
+        });
+        const url = `/api/circle/transactions?${queryParams.toString()}${cacheBuster}`;
+        const response = await fetch(url);
+
+        if (!response.ok) {
+          const errorBody = await response.json().catch(() => null);
+          
+          if (response.status === 401 || response.status === 403) {
+            // Try to refresh token automatically
+            const { refreshUserToken } = await import('@/lib/circle/token-refresh');
+            console.log('[TransactionHistory] Token expired (403), attempting refresh...');
+            
+            const newToken = await refreshUserToken();
+            if (newToken && newToken.userToken) {
+              console.log('[TransactionHistory] ✅ Token refreshed, updating auth params and retrying...');
+              
+              // Update auth params for future requests
+              setAuthParams(prev => ({
+                ...prev,
+                userToken: newToken.userToken,
+              }));
+              
+              // Retry the fetch with new token
+              const retryParams = new URLSearchParams({
+                walletId,
+                limit: limit.toString(),
+                userId: authParams.userId || '',
+                userToken: newToken.userToken,
+              });
+              const retryUrl = `/api/circle/transactions?${retryParams.toString()}${cacheBuster}`;
+              const retryResponse = await fetch(retryUrl);
+              
+              if (retryResponse.ok) {
+                // Process the retry response normally (fall through to normal processing)
+                const retryData = await retryResponse.json();
+                const data = retryData;
+                // Continue with normal processing below...
+              } else {
+                setError("Your Circle session expired. Please refresh the page to get a new token.");
+                setTransactions([]);
+                setIsLoading(false);
+                return;
+              }
+            } else {
+              // If refresh failed, show error
+              setError("Your Circle session expired. Please refresh the page to get a new token.");
+              setTransactions([]);
+              setIsLoading(false);
+              return;
+            }
+          }
+
+          if (response.status === 429) {
+            setError("Circle rate limited the request. Slowing down and will retry shortly.");
+            setTransactions((prev) => prev); // keep existing transactions
+            return;
+          }
+
+          const message = errorBody?.error || response.statusText || "Failed to load transactions";
+          throw new Error(message);
+        }
+
         const data = await response.json();
         console.log(`[TransactionHistory] API response for wallet ${walletId} (forceFresh: ${forceFresh}):`, data);
         console.log(`[TransactionHistory] Wallet address: ${walletAddress || 'not provided'}`);
@@ -108,26 +218,37 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
                             (circleState === "COMPLETE" || circleState === "COMPLETED" || circleState === "CONFIRMED" || circleState === "SENT" ? "confirmed" :
                              circleState === "FAILED" || circleState === "DENIED" || circleState === "CANCELLED" ? "failed" : "pending");
               
-              // Extract amount - Circle API uses amounts array or amount object
-              // Amount is in smallest unit (6 decimals for USDC), need to format it
+              // Extract amount - Circle API can return amounts in decimal format OR smallest unit
+              // Check if it's already in decimal format (contains a decimal point)
               const amountRaw = actualTx.amounts && actualTx.amounts.length > 0 
                 ? actualTx.amounts[0] 
                 : (actualTx.amount?.amount || actualTx.amount || "0");
               
-              // Format amount from smallest unit to readable format (6 decimals for USDC)
+              // Format amount - check if it's already in decimal format or needs conversion from smallest unit
+              // Arc Testnet USDC currently uses 6 decimals (override via NEXT_PUBLIC_ARC_USDC_DECIMALS if needed)
               let txAmount = amountRaw;
               try {
                 if (typeof amountRaw === "string" && amountRaw !== "0") {
-                  const amountBigInt = BigInt(amountRaw);
-                  const decimals = 6n; // USDC has 6 decimals
-                  const divisor = 10n ** decimals;
-                  const whole = amountBigInt / divisor;
-                  const fraction = amountBigInt % divisor;
-                  const fractionStr = fraction.toString().padStart(6, "0");
-                  txAmount = `${whole.toString()}.${fractionStr}`;
+                  // Check if amount is already in decimal format (contains a decimal point)
+                  if (amountRaw.includes(".")) {
+                    // Already in decimal format - just parse and format it
+                    const num = parseFloat(amountRaw);
+                    // Remove trailing zeros for cleaner display
+                    txAmount = num.toString().replace(/\.?0+$/, '');
+                  } else {
+                    // Amount is in smallest unit - convert from smallest unit to decimal format
+                    const amountBigInt = BigInt(amountRaw);
+                    const divisor = 10n ** ARC_USDC_DECIMALS_BIGINT;
+                    const whole = amountBigInt / divisor;
+                    const fraction = amountBigInt % divisor;
+                    const fractionStr = fraction.toString().padStart(ARC_USDC_DECIMALS, "0");
+                    // Remove trailing zeros for cleaner display
+                    txAmount = `${whole.toString()}.${fractionStr}`.replace(/\.?0+$/, '');
+                  }
                 }
               } catch (e) {
                 // If parsing fails, use raw value
+                console.warn("[TransactionHistory] Error formatting amount:", amountRaw, e);
                 txAmount = amountRaw.toString();
               }
               
@@ -226,10 +347,10 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
       window.addEventListener('arcle:transactions:refresh', onRefresh);
     }
     
-    // Also poll periodically to catch new transactions (every 3 seconds for faster updates)
+    // Poll periodically to catch new transactions (every 15 seconds to avoid Circle rate limits)
     const pollInterval = setInterval(() => {
       fetchTransactions(false); // Regular polling doesn't force fresh
-    }, 3000); // Reduced from 5000ms to 3000ms for faster updates
+    }, 15000);
     
     return () => {
       if (typeof window !== 'undefined') {
@@ -237,7 +358,7 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
       }
       clearInterval(pollInterval);
     };
-  }, [walletId, walletAddress, limit]);
+  }, [walletId, walletAddress, limit, authParams.userId, authParams.userToken, authParams.loaded]);
 
   const formatAmount = (amount: string): string => {
     try {
@@ -310,29 +431,29 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
   }
 
   return (
-    <div className={cn("space-y-2", className)}>
+    <div className={cn("space-y-1.5", className)}>
       {transactions.map((tx) => (
         <div
           key={tx.id}
-          className="bg-dark-grey rounded-xl p-4 border border-casper/20 hover:border-casper/40 transition-colors"
+          className="bg-dark-grey rounded-lg p-2.5 border border-casper/20 hover:border-casper/40 transition-colors"
         >
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 flex-1">
+            <div className="flex items-center gap-2 flex-1">
               <div className={cn(
-                "w-10 h-10 rounded-full flex items-center justify-center",
+                "w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0",
                 (tx as any).isIncoming 
                   ? "bg-green-500/20" 
-                  : "bg-white/20"
+                  : "bg-red-500/20"
               )}>
                 {(tx as any).isIncoming ? (
                   <ArrowDownLeft className={cn(
-                    "w-5 h-5",
+                    "w-3.5 h-3.5",
                     tx.status === "confirmed" ? "text-green-400" : "text-casper"
                   )} />
                 ) : (
                   <ArrowUpRight className={cn(
-                    "w-5 h-5",
-                    tx.status === "confirmed" ? "text-white" : "text-casper"
+                    "w-3.5 h-3.5",
+                    tx.status === "confirmed" ? "text-red-400" : "text-casper"
                   )} />
                 )}
               </div>
@@ -340,25 +461,25 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className={cn(
-                    "text-white font-medium",
-                    (tx as any).isIncoming ? "text-green-400" : "text-white"
+                    "text-sm font-medium",
+                    (tx as any).isIncoming ? "text-green-400" : "text-red-400"
                   )}>
-                    {(tx as any).isIncoming ? "+" : "-"} {formatAmount(tx.amount)} {tx.token}
+                    {(tx as any).isIncoming ? "Received" : "Sent"}: {formatAmount(tx.amount)} {tx.token}
                   </span>
                   <span className={cn("text-xs", getStatusColor(tx.status))}>
                     {tx.status}
                   </span>
                 </div>
                 {(tx as any).isIncoming ? (
-                  <div className="text-sm text-casper mt-1">
+                  <div className="text-xs text-casper mt-0.5">
                     From: {formatAddress(tx.from || "")}
                   </div>
                 ) : (
-                  <div className="text-sm text-casper mt-1">
+                  <div className="text-xs text-casper mt-0.5">
                     To: {formatAddress(tx.to || "")}
                   </div>
                 )}
-                <div className="text-xs text-casper mt-1">
+                <div className="text-xs text-casper/70 mt-0.5">
                   {formatDate(tx.timestamp)}
                 </div>
               </div>
@@ -369,11 +490,11 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
                 href={getExplorerUrl(tx.hash) || undefined}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-casper hover:text-white transition-colors"
+                className="text-casper hover:text-white transition-colors ml-2 flex-shrink-0"
                 style={{ pointerEvents: getExplorerUrl(tx.hash) ? 'auto' : 'none', opacity: getExplorerUrl(tx.hash) ? 1 : 0.5 }}
                 title={getExplorerUrl(tx.hash) ? 'View on ArcScan' : 'Blockchain hash not available yet'}
               >
-                <ExternalLink className="w-4 h-4" />
+                <ExternalLink className="w-3.5 h-3.5" />
               </a>
             )}
           </div>

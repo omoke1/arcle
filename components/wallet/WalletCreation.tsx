@@ -17,12 +17,17 @@ export function WalletCreation({ onWalletCreated }: WalletCreationProps) {
   const handleCreateWallet = async () => {
     setIsCreating(true);
     try {
-      const wallet = await createWallet();
-      if (wallet) {
+      const result = await createWallet();
+      if (result && result.type === "wallet") {
+        const wallet = result.wallet;
         setWalletId(wallet.id);
         if (onWalletCreated) {
           onWalletCreated(wallet.id);
         }
+      } else if (result && result.type === "challenge") {
+        // Handle challenge response - this shouldn't happen in WalletCreation
+        // as it's typically used for legacy wallet creation
+        console.warn("Challenge response received in WalletCreation - this may need PIN setup");
       }
     } catch (err) {
       console.error("Failed to create wallet:", err);

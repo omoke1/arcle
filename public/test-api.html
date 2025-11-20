@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Circle API</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    button {
+      background: #0070f3;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover {
+      background: #0051cc;
+    }
+    #output {
+      margin-top: 20px;
+      padding: 15px;
+      background: #f5f5f5;
+      border-radius: 5px;
+      white-space: pre-wrap;
+      font-family: 'Courier New', monospace;
+    }
+    .success {
+      color: green;
+    }
+    .error {
+      color: red;
+    }
+  </style>
+</head>
+<body>
+  <h1>Circle User-Controlled Wallet API Test</h1>
+  
+  <button onclick="testCreateUser()">Test Create User</button>
+  <button onclick="testWithUserId()">Test with Custom User ID</button>
+  
+  <div id="output">Click a button to test the API...</div>
+
+  <script>
+    async function testCreateUser() {
+      const output = document.getElementById('output');
+      output.textContent = '⏳ Creating user...';
+      
+      try {
+        const response = await fetch('/api/circle/users', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({}),
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+          output.innerHTML = `<span class="success">✅ Success!</span>\n\n${JSON.stringify(data, null, 2)}`;
+        } else {
+          output.innerHTML = `<span class="error">❌ Error</span>\n\n${JSON.stringify(data, null, 2)}`;
+        }
+      } catch (error) {
+        output.innerHTML = `<span class="error">❌ Network Error</span>\n\n${error.message}`;
+      }
+    }
+
+    async function testWithUserId() {
+      const output = document.getElementById('output');
+      const userId = `test-user-${Date.now()}`;
+      output.textContent = `⏳ Creating user with ID: ${userId}...`;
+      
+      try {
+        const response = await fetch('/api/circle/users', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ userId }),
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+          output.innerHTML = `<span class="success">✅ Success!</span>\n\n${JSON.stringify(data, null, 2)}`;
+        } else {
+          output.innerHTML = `<span class="error">❌ Error</span>\n\n${JSON.stringify(data, null, 2)}`;
+        }
+      } catch (error) {
+        output.innerHTML = `<span class="error">❌ Network Error</span>\n\n${error.message}`;
+      }
+    }
+  </script>
+</body>
+</html>
+

@@ -28,10 +28,22 @@ export function CreateSubAccountPage({
     setIsCreating(true);
     try {
       // Create a new wallet for the sub-account
-      const wallet = await createWallet();
-      if (!wallet) {
+      const result = await createWallet();
+      if (!result) {
         throw new Error("Failed to create wallet");
       }
+
+      // Handle challenge response (User-Controlled Wallets)
+      if (result.type === "challenge") {
+        throw new Error("Sub-accounts require PIN setup. Please set up your PIN first.");
+      }
+
+      // Handle wallet creation response
+      if (result.type !== "wallet") {
+        throw new Error("Unexpected wallet creation response");
+      }
+
+      const wallet = result.wallet;
 
       // Store sub-account info
       const subAccount = addSubAccount({

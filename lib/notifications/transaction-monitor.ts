@@ -36,8 +36,23 @@ export async function monitorTransaction(
       attempts++;
 
       try {
+        // Get userId and userToken from localStorage for User-Controlled Wallets
+        let userId: string | null = null;
+        let userToken: string | null = null;
+        
+        if (typeof window !== 'undefined') {
+          userId = localStorage.getItem('arcle_user_id');
+          userToken = localStorage.getItem('arcle_user_token');
+        }
+        
+        // Build query string with optional userId/userToken
+        let queryString = `walletId=${walletId}&transactionId=${transactionId}`;
+        if (userId && userToken) {
+          queryString += `&userId=${encodeURIComponent(userId)}&userToken=${encodeURIComponent(userToken)}`;
+        }
+        
         const response = await fetch(
-          `/api/circle/transactions?walletId=${walletId}&transactionId=${transactionId}`
+          `/api/circle/transactions?${queryString}`
         );
 
         if (!response.ok) {

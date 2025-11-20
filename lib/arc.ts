@@ -125,6 +125,15 @@ export const USDC_ADDRESSES = {
   testnet: process.env.NEXT_PUBLIC_ARC_USDC_TESTNET_ADDRESS || "0x3600000000000000000000000000000000000000",
 } as const;
 
+const DEFAULT_ARC_USDC_DECIMALS = 6;
+const envDecimals = Number(process.env.NEXT_PUBLIC_ARC_USDC_DECIMALS);
+const ARC_USDC_DECIMALS =
+  Number.isFinite(envDecimals) && envDecimals > 0 ? envDecimals : DEFAULT_ARC_USDC_DECIMALS;
+
+export function getUsdcDecimals(): number {
+  return ARC_USDC_DECIMALS;
+}
+
 export function getUSDCAddress(): `0x${string}` {
   // DEFAULT TO TESTNET - Only use mainnet if explicitly set to production
   const isTestnet = process.env.NEXT_PUBLIC_ENV !== "production";
@@ -182,21 +191,26 @@ export const arcUtils = {
   /**
    * Convert USDC amount (6 decimals) to readable format
    */
-  formatUSDC(amount: bigint): string {
-    const decimals = 6n;
-    const divisor = 10n ** decimals;
+  formatUSDC(amount: bigint, decimals: number = ARC_USDC_DECIMALS): string {
+    const decimalsBigInt = BigInt(decimals);
+    const divisor = 10n ** decimalsBigInt;
     const whole = amount / divisor;
     const fraction = amount % divisor;
-    return `${whole.toString()}.${fraction.toString().padStart(6, "0")}`;
+    const fractionStr = fraction.toString().padStart(decimals, "0");
+    // Trim trailing zeros for readability, but keep at least two decimals when possible
+    const formatted = `${whole.toString()}.${fractionStr}`.replace(/\.?0+$/, '');
+    return formatted.includes(".") ? formatted : `${formatted}.00`;
   },
 
   /**
    * Convert USDC amount string to bigint (6 decimals)
    */
-  parseUSDC(amount: string): bigint {
-    const decimals = 6n;
-    const [whole, fraction = ""] = amount.split(".");
-    const paddedFraction = fraction.padEnd(6, "0").slice(0, 6);
-    return BigInt(whole) * (10n ** decimals) + BigInt(paddedFraction);
+  parseUSDC(amount: string, decimals: number = ARC_USDC_DECIMALS): bigint {
+    if (!amount) return 0n;
+    const decimalsBigInt = BigInt(decimals);
+    const [wholePart, fractionPart = ""] = amount.split(".");
+    const whole = wholePart && wholePart.length > 0 ? wholePart : "0";
+    const paddedFraction = fractionPart.padEnd(decimals, "0").slice(0, decimals) || "0";
+    return BigInt(whole) * (10n ** decimalsBigInt) + BigInt(paddedFraction);
   },
 };

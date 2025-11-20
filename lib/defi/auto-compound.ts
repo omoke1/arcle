@@ -5,7 +5,7 @@
  * Configurable frequency and strategies
  */
 
-import { subscribeToUSYC, redeemUSYC, getUSYCPosition, type YieldPosition } from "./yield-savings-usyc";
+import { subscribeToUSYC, redeemUSYC, getUSYCPosition, type YieldPosition } from "../archived/legacy-dev-controlled/yield-savings-usyc";
 
 export type CompoundFrequency = "daily" | "weekly" | "monthly";
 export type CompoundStatus = "active" | "paused" | "stopped";

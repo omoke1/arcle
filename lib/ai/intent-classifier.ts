@@ -7,6 +7,7 @@
 
 export type IntentType = 
   | "greeting"
+  | "wallet_creation"
   | "send"
   | "receive"
   | "balance"
@@ -82,6 +83,16 @@ export class IntentClassifier {
     if (this.matchesGreeting(lowerCommand)) {
       return {
         intent: "greeting",
+        confidence: 0.95,
+        entities: {},
+        rawCommand: command,
+      };
+    }
+    
+    // Wallet creation intent - check early to catch all variations
+    if (this.matchesWalletCreation(lowerCommand)) {
+      return {
+        intent: "wallet_creation",
         confidence: 0.95,
         entities: {},
         rawCommand: command,
@@ -510,8 +521,18 @@ export class IntentClassifier {
   }
   
   private static matchesSend(command: string): boolean {
-    const sendKeywords = ["send", "transfer", "give", "move"];
-    return sendKeywords.some(keyword => command.includes(keyword));
+    // Enhanced patterns to catch "send money", "send usdc", "send funds", etc.
+    const sendPatterns = [
+      /\bsend\b/i,
+      /\btransfer\b/i,
+      /\bgive\b/i,
+      /\bmove\b/i,
+      /\bsend\s+(money|usdc|funds|cash|dollars?|tokens?)/i,
+      /\btransfer\s+(money|usdc|funds|cash|dollars?|tokens?)/i,
+      /\bwire\b/i,
+      /\bremit\b/i,
+    ];
+    return sendPatterns.some(pattern => pattern.test(command));
   }
   
   private static matchesPay(command: string): boolean {
@@ -768,6 +789,35 @@ export class IntentClassifier {
     return scheduleKeywords.some(keyword => command.includes(keyword));
   }
   
+  private static matchesWalletCreation(command: string): boolean {
+    // Comprehensive wallet creation patterns
+    const walletKeywords = [
+      // Direct creation requests
+      "create wallet", "create a wallet", "create me a wallet", "create my wallet",
+      "make wallet", "make a wallet", "make me a wallet", "make my wallet",
+      "set up wallet", "setup wallet", "set up a wallet", "setup a wallet",
+      "get wallet", "get a wallet", "get me a wallet", "get my wallet",
+      "new wallet", "i need a wallet", "i want a wallet", "i want wallet",
+      "need wallet", "need a wallet", "want wallet", "want a wallet",
+      // Account creation
+      "create account", "create an account", "create my account",
+      "set up account", "setup account", "set up an account",
+      "new account", "i need an account", "i want an account",
+      // Wallet-related phrases
+      "wallet for me", "wallet please", "wallet now",
+      "start wallet", "begin wallet", "initialize wallet",
+      "open wallet", "activate wallet", "enable wallet",
+      // Variations
+      "can you create", "can you make", "can you set up",
+      "please create", "please make", "please set up",
+      "help me create", "help me make", "help me set up",
+      "i'd like a wallet", "i'd like wallet", "i would like wallet",
+      "let's create", "let's make", "let's set up",
+    ];
+    
+    return walletKeywords.some(keyword => command.includes(keyword));
+  }
+  
   private static matchesGreeting(command: string): boolean {
     // Common greetings and variations
     const greetingPatterns = [
@@ -792,17 +842,19 @@ export class IntentClassifier {
   
   /**
    * Extract entities from send command
+   * Enhanced to handle "send money", "send $50", "send money to address", etc.
    */
   private static extractSendEntities(original: string, lower: string): ParsedIntent["entities"] {
     const entities: ParsedIntent["entities"] = {};
     
-    // Extract amount (supports $50, 50 USDC, 50.5, etc.)
+    // Extract amount (supports $50, 50 USDC, 50.5, "send money $50", etc.)
     const amountPatterns = [
-      /\$?(\d+(?:\.\d+)?)\s*(?:usdc|dollars?)?/i,
-      /(\d+(?:\.\d+)?)\s*(?:usdc|dollars?)/i,
-      /send\s+\$?(\d+(?:\.\d+)?)/i,
-      /transfer\s+\$?(\d+(?:\.\d+)?)/i,
+      /\$?(\d+(?:\.\d+)?)\s*(?:usdc|dollars?|money)?/i,
+      /(\d+(?:\.\d+)?)\s*(?:usdc|dollars?|money)/i,
+      /send\s+(?:money\s+)?\$?(\d+(?:\.\d+)?)/i,
+      /transfer\s+(?:money\s+)?\$?(\d+(?:\.\d+)?)/i,
       /pay\s+\$?(\d+(?:\.\d+)?)/i,
+      /send\s+\$?(\d+(?:\.\d+)?)\s+(?:usdc|dollars?|money)/i,
     ];
     
     for (const pattern of amountPatterns) {
@@ -813,11 +865,14 @@ export class IntentClassifier {
       }
     }
     
-    // Extract currency
+    // Extract currency - default to USDC if not specified
     if (lower.includes("usdc") || lower.includes("usd")) {
       entities.currency = "USDC";
     } else if (lower.includes("eurc")) {
       entities.currency = "EURC";
+    } else {
+      // Default to USDC for "send money" if no currency specified
+      entities.currency = "USDC";
     }
     
     // Extract address (0x followed by 40 hex chars)
@@ -829,12 +884,13 @@ export class IntentClassifier {
     // Extract recipient name (if mentioned)
     const recipientPatterns = [
       /to\s+([a-zA-Z]+)/i,
-      /send\s+\$?\d+(?:\s+\w+)?\s+to\s+([a-zA-Z]+)/i,
+      /send\s+(?:money\s+)?\$?\d+(?:\s+\w+)?\s+to\s+([a-zA-Z]+)/i,
+      /send\s+(?:money\s+)?to\s+([a-zA-Z]+)/i,
     ];
     
     for (const pattern of recipientPatterns) {
       const match = original.match(pattern);
-      if (match && match[1] && !match[1].match(/0x|usdc|dollar/i)) {
+      if (match && match[1] && !match[1].match(/0x|usdc|dollar|money/i)) {
         entities.recipient = match[1];
         break;
       }

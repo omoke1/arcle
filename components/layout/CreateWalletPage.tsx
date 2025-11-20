@@ -18,8 +18,9 @@ export function CreateWalletPage({ onBack, onWalletCreated }: CreateWalletPagePr
   const handleCreateWallet = async () => {
     setIsCreating(true);
     try {
-      const wallet = await createWallet();
-      if (wallet) {
+      const result = await createWallet();
+      if (result && result.type === "wallet") {
+        const wallet = result.wallet;
         setWalletId(wallet.id);
         setWalletAddress(wallet.address);
         // Store in localStorage
@@ -29,6 +30,10 @@ export function CreateWalletPage({ onBack, onWalletCreated }: CreateWalletPagePr
         }
         // Call callback to proceed to permissions
         onWalletCreated(wallet.id, wallet.address);
+      } else if (result && result.type === "challenge") {
+        // Handle challenge response - this shouldn't happen in CreateWalletPage
+        // as it's typically used for legacy wallet creation
+        console.warn("Challenge response received in CreateWalletPage - this may need PIN setup");
       }
     } catch (err) {
       console.error("Failed to create wallet:", err);

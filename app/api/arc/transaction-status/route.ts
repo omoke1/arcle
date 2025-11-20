@@ -7,6 +7,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getArcClient, arcUtils } from "@/lib/arc";
 
+// Force dynamic rendering since we use request.url
+export const dynamic = 'force-dynamic';
+
 /**
  * GET /api/arc/transaction-status
  * Get transaction status and receipt

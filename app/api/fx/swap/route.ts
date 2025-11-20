@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { executeFXSwap } from "@/lib/fx/fx-swap-execution";
+import { executeFXSwap } from "@/lib/archived/legacy-dev-controlled/fx-swap-execution";
 import { isSupportedCurrency, type SupportedCurrency } from "@/lib/fx/currency-service";
 
 interface SwapRequest {

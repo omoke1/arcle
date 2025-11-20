@@ -5,7 +5,7 @@
  * Integrates with 1inch, 0x, and other aggregators for optimal routing
  */
 
-import { getTradeQuote, executeTokenSwap } from "./token-trading-dex";
+import { getTradeQuote, executeTokenSwap } from "../archived/legacy-dev-controlled/token-trading-dex";
 
 export interface LiquiditySource {
   dex: string;

@@ -1,21 +1,29 @@
 /**
  * Circle Bridge API Route
  * 
- * Handles cross-chain USDC transfers via CCTP for Developer-Controlled Wallets
+ * Handles cross-chain USDC transfers via CCTP for User-Controlled Wallets
+ * 
+ * Updated with Bridge Kit v1.1.2 safety improvements:
+ * - Route validation before attempting transfers (prevents fund loss)
+ * - Clearer error messages with supported chains
+ * - Unified error taxonomy
  * 
  * CCTP (Cross-Chain Transfer Protocol) works by:
  * 1. Burning USDC on the source chain
  * 2. Getting attestation from Circle's Attestation Service
  * 3. Minting USDC on the destination chain using the attestation
  * 
- * Reference: https://developers.circle.com/cctp
+ * Reference: 
+ * - https://developers.circle.com/cctp
+ * - https://developers.circle.com/bridge-kit (Bridge Kit SDK)
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getCircleClient } from "@/lib/circle-sdk";
-import { circleApiRequest } from "@/lib/circle";
+import { getUserCircleClient } from "@/lib/circle-user-sdk";
+import { circleApiRequest, circleConfig } from "@/lib/circle";
 import { generateUUID } from "@/lib/utils/uuid";
-import type { CCTPTransferResult } from "@/lib/cctp/cctp-implementation";
+import { validateBridgeRoute, getSupportedChainsList } from "@/lib/bridge/bridge-kit-user-wallets";
+import type { CCTPTransferResult } from "@/lib/archived/legacy-dev-controlled/cctp-implementation";
 
 interface BridgeRequest {
   walletId: string;
@@ -24,13 +32,16 @@ interface BridgeRequest {
   toChain: string;
   destinationAddress: string;
   idempotencyKey?: string;
+  fastTransfer?: boolean; // Enable Fast Transfer mode (seconds vs 13-19 minutes)
+  userId?: string; // Required for User-Controlled Wallets
+  userToken?: string; // Required for User-Controlled Wallets
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body: BridgeRequest = await request.json();
     
-    const { walletId, amount, fromChain, toChain, destinationAddress, idempotencyKey } = body;
+    const { walletId, amount, fromChain, toChain, destinationAddress, idempotencyKey, fastTransfer, userId, userToken } = body;
 
     // Validate required fields
     if (!walletId || !amount || !toChain || !destinationAddress) {
@@ -38,6 +49,30 @@ export async function POST(request: NextRequest) {
         {
           success: false,
           error: "Missing required fields: walletId, amount, toChain, destinationAddress",
+          errorCode: "MISSING_FIELDS",
+          errorType: "VALIDATION_ERROR",
+        },
+        { status: 400 }
+      );
+    }
+
+    // SAFETY: Validate route BEFORE attempting any operations
+    // This prevents fund loss on unsupported routes (Bridge Kit v1.1.2 improvement)
+    const routeValidation = validateBridgeRoute(fromChain || 'ARC-TESTNET', toChain);
+    if (!routeValidation.valid) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: routeValidation.error?.message || "Unsupported bridge route",
+          errorCode: routeValidation.error?.code || "INVALID_CHAIN",
+          errorType: "INVALID_CHAIN",
+          recoverable: routeValidation.error?.recoverable ?? true,
+          supportedChains: routeValidation.error?.supportedChains || getSupportedChainsList(),
+          details: {
+            fromChain,
+            toChain,
+            message: "Route validation failed. This prevents accidental fund loss on unsupported routes.",
+          },
         },
         { status: 400 }
       );
@@ -46,8 +81,8 @@ export async function POST(request: NextRequest) {
     // Convert amount to decimal string (SDK expects decimal format)
     const amountDecimal = parseFloat(amount).toFixed(6);
 
-    // Get Circle SDK client
-    const client = getCircleClient();
+    // Get User-Controlled Wallets SDK client
+    const userClient = getUserCircleClient();
 
     // Check if this is a same-chain transfer
     if (fromChain === toChain) {
@@ -65,7 +100,11 @@ export async function POST(request: NextRequest) {
         idempotencyKey: idempotencyKey || generateUUID(),
       };
 
-      const response = await client.createTransaction(transactionRequest);
+      const response = await userClient.createTransaction({
+        ...transactionRequest,
+        userId: userId!,
+        userToken: userToken!,
+      });
       
       if (!response.data) {
         throw new Error("SDK returned empty response");
@@ -90,7 +129,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Cross-chain transfer via CCTP
-    // For Developer-Controlled Wallets, we need to:
+    // For User-Controlled Wallets, we need to:
     // 1. Create a transaction that burns USDC on the source chain
     // 2. Poll Circle's Attestation Service for the attestation
     // 3. Use the attestation to mint on the destination chain
@@ -103,7 +142,17 @@ export async function POST(request: NextRequest) {
     // The SDK might support this if we specify the destination blockchain
     try {
       // First, get the wallet to understand its current blockchain
-      const walletResponse = await client.getWallet({ id: walletId });
+      // Get wallet via REST API (User-Controlled SDK may not support getWallet)
+      const walletResponse = await circleApiRequest<any>(
+        `/v1/w3s/wallets/${walletId}`,
+        {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${circleConfig.apiKey}`,
+            "X-User-Token": userToken!,
+          },
+        }
+      );
       const walletData = walletResponse.data as any;
       let walletAddress = walletData?.address || walletData?.wallet?.address;
       
@@ -115,7 +164,7 @@ export async function POST(request: NextRequest) {
       // Then poll for attestation and mint on destination
       // This is complex and requires CCTP contract addresses
       
-      // CCTP V2 Implementation for Developer-Controlled Wallets
+      // CCTP V2 Implementation for User-Controlled Wallets
       // Circle API v2 supports cross-chain transfers via CCTP V2
       // Reference: https://developers.circle.com/cctp
       //
@@ -125,7 +174,7 @@ export async function POST(request: NextRequest) {
       // - Native burn-and-mint: 1:1 USDC transfers
       
       // Try Circle API v2 transfers endpoint for cross-chain transfers
-      // v2 API should support cross-chain destinations for developer-controlled wallets
+      // v2 API should support cross-chain destinations for user-controlled wallets
       const transferPayload = {
         idempotencyKey: idempotencyKey || generateUUID(),
         source: {
@@ -257,7 +306,17 @@ export async function POST(request: NextRequest) {
         // Get wallet address if not already available
         if (!walletAddress) {
           try {
-            const walletResponse = await client.getWallet({ id: walletId });
+            // Get wallet via REST API (User-Controlled SDK may not support getWallet)
+      const walletResponse = await circleApiRequest<any>(
+        `/v1/w3s/wallets/${walletId}`,
+        {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${circleConfig.apiKey}`,
+            "X-User-Token": userToken!,
+          },
+        }
+      );
             const walletData = walletResponse.data as any;
             walletAddress = walletData?.address || walletData?.wallet?.address || walletData?.data?.address;
             
@@ -283,11 +342,14 @@ export async function POST(request: NextRequest) {
         
         // For now, initiate just the burn and return
         // The full flow will complete in the background
-        const { burnUSDC, executeCCTPTransfer } = await import("@/lib/cctp/cctp-implementation");
+        const { burnUSDC, executeCCTPTransfer } = await import("@/lib/archived/legacy-dev-controlled/cctp-implementation");
         
         // Start the CCTP transfer asynchronously (don't await)
         // This allows us to return immediately after initiating the burn
         // Log the full flow for verification
+        const transferMode = fastTransfer ? "⚡ Fast Transfer" : "🐢 Standard Transfer";
+        console.log(`[Bridge] Using CCTP ${transferMode} mode`);
+        
         executeCCTPTransfer({
           walletId,
           walletAddress,
@@ -295,6 +357,7 @@ export async function POST(request: NextRequest) {
           fromChain,
           toChain,
           destinationAddress,
+          fastTransfer: fastTransfer ?? false, // Default to Standard Transfer
         })
         .then((result) => {
           console.log("[Bridge] ✅ CCTP Transfer Completed Successfully!");
@@ -348,12 +411,22 @@ export async function POST(request: NextRequest) {
         
         try {
           // Use NEW Gateway SDK implementation (uses Circle SDK signing)
-          const { executeGatewayTransferSDK } = await import("@/lib/gateway/gateway-sdk-implementation");
+          const { executeGatewayTransferSDK } = await import("@/lib/archived/legacy-dev-controlled/gateway-sdk-implementation");
           
           // Get wallet address if not already available
           if (!walletAddress) {
             try {
-              const walletResponse = await client.getWallet({ id: walletId });
+              // Get wallet via REST API (User-Controlled SDK may not support getWallet)
+      const walletResponse = await circleApiRequest<any>(
+        `/v1/w3s/wallets/${walletId}`,
+        {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${circleConfig.apiKey}`,
+            "X-User-Token": userToken!,
+          },
+        }
+      );
               const walletData = walletResponse.data as any;
               walletAddress = walletData?.address || walletData?.wallet?.address || walletData?.data?.address;
               
@@ -378,7 +451,7 @@ export async function POST(request: NextRequest) {
           // Check if this is the user's first time using Gateway (for conversational messaging)
           let firstTimeUser = false;
           try {
-            const { checkGatewayBalanceSDK } = await import("@/lib/gateway/gateway-sdk-implementation");
+            const { checkGatewayBalanceSDK } = await import("@/lib/archived/legacy-dev-controlled/gateway-sdk-implementation");
             const gatewayBalance = await checkGatewayBalanceSDK(walletId, fromChain);
             // If balance is zero or check fails, assume first-time user (balance is returned as number)
             firstTimeUser = !gatewayBalance || gatewayBalance === 0;
@@ -475,7 +548,7 @@ export async function POST(request: NextRequest) {
           details: {
             fromChain,
             toChain,
-            note: "CCTP for Developer-Controlled Wallets requires smart contract interaction. " +
+            note: "CCTP for User-Controlled Wallets requires smart contract interaction. " +
                   "See https://github.com/circlefin/evm-cctp-contracts for contract addresses and ABIs.",
           },
         },

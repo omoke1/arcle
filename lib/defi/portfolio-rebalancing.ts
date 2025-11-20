@@ -6,7 +6,7 @@
  */
 
 import { getTokenBalances } from "@/lib/tokens/token-balance";
-import { executeTokenSwap } from "./token-trading-dex";
+import { executeTokenSwap } from "../archived/legacy-dev-controlled/token-trading-dex";
 
 export interface TargetAllocation {
   token: string;

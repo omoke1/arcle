@@ -5,7 +5,7 @@
  * Uses Circle Gateway for cross-chain transfers + DEX trading
  */
 
-import { executeTokenSwap, getTradeQuote } from "./token-trading-dex";
+import { executeTokenSwap, getTradeQuote } from "../archived/legacy-dev-controlled/token-trading-dex";
 
 export interface ArbitrageOpportunity {
   id: string;

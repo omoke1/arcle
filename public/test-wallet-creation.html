@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Wallet Creation - User-Controlled</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #333;
+      margin-bottom: 10px;
+    }
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+    }
+    button {
+      background: #0070f3;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 16px;
+      margin-right: 10px;
+      margin-bottom: 10px;
+    }
+    button:hover {
+      background: #0051cc;
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    #output {
+      margin-top: 20px;
+      padding: 20px;
+      background: #f9f9f9;
+      border-radius: 5px;
+      white-space: pre-wrap;
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+      min-height: 100px;
+    }
+    .success {
+      color: #22c55e;
+      font-weight: bold;
+    }
+    .error {
+      color: #ef4444;
+      font-weight: bold;
+    }
+    .info {
+      color: #3b82f6;
+      font-weight: bold;
+    }
+    .warning {
+      color: #f59e0b;
+      font-weight: bold;
+    }
+    .step {
+      background: #eff6ff;
+      padding: 15px;
+      margin: 10px 0;
+      border-left: 4px solid #3b82f6;
+      border-radius: 4px;
+    }
+    .step h3 {
+      margin: 0 0 10px 0;
+      color: #1e40af;
+    }
+    .challenge-box {
+      background: #fef3c7;
+      padding: 20px;
+      margin: 20px 0;
+      border-radius: 8px;
+      border: 2px solid #f59e0b;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔐 User-Controlled Wallet Creation Test</h1>
+    <p class="subtitle">Test the complete wallet creation flow with PIN setup challenge</p>
+
+    <div class="step">
+      <h3>Step 1: Create User & Get Token</h3>
+      <button onclick="step1CreateUser()">Create User</button>
+      <button onclick="clearOutput()">Clear Output</button>
+    </div>
+
+    <div class="step">
+      <h3>Step 2: Create Wallet Challenge</h3>
+      <button onclick="step2CreateWalletChallenge()" id="step2Btn" disabled>Create Wallet Challenge</button>
+      <p style="font-size: 12px; color: #666; margin: 5px 0 0 0;">This will return a challengeId that needs Circle's Web SDK</p>
+    </div>
+
+    <div id="output">Click "Create User" to start the test...</div>
+  </div>
+
+  <script>
+    let userId = null;
+    let userToken = null;
+    let challengeId = null;
+
+    function clearOutput() {
+      document.getElementById('output').textContent = 'Ready to start...';
+      userId = null;
+      userToken = null;
+      challengeId = null;
+      document.getElementById('step2Btn').disabled = true;
+    }
+
+    async function step1CreateUser() {
+      const output = document.getElementById('output');
+      output.innerHTML = '<span class="info">⏳ Step 1: Creating user...</span>';
+      
+      try {
+        const response = await fetch('/api/circle/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+          userId = data.data.userId;
+          userToken = data.data.userToken;
+          
+          output.innerHTML = `<span class="success">✅ Step 1 Complete: User Created!</span>
+
+<strong>User Details:</strong>
+- User ID: ${userId}
+- User Token: ${userToken.substring(0, 40)}...
+- Encryption Key: ${data.data.encryptionKey ? data.data.encryptionKey.substring(0, 20) + '...' : 'N/A'}
+
+<span class="info">👉 Now click "Create Wallet Challenge" to continue...</span>`;
+          
+          document.getElementById('step2Btn').disabled = false;
+        } else {
+          throw new Error(data.error || "User creation failed");
+        }
+      } catch (error) {
+        output.innerHTML = `<span class="error">❌ Error:</span>\n${error.message}`;
+      }
+    }
+
+    async function step2CreateWalletChallenge() {
+      const output = document.getElementById('output');
+      output.innerHTML = '<span class="info">⏳ Step 2: Creating wallet challenge...</span>';
+      
+      if (!userId || !userToken) {
+        output.innerHTML = '<span class="error">❌ Error: Please create a user first (Step 1)</span>';
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/circle/wallets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId,
+            userToken,
+            blockchains: ['ARC-TESTNET']
+          }),
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+          challengeId = data.data.challengeId;
+          
+          output.innerHTML = `<span class="success">✅ Step 2 Complete: Challenge Created!</span>
+
+<div class="challenge-box">
+  <strong>🔐 Challenge ID:</strong> ${challengeId}
+</div>
+
+<strong>Challenge Details:</strong>
+${JSON.stringify(data.data, null, 2)}
+
+<span class="warning">⚠️  IMPORTANT: Wallet Not Created Yet!</span>
+
+<strong>What Happens Next:</strong>
+${data.data.nextSteps.map(step => `  ${step}`).join('\n')}
+
+<strong>📚 Documentation:</strong>
+- Circle Web SDK: https://developers.circle.com/w3s/docs/web-sdk-ui-customize
+- W3s SDK Package: @circle-fin/w3s-pw-web-sdk
+
+<span class="info">💡 To complete this in your app:</span>
+1. Install: npm install @circle-fin/w3s-pw-web-sdk
+2. Import: import { W3SSdk } from '@circle-fin/w3s-pw-web-sdk'
+3. Initialize with App ID and challengeId
+4. User enters PIN in Circle's widget
+5. Wallet is created automatically
+6. Use listWallets API to get wallet details`;
+          
+        } else {
+          throw new Error(data.error || "Wallet challenge creation failed");
+        }
+      } catch (error) {
+        output.innerHTML = `<span class="error">❌ Error:</span>\n${error.message}`;
+      }
+    }
+  </script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+

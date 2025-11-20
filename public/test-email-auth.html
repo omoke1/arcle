@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Email Authentication - Circle</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #333;
+      margin-bottom: 10px;
+    }
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+    }
+    input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      font-size: 16px;
+      margin-bottom: 10px;
+    }
+    button {
+      background: #0070f3;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 16px;
+      margin-right: 10px;
+      margin-bottom: 10px;
+    }
+    button:hover {
+      background: #0051cc;
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    #output {
+      margin-top: 20px;
+      padding: 20px;
+      background: #f9f9f9;
+      border-radius: 5px;
+      white-space: pre-wrap;
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+      min-height: 100px;
+    }
+    .success {
+      color: #22c55e;
+      font-weight: bold;
+    }
+    .error {
+      color: #ef4444;
+      font-weight: bold;
+    }
+    .info {
+      color: #3b82f6;
+      font-weight: bold;
+    }
+    .step {
+      background: #eff6ff;
+      padding: 15px;
+      margin: 10px 0;
+      border-left: 4px solid #3b82f6;
+      border-radius: 4px;
+    }
+    .step h3 {
+      margin: 0 0 10px 0;
+      color: #1e40af;
+    }
+    .email-box {
+      background: #fef3c7;
+      padding: 20px;
+      margin: 20px 0;
+      border-radius: 8px;
+      border: 2px solid #f59e0b;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📧 Email Authentication Test - Circle</h1>
+    <p class="subtitle">Test wallet creation with email OTP authentication</p>
+
+    <div class="step">
+      <h3>Step 1: Enter Your Email</h3>
+      <input type="email" id="email" placeholder="your.email@example.com" />
+      <button onclick="sendOTP()">Send OTP</button>
+      <button onclick="clearOutput()">Clear</button>
+    </div>
+
+    <div class="step" id="step2" style="display:none;">
+      <h3>Step 2: Enter OTP from Email</h3>
+      <p style="font-size: 12px; color: #666; margin: 5px 0 10px 0;">Check your email for the 6-digit code</p>
+      <input type="text" id="otp" placeholder="000000" maxlength="6" />
+      <button onclick="verifyOTP()" id="verifyBtn">Verify & Create Wallet</button>
+      <button onclick="resendOTP()" id="resendBtn">Resend OTP</button>
+    </div>
+
+    <div id="output">Click "Send OTP" to start...</div>
+  </div>
+
+  <script>
+    let deviceData = null;
+
+    function clearOutput() {
+      document.getElementById('output').textContent = 'Ready to start...';
+      document.getElementById('step2').style.display = 'none';
+      document.getElementById('email').value = '';
+      document.getElementById('otp').value = '';
+      deviceData = null;
+    }
+
+    async function sendOTP() {
+      const email = document.getElementById('email').value;
+      const output = document.getElementById('output');
+      
+      if (!email || !email.includes('@')) {
+        output.innerHTML = '<span class="error">❌ Please enter a valid email address</span>';
+        return;
+      }
+
+      output.innerHTML = '<span class="info">⏳ Sending OTP to your email...</span>';
+      
+      try {
+        const response = await fetch('/api/circle/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            action: 'email-login',
+            email 
+          }),
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+          deviceData = data.data;
+          
+          output.innerHTML = `<span class="success">✅ OTP Sent Successfully!</span>
+
+<div class="email-box">
+  <strong>📧 Check your email:</strong> ${email}
+</div>
+
+<strong>Device Data:</strong>
+- Device ID: ${deviceData.deviceId}
+- OTP Token: ${deviceData.otpToken.substring(0, 20)}...
+
+<span class="info">👉 Enter the 6-digit code from your email below</span>`;
+          
+          document.getElementById('step2').style.display = 'block';
+          document.getElementById('otp').focus();
+        } else {
+          throw new Error(data.error || "Failed to send OTP");
+        }
+      } catch (error) {
+        output.innerHTML = `<span class="error">❌ Error:</span>\n${error.message}`;
+      }
+    }
+
+    async function verifyOTP() {
+      const otp = document.getElementById('otp').value;
+      const output = document.getElementById('output');
+      
+      if (!otp || otp.length !== 6) {
+        output.innerHTML = '<span class="error">❌ Please enter a valid 6-digit code</span>';
+        return;
+      }
+
+      if (!deviceData) {
+        output.innerHTML = '<span class="error">❌ Please send OTP first</span>';
+        return;
+      }
+
+      output.innerHTML = '<span class="info">⏳ Verifying OTP and creating wallet...</span>';
+      
+      try {
+        // Note: Actual OTP verification requires Circle's Web SDK (W3SSdk)
+        // This would normally be done client-side with the SDK
+        output.innerHTML = `<span class="info">📋 Ready for SDK Integration</span>
+
+<strong>Next Steps (requires Circle Web SDK):</strong>
+
+1. Install SDK: npm install @circle-fin/w3s-pw-web-sdk
+
+2. Initialize and verify:
+\`\`\`javascript
+import { W3SSdk } from '@circle-fin/w3s-pw-web-sdk';
+
+const sdk = new W3SSdk();
+sdk.setAppSettings({ appId: 'your-app-id' });
+sdk.setAuthentication({
+  deviceToken: '${deviceData.deviceToken.substring(0, 20)}...',
+  deviceEncryptionKey: '${deviceData.deviceEncryptionKey.substring(0, 20)}...'
+});
+
+// Execute OTP verification
+sdk.execute('${otp}', (error, result) => {
+  if (result) {
+    console.log('Wallet created!', result);
+  }
+});
+\`\`\`
+
+<strong>Device Data:</strong>
+- Email: ${deviceData.email}
+- OTP Code: ${otp}
+- Device ID: ${deviceData.deviceId}
+- OTP Token: ${deviceData.otpToken}
+
+<span class="success">✅ All authentication data ready!</span>
+<span class="info">💡 Use CircleEmailWidget component in React to complete this flow</span>`;
+        
+      } catch (error) {
+        output.innerHTML = `<span class="error">❌ Error:</span>\n${error.message}`;
+      }
+    }
+
+    async function resendOTP() {
+      const output = document.getElementById('output');
+      
+      if (!deviceData) {
+        output.innerHTML = '<span class="error">❌ Please send OTP first</span>';
+        return;
+      }
+
+      output.innerHTML = '<span class="info">⏳ Resending OTP...</span>';
+      
+      try {
+        const response = await fetch('/api/circle/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'resend-otp',
+            deviceToken: deviceData.otpToken,
+            otpToken: deviceData.otpToken,
+          }),
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+          output.innerHTML = `<span class="success">✅ New OTP Sent!</span>
+
+Check ${deviceData.email} for the new code.
+
+<span class="info">👉 Enter the new 6-digit code below</span>`;
+          
+          document.getElementById('otp').value = '';
+          document.getElementById('otp').focus();
+        } else {
+          throw new Error(data.error || "Failed to resend OTP");
+        }
+      } catch (error) {
+        output.innerHTML = `<span class="error">❌ Error:</span>\n${error.message}`;
+      }
+    }
+  </script>
+</body>
+</html>
+

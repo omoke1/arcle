@@ -43,6 +43,7 @@ export interface AIResponse {
     destinationAddress: string;
     walletId: string;
     walletAddress: string;
+    fastTransfer?: boolean; // Enable Fast Transfer mode
     bridgeId?: string;
     transactionHash?: string;
     status?: string;
@@ -96,6 +97,9 @@ export class AIService {
     switch (intent.intent) {
       case "greeting":
         return this.handleGreetingIntent(intent, context, currentSessionId);
+      
+      case "wallet_creation":
+        return this.handleWalletCreationIntent(intent, context, currentSessionId);
       
       case "send":
         return await this.handleSendIntent(intent, context, currentSessionId);
@@ -411,8 +415,14 @@ export class AIService {
     const { amount, address, recipient } = intent.entities;
     
     if (!amount) {
+      // Check if user said "send money" without amount
+      const lowerCommand = intent.rawCommand.toLowerCase();
+      const isSendMoney = lowerCommand.includes("send money") || lowerCommand.includes("transfer money");
+      
       const message = await this.enhanceResponse(
-        "I'd be happy to help you send USDC! How much would you like to send?",
+        isSendMoney 
+          ? "I'd be happy to help you send money! How much USDC would you like to send?"
+          : "I'd be happy to help you send USDC! How much would you like to send?",
         intent,
         "send_missing_amount",
         context,
@@ -422,6 +432,11 @@ export class AIService {
         ["amount"]
       );
       return { message, intent };
+    }
+    
+    // Ensure currency defaults to USDC for "send money" commands
+    if (!intent.entities.currency) {
+      intent.entities.currency = "USDC";
     }
     
     // Check if recipient is a contact name (if no address provided)
@@ -637,13 +652,52 @@ export class AIService {
     };
   }
   
+  private static async handleWalletCreationIntent(
+    intent: ParsedIntent,
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string },
+    sessionId?: string
+  ): Promise<AIResponse> {
+    // If wallet already exists, inform user
+    if (context?.hasWallet) {
+      const message = await this.enhanceResponse(
+        "You already have a wallet! Your wallet address is ready to use. If you'd like to create a new one, just let me know.",
+        intent,
+        "wallet_already_exists",
+        context
+      );
+      return { message, intent };
+    }
+    
+    // Guide user through wallet creation with PIN explanation
+    const message = await this.enhanceResponse(
+      `Great! I'd love to help you set up your wallet. 🎉
+
+Before we create your wallet, you'll need to set up a secure 6-digit PIN. Think of it like the PIN for your bank card - it's your personal key that keeps your wallet safe and secure.
+
+**Why is a PIN important?**
+Your PIN protects your wallet from unauthorized access. Just like you wouldn't want someone else using your bank card, your PIN ensures that only you can access and use your wallet. It's encrypted and stored securely - even I can't see it!
+
+Once you're ready, I'll guide you through:
+1. Setting up your secure PIN
+2. Creating your wallet
+3. Getting you started with your first transactions
+
+Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup process!`,
+      intent,
+      "wallet_creation_guidance",
+      context
+    );
+    
+    return { message, intent };
+  }
+  
   private static async handleBalanceIntent(
     intent: ParsedIntent,
     context?: { hasWallet?: boolean; balance?: string; walletAddress?: string }
   ): Promise<AIResponse> {
     if (!context?.hasWallet) {
       const message = await this.enhanceResponse(
-        "Please create a wallet first to check your balance.",
+        "I'd love to check your balance! First, let's get your wallet set up. Before we create it, you'll need to set up a secure 6-digit PIN to protect it - think of it like the PIN for your bank card. Ready to get started?",
         intent,
         "balance_check_no_wallet",
         context
@@ -733,7 +787,7 @@ export class AIService {
     }
     
     const message = await this.enhanceResponse(
-      "I'm fetching your transaction history now. This will show all your recent transactions on Arc network.",
+      "You can view your transaction history in the transaction history panel on the right side of the screen. All your recent transactions on Arc network are displayed there.",
       intent,
       "fetch_history",
       context
@@ -771,10 +825,19 @@ export class AIService {
     
     // If destination address is provided, prepare to execute bridge with Gateway deposit handling
     if (address && context.walletAddress && context.walletId) {
+      // Check if user wants Fast Transfer (detect keywords like "fast", "instant", "quick")
+      const lowerCommand = intent.rawCommand.toLowerCase();
+      const wantsFast = lowerCommand.includes("fast") || lowerCommand.includes("instant") || lowerCommand.includes("quick") || lowerCommand.includes("asap");
+      
       // Check if this is first-time bridge user (will need Gateway deposit)
       // The bridge API will handle auto-deposit, we just set expectations
+      const speedInfo = wantsFast
+        ? `⚡ Fast Transfer: Settles in seconds (~$0.25 fee)`
+        : `🐢 Standard Transfer: 13-19 minutes (~$0.08 fee)`;
+      
       return {
         message: `Perfect! Bridging $${amount} USDC from Arc to ${destinationChain} 🚀\n\n` +
+                `${speedInfo}\n\n` +
                 `Here's what's happening:\n` +
                 `• If this is your first bridge, I'll set up instant bridging for you (takes a moment)\n` +
                 `• Future bridges will be instant!\n• Destination: ${address.substring(0, 6)}...${address.substring(38)}\n\n` +
@@ -788,6 +851,7 @@ export class AIService {
           destinationAddress: address,
           walletId: context.walletId,
           walletAddress: context.walletAddress,
+          fastTransfer: wantsFast, // Pass Fast Transfer preference
         },
       };
     }
@@ -992,7 +1056,7 @@ export class AIService {
     
     const { amount } = intent.entities;
     const lowerCommand = intent.rawCommand.toLowerCase();
-    const { isUSYCAvailable, getAvailableBlockchains } = await import("@/lib/defi/yield-savings-usyc");
+    const { isUSYCAvailable, getAvailableBlockchains } = await import("@/lib/archived/legacy-dev-controlled/yield-savings-usyc");
     
     // Check available blockchains
     const availableChains = getAvailableBlockchains();
@@ -1454,7 +1518,7 @@ export class AIService {
       };
     }
     
-    const { isTradingAvailable } = await import("@/lib/defi/token-trading-dex");
+    const { isTradingAvailable } = await import("@/lib/archived/legacy-dev-controlled/token-trading-dex");
     const defaultChain = "ETH";
     
     if (!isTradingAvailable(defaultChain)) {
@@ -1714,8 +1778,8 @@ export class AIService {
     }
 
     try {
-      // Import FX swap execution service
-      const { executeFXSwap } = await import("@/lib/fx/fx-swap-execution");
+      // Import FX swap execution service (archived - legacy implementation)
+      const { executeFXSwap } = await import("@/lib/archived/legacy-dev-controlled/fx-swap-execution");
       
       // Execute the swap
       const result = await executeFXSwap({
@@ -1734,7 +1798,9 @@ export class AIService {
       }
 
       // Generate success message with transaction details
-      const explorerLink = result.blockchainHash 
+      // Only generate explorer link if blockchainHash is a valid hash (0x followed by 64 hex chars)
+      const isValidHash = result.blockchainHash && /^0x[a-fA-F0-9]{64}$/.test(result.blockchainHash);
+      const explorerLink = isValidHash
         ? `[View on ArcScan](https://testnet.arcscan.app/tx/${result.blockchainHash})`
         : "";
 

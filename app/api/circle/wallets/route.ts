@@ -8,24 +8,22 @@
  * - Explorer: https://testnet.arcscan.app
  * - Chain ID: 5042002
  * 
- * For User-Controlled Wallets (ERC-4337 Modular Wallets):
+ * User-Controlled Wallets (ONLY OPTION)
  * - Uses App ID and userToken
- * - Managed by users via UserController
- * 
- * For Developer-Controlled Wallets:
- * - Uses Entity Secret
- * - Managed by developers via DeveloperController
+ * - Users own and control their wallets via MPC
+ * - Requires user creation first via /api/circle/users
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getCircleClient, getOrCreateWalletSet } from "@/lib/circle-sdk";
-import { circleApiRequest, circleConfig } from "@/lib/circle";
+import { getUserCircleClient } from "@/lib/circle-user-sdk";
+import { circleConfig, circleApiRequest } from "@/lib/circle";
 
 export interface CreateWalletRequest {
   idempotencyKey?: string;
   blockchains?: string[]; // e.g., ["ARC"] for Arc network
-  userId?: string; // For user-controlled wallets
-  forceNew?: boolean; // Force creating a new wallet set for unique wallet
+  userId: string; // Required: User ID from Circle
+  userToken: string; // Required: User token from Circle (get via /api/circle/users)
+  forceNew?: boolean; // Not used for User-Controlled (each user has their own wallets)
 }
 
 export interface CircleWalletResponse {
@@ -44,13 +42,12 @@ export interface CircleWalletResponse {
  * POST /api/circle/wallets
  * Create a new wallet via Circle Programmable Wallets
  * 
- * Following Circle API documentation:
- * - User-Controlled Wallets: Create user first, then initialize, then create wallet
- * - Developer-Controlled Wallets: Create WalletSet first, then create wallets
+ * User-Controlled Wallets Flow:
+ * 1. Create user via /api/circle/users (returns userId and userToken)
+ * 2. Create wallet with userId and userToken (this endpoint)
  * 
  * Based on Circle API docs:
  * https://developers.circle.com/w3s/reference/createuser
- * https://developers.circle.com/w3s/reference/createwalletset
  * https://developers.circle.com/w3s/reference/createwallets
  */
 export async function POST(request: NextRequest) {
@@ -82,97 +79,36 @@ export async function POST(request: NextRequest) {
     const blockchains = body.blockchains || ["ARC-TESTNET"];
     console.log(`🌐 Creating wallet on: ${blockchains.join(", ")} (default: ARC-TESTNET)`);
 
-    // Use Circle SDK for developer-controlled wallets
-    // This is more reliable than REST API for wallet creation
-    
-    if (!circleConfig.entitySecret) {
+    // User-Controlled Wallets is now the ONLY option
+    // Require userToken and userId
+    if (!body.userToken || !body.userId) {
       return NextResponse.json(
         {
           success: false,
-          error: "CIRCLE_ENTITY_SECRET is required for developer-controlled wallets.\n\nSteps:\n1. Run 'npm run generate-entity-secret' to generate one\n2. Add it to your .env file as CIRCLE_ENTITY_SECRET=<generated_secret>\n3. Run 'npm run register-entity-secret' to register it with Circle",
+          error: "userToken and userId are required. Please create a user first via /api/circle/users",
         },
         { status: 400 }
       );
     }
 
-    // Note: Entity Secret registration is typically done via standalone script (npm run create-wallet)
-    // We skip registration here and assume it's already registered
-    // If registration is needed, it will fail during wallet set creation with error 156016
-    console.log("Skipping Entity Secret registration - assuming already registered via standalone script");
-    console.log("If you get error 156016, run: npm run create-wallet");
-
-    const client = getCircleClient();
+    // ============================================
+    // USER-CONTROLLED WALLETS (ONLY OPTION)
+    // ============================================
+    console.log("🌐 Creating User-Controlled Wallet");
     
-    // Step 2: Get or create a wallet set (AFTER Entity Secret registration)
-    // For creating new wallets, we can reuse the same wallet set OR create a new one
-    // Check if user wants to force a new wallet set (for testing multiple wallets)
-    const forceNewWalletSet = body.forceNew || false;
-    
-    let walletSetId: string;
-    try {
-      if (forceNewWalletSet) {
-        // Create a new wallet set for this wallet to ensure uniqueness
-        console.log("Creating new wallet set for unique wallet...");
-        const newWalletSet = await client.createWalletSet({ 
-          name: `ARCLE Wallet Set ${Date.now()}` 
-        });
-        if (!newWalletSet.data?.walletSet) {
-          throw new Error("Failed to create new wallet set");
-        }
-        walletSetId = newWalletSet.data.walletSet.id;
-        console.log(`Created new wallet set: ${walletSetId}`);
-      } else {
-        // Try to use existing wallet set from wallet-info.json first (from standalone script)
-        const fs = await import('fs');
-        const path = await import('path');
-        const walletInfoPath = path.join(process.cwd(), 'wallet-info.json');
-        
-        if (fs.existsSync(walletInfoPath)) {
-          const walletInfo = JSON.parse(fs.readFileSync(walletInfoPath, 'utf-8'));
-          if (walletInfo.walletSetId) {
-            console.log(`Using existing wallet set from wallet-info.json: ${walletInfo.walletSetId}`);
-            walletSetId = walletInfo.walletSetId;
-          } else {
-            throw new Error("No walletSetId in wallet-info.json");
-          }
-        } else {
-          throw new Error("wallet-info.json not found");
-        }
-      }
-    } catch (error) {
-      // Fallback: try to get or create wallet set via SDK
-      console.log("wallet-info.json not found or invalid, trying to get/create wallet set via SDK...");
-      console.log("Getting or creating wallet set...");
-      try {
-        const walletSet = await getOrCreateWalletSet();
-        walletSetId = walletSet.id;
-        console.log(`Using wallet set: ${walletSetId}`);
-      } catch (sdkError: any) {
-        // If SDK fails with 401, provide helpful error message
-        if (sdkError?.status === 401 || sdkError?.response?.status === 401) {
-          return NextResponse.json(
-            {
-              success: false,
-              error: `Circle API authentication failed (401).\n\n` +
-                `The API key is being rejected by Circle's sandbox API.\n\n` +
-                `Possible solutions:\n` +
-                `1. ✅ Verify your API key in Circle Console: https://console.circle.com/\n` +
-                `   - Ensure it's active and not expired\n` +
-                `   - Check it has "Developer-Controlled Wallets" permissions\n` +
-                `2. ✅ Try creating a NEW API key in Circle Console\n` +
-                `3. ✅ Use the existing wallet: Run 'npm run create-wallet' to use the standalone script\n` +
-                `4. ✅ Check if wallet-info.json exists - it contains the wallet set ID\n\n` +
-                `API Key ID: ${(circleConfig.apiKey || '').split(':')[1] || 'unknown'}`,
-              code: 401,
-            },
-            { status: 401 }
-          );
-        }
-        throw sdkError;
-      }
+    if (!circleConfig.appId) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "NEXT_PUBLIC_CIRCLE_APP_ID is required. Please set it in your .env file.",
+        },
+        { status: 400 }
+      );
     }
+
+    const userClient = getUserCircleClient();
     
-    // Map blockchain names (we use "ARC-TESTNET" in SDK, but might receive "ARC" or "ETH-SEPOLIA")
+    // Map blockchain names
     const blockchainMap: Record<string, string> = {
       "ARC": "ARC-TESTNET",
       "ARC-TESTNET": "ARC-TESTNET",
@@ -181,120 +117,238 @@ export async function POST(request: NextRequest) {
     
     const mappedBlockchains = blockchains.map(b => blockchainMap[b] || b) as Array<"ARC-TESTNET" | "ETH-SEPOLIA">;
     
-    // Create wallet using SDK
-    console.log("Creating wallet with blockchains:", mappedBlockchains);
+    // Create wallet challenge using User-Controlled SDK
+    // For User-Controlled Wallets, this returns a challengeId that must be completed in the browser
+    console.log("Creating User-Controlled wallet challenge with blockchains:", mappedBlockchains);
     
-    let wallet: any;
     try {
-      const walletResponse = await client.createWallets({
-        blockchains: mappedBlockchains,
-        count: 1,
-        accountType: "SCA", // Smart Contract Account for programmability
-        walletSetId: walletSetId,
-        metadata: [
-          {
-            name: "ARCLE AI-Managed Wallet",
-            refId: `arcle-wallet-${idempotencyKey.substring(0, 8)}`
-          }
-        ]
-      });
-      
-      if (!walletResponse.data?.wallets || walletResponse.data.wallets.length === 0) {
-        throw new Error("Failed to create wallet - no wallet returned from SDK");
+      // Check if user already has a PIN by checking their status
+      let userHasPin = false;
+      try {
+        const userStatus = await (userClient as any).getUserStatus({
+          userToken: body.userToken,
+        });
+        userHasPin = userStatus.data?.pinStatus === "ENABLED" || userStatus.data?.pinStatus === "LOCKED";
+        console.log("User PIN status:", userStatus.data?.pinStatus);
+      } catch (statusError) {
+        console.log("Could not check user PIN status, assuming no PIN:", statusError);
       }
-      
-      wallet = walletResponse.data.wallets[0];
-    } catch (createError: any) {
-      // If wallet creation fails with 401, try to return existing wallet from wallet-info.json
-      if (createError?.status === 401 || createError?.response?.status === 401) {
-        console.log("Wallet creation failed with 401, trying to return existing wallet from wallet-info.json...");
-        try {
-          const fs = await import('fs');
-          const path = await import('path');
-          const walletInfoPath = path.join(process.cwd(), 'wallet-info.json');
-          
-          if (fs.existsSync(walletInfoPath)) {
-            const walletInfo = JSON.parse(fs.readFileSync(walletInfoPath, 'utf-8'));
-            if (walletInfo.walletId && walletInfo.address) {
-              console.log(`Returning existing wallet from wallet-info.json: ${walletInfo.walletId}`);
-              // Return existing wallet data
-              const walletData = {
-                data: {
-                  walletId: walletInfo.walletId,
-                  entityId: "",
-                  type: "DeveloperWallet" as const,
-                  state: "LIVE" as const,
-                  custodialWalletSetId: walletInfo.walletSetId,
-                  address: walletInfo.address,
-                  blockchain: walletInfo.blockchain || "ARC-TESTNET",
-                  createdAt: walletInfo.createdAt || new Date().toISOString(),
-                }
-              };
 
-              return NextResponse.json(
-                {
-                  success: true,
-                  data: walletData.data,
-                  message: "Using existing wallet (wallet creation failed due to API authentication)",
+      // If user already has a PIN, check for existing wallets first
+      if (userHasPin) {
+        console.log("User already has PIN, checking for existing wallets...");
+        
+        // First, check if user already has wallets
+        try {
+          const existingWalletsResponse = await (userClient as any).listWallets({
+            userToken: body.userToken,
+            blockchain: mappedBlockchains[0], // Check for wallets on the requested blockchain
+          });
+          
+          const existingWallets = existingWalletsResponse.data?.wallets || [];
+          
+          // If user already has a wallet on this blockchain, return it
+          if (existingWallets.length > 0) {
+            const wallet = existingWallets[0];
+            console.log("User already has wallet, returning existing wallet:", {
+              walletId: wallet.id,
+              address: wallet.address,
+            });
+            
+            return NextResponse.json(
+              {
+                success: true,
+                data: {
+                  wallet: {
+                    id: wallet.id,
+                    address: wallet.address,
+                    state: wallet.state,
+                    walletSetId: wallet.walletSetId,
+                    custodyType: wallet.custodyType,
+                    userId: body.userId,
+                  },
+                  userId: body.userId,
+                  userToken: body.userToken,
+                  blockchains: mappedBlockchains,
                 },
-                { status: 200 }
-              );
-            }
+              },
+              { status: 200 }
+            );
           }
-        } catch (fallbackError) {
-          console.error("Fallback to existing wallet also failed:", fallbackError);
+        } catch (listError) {
+          console.log("Error checking existing wallets, will create new one:", listError);
+        }
+        
+        // User has PIN but no wallet - use createWallet (requires PIN verification challenge)
+        console.log("User has PIN but no wallet, creating wallet challenge...");
+        const walletChallengeResponse = await (userClient as any).createWallet({
+          userToken: body.userToken,
+          blockchains: mappedBlockchains,
+          accountType: "SCA",
+        });
+
+        if (!walletChallengeResponse || !walletChallengeResponse.data) {
+          throw new Error("Failed to create wallet challenge - no response from SDK");
+        }
+
+        const challengeId = walletChallengeResponse.data.challengeId;
+        
+        if (!challengeId) {
+          throw new Error("Failed to create wallet challenge - no challengeId returned from SDK");
+        }
+
+        console.log("Wallet challenge created successfully (user has PIN):", {
+          challengeId,
+          userId: body.userId,
+          blockchains: mappedBlockchains,
+        });
+
+        // Return challenge - user will need to verify PIN to complete wallet creation
+        return NextResponse.json(
+          {
+            success: true,
+            data: {
+              challengeId,
+              userId: body.userId,
+              userToken: body.userToken,
+              blockchains: mappedBlockchains,
+              message: "Challenge created. Complete this challenge using Circle's W3sInitializeWidget to verify PIN and create wallet.",
+              nextSteps: [
+                "1. Use Circle's Web SDK (@circle-fin/w3s-pw-web-sdk)",
+                "2. Initialize W3sInitializeWidget with this challengeId",
+                "3. User verifies PIN in the widget",
+                "4. Wallet is created automatically after PIN verification",
+                "5. Retrieve wallet details using listWallets API"
+              ]
+            },
+          },
+          { status: 201 }
+        );
+      }
+
+      // User doesn't have PIN yet - use createUserPinWithWallets to setup PIN and create wallet
+      console.log("User doesn't have PIN, creating PIN + wallet challenge...");
+      const challengeResponse = await (userClient as any).createUserPinWithWallets({
+        userToken: body.userToken,
+        blockchains: mappedBlockchains,
+        accountType: "SCA", // Smart Contract Account
+      });
+
+      if (!challengeResponse || !challengeResponse.data) {
+        throw new Error("Failed to create wallet challenge - no response from SDK");
+      }
+
+      const challengeId = challengeResponse.data.challengeId;
+      
+      if (!challengeId) {
+        throw new Error("Failed to create wallet challenge - no challengeId returned from SDK");
+      }
+
+      console.log("Wallet challenge created successfully:", {
+        challengeId,
+        userId: body.userId,
+        blockchains: mappedBlockchains,
+      });
+
+      // Return challenge information
+      // Client must complete this challenge using Circle's Web SDK
+      return NextResponse.json(
+        {
+          success: true,
+          data: {
+            challengeId,
+            userId: body.userId,
+            userToken: body.userToken,
+            blockchains: mappedBlockchains,
+            message: "Challenge created. Complete this challenge using Circle's W3sInitializeWidget to set up PIN and create wallet.",
+            nextSteps: [
+              "1. Use Circle's Web SDK (@circle-fin/w3s-pw-web-sdk)",
+              "2. Initialize W3sInitializeWidget with this challengeId",
+              "3. User completes PIN setup in the widget",
+              "4. Wallet is created automatically after PIN setup",
+              "5. Retrieve wallet details using listWallets API"
+            ]
+          },
+        },
+        { status: 201 }
+      );
+    } catch (error: any) {
+      console.error("Error creating User-Controlled wallet challenge:", error);
+      
+      // Handle 409 error (user already initialized) gracefully
+      const errorData = error.response?.data || error.data;
+      if (errorData?.code === 155106 || errorData?.message?.includes("already been initialized")) {
+        console.log("User already has PIN initialized, checking for existing wallets or creating new challenge...");
+        
+        try {
+          // First check if user already has wallets
+          const existingWalletsResponse = await (userClient as any).listWallets({
+            userToken: body.userToken,
+            blockchain: mappedBlockchains[0],
+          });
+          
+          const existingWallets = existingWalletsResponse.data?.wallets || [];
+          
+          if (existingWallets.length > 0) {
+            const wallet = existingWallets[0];
+            return NextResponse.json(
+              {
+                success: true,
+                data: {
+                  wallet: {
+                    id: wallet.id,
+                    address: wallet.address,
+                    state: wallet.state,
+                    walletSetId: wallet.walletSetId,
+                    custodyType: wallet.custodyType,
+                    userId: body.userId,
+                  },
+                  userId: body.userId,
+                  userToken: body.userToken,
+                  blockchains: mappedBlockchains,
+                },
+              },
+              { status: 200 }
+            );
+          }
+          
+          // User has PIN but no wallet - use createWallet (requires PIN verification)
+          const walletChallengeResponse = await (userClient as any).createWallet({
+            userToken: body.userToken,
+            blockchains: mappedBlockchains,
+            accountType: "SCA",
+          });
+
+          if (walletChallengeResponse?.data?.challengeId) {
+            return NextResponse.json(
+              {
+                success: true,
+                data: {
+                  challengeId: walletChallengeResponse.data.challengeId,
+                  userId: body.userId,
+                  userToken: body.userToken,
+                  blockchains: mappedBlockchains,
+                  message: "Challenge created. Complete this challenge using Circle's W3sInitializeWidget to verify PIN and create wallet.",
+                },
+              },
+              { status: 201 }
+            );
+          }
+        } catch (fallbackError: any) {
+          console.error("Error in fallback wallet creation:", fallbackError);
+          // Fall through to return the original error
         }
       }
       
-      // If fallback didn't work, throw the original error
-      throw createError;
+      return NextResponse.json(
+        {
+          success: false,
+          error: error.message || "Failed to create User-Controlled wallet challenge",
+          details: errorData || error,
+        },
+        { status: error.response?.status || 500 }
+      );
     }
-    
-    // Format response to match expected structure
-    const walletData = {
-      data: {
-        walletId: wallet.id,
-        entityId: wallet.entityId || "",
-        type: "DeveloperWallet" as const,
-        state: "LIVE" as const,
-        custodialWalletSetId: walletSetId,
-        address: wallet.address,
-        blockchain: wallet.blockchain,
-        createdAt: wallet.createDate || new Date().toISOString(),
-      }
-    };
-
-    console.log("Wallet created successfully:", {
-      walletId: walletData.data.walletId,
-      address: walletData.data.address,
-      blockchain: walletData.data.blockchain,
-    });
-
-    // Automatically request testnet tokens for new wallets on Arc testnet
-    if (walletData.data.blockchain === "ARC-TESTNET" && walletData.data.address) {
-      try {
-        console.log("Requesting testnet tokens for new wallet...");
-        await client.requestTestnetTokens({
-          address: walletData.data.address,
-          blockchain: "ARC-TESTNET",
-          native: true,  // Request native tokens (for gas)
-          usdc: true,    // Request USDC tokens
-        });
-        console.log("Testnet tokens requested successfully");
-      } catch (tokenError: any) {
-        // Log error but don't fail wallet creation if token request fails
-        console.warn("Failed to request testnet tokens (non-critical):", tokenError?.message || tokenError);
-        // Continue with wallet creation even if token request fails
-      }
-    }
-
-    return NextResponse.json(
-      {
-        success: true,
-        data: walletData.data,
-      },
-      { status: 201 }
-    );
   } catch (error) {
     console.error("=== ERROR CREATING WALLET ===");
     console.error("Error type:", error?.constructor?.name);
@@ -311,30 +365,6 @@ export async function POST(request: NextRequest) {
     console.error("============================");
 
     const errorMessage = error instanceof Error ? error.message : "Failed to create wallet";
-    
-    // Handle Entity Secret registration error (code 156016) - must be first!
-    if (errorCode === 156016 || 
-        errorMessage.includes("156016") || 
-        errorMessage.includes("entity secret has not been set yet") || 
-        errorMessage.includes("provide encrypted ciphertext in the console") ||
-        apiErrorMessage?.includes("entity secret has not been set yet")) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Entity Secret not registered in Circle Console.\n\n" +
-            "The Entity Secret must be registered before creating wallets:\n\n" +
-            "1. Go to Circle Developer Console: https://console.circle.com/\n" +
-            "2. Navigate to: Entity Settings → Security → Entity Secret\n" +
-            "3. Register/upload the encrypted Entity Secret ciphertext\n\n" +
-            "The SDK automatically encrypts your Entity Secret, but you need to register it in Console.\n\n" +
-            "Alternatively, try the standalone script:\n" +
-            "   npm run create-wallet\n\n" +
-            "This may handle Entity Secret registration differently.",
-          code: 156016,
-        },
-        { status: 403 }
-      );
-    }
     
     // Provide more helpful error messages
     if (errorMessage.includes("API key") || errorMessage.includes("401") || errorMessage.includes("Unauthorized")) {
@@ -357,55 +387,33 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Handle Entity Secret registration error
-    if (errorMessage.includes("156016") || errorMessage.includes("entity secret has not been set yet") || errorMessage.includes("provide encrypted ciphertext in the console")) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Entity Secret not registered in Circle Console. You need to:\n\n1. Go to Circle Developer Console (https://console.circle.com/)\n2. Navigate to your Entity settings\n3. Register/upload your Entity Secret ciphertext\n4. The Entity Secret must be encrypted and registered before creating wallets.\n\nAlternatively, you can use the standalone script: `npm run create-wallet` which may handle this differently.",
-        },
-        { status: 403 }
-      );
-    }
-
     // Provide helpful guidance for authentication errors
     if (errorMessage.includes("401") || errorMessage.includes("Invalid credentials") || errorMessage.includes("Unauthorized")) {
       const hasAppId = !!circleConfig.appId;
-      const hasEntitySecret = !!circleConfig.entitySecret;
       
       let guidance = "Authentication failed. ";
-      if (!hasAppId && !hasEntitySecret) {
-        guidance += "You need either an App ID (for user-controlled wallets) or Entity Secret (for developer-controlled wallets) from Circle Console.";
-      } else if (hasAppId && !hasEntitySecret) {
-        guidance += "User-controlled wallets may require additional setup. Check Circle Console to ensure your App is properly configured, or try using developer-controlled wallets with an Entity Secret.";
-      } else if (!hasAppId && hasEntitySecret) {
-        guidance += "Developer-controlled wallets require Entity Secret authentication. Ensure CIRCLE_ENTITY_SECRET is set correctly in your .env file.";
+      if (!hasAppId) {
+        guidance += "NEXT_PUBLIC_CIRCLE_APP_ID is required for User-Controlled Wallets. Please set it in your .env file.";
+      } else {
+        guidance += "Check Circle Console to ensure your App ID is correctly configured and has User-Controlled Wallets permissions.";
       }
       
       return NextResponse.json(
         {
           success: false,
-          error: guidance + " See SETUP-ENV.md for instructions.",
+          error: guidance,
         },
         { status: 401 }
       );
     }
     
     if (errorMessage.includes("404") || errorMessage.includes("Resource not found")) {
-      const hasAppId = !!process.env.NEXT_PUBLIC_CIRCLE_APP_ID;
       let guidance = "Endpoint not found (404). ";
       
-      if (hasAppId) {
-        guidance += "For user-controlled wallets, this typically means:\n" +
-          "1. Your App ID might not be correctly configured in Circle Console\n" +
-          "2. User-controlled wallets may require client-side SDK initialization\n" +
-          "3. The App might need additional setup in Circle Console\n\n" +
-          "Consider:\n" +
-          "- Verifying your App ID in Circle Console matches: " + process.env.NEXT_PUBLIC_CIRCLE_APP_ID + "\n" +
-          "- Using developer-controlled wallets instead (requires Entity Secret)\n" +
-          "- Implementing Circle's client SDK for user-controlled wallets";
+      if (!circleConfig.appId) {
+        guidance += "NEXT_PUBLIC_CIRCLE_APP_ID is required. Please set it in your .env file.";
       } else {
-        guidance += "This endpoint requires either an App ID (for user-controlled wallets) or Entity Secret (for developer-controlled wallets).";
+        guidance += "Your App ID might not be correctly configured in Circle Console. Verify it matches: " + circleConfig.appId.substring(0, 8) + "...";
       }
       
       return NextResponse.json(
@@ -437,11 +445,28 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const userId = searchParams.get("userId"); // For user-controlled wallets
+    const userToken = searchParams.get("userToken"); // For user-controlled wallets
     const limit = searchParams.get("limit") || "10";
     const pageBefore = searchParams.get("pageBefore");
     const pageAfter = searchParams.get("pageAfter");
 
-    // Use standard wallets endpoint for both types
+    // Use User-Controlled SDK if userToken provided
+    if (userId && userToken) {
+      const userClient = getUserCircleClient();
+      const response = await (userClient as any).listWallets({
+        userToken,
+        pageSize: parseInt(limit),
+        ...(pageBefore && { pageBefore }),
+        ...(pageAfter && { pageAfter }),
+      });
+
+      return NextResponse.json({
+        success: true,
+        data: response.data || {},
+      });
+    }
+
+    // Legacy: Use standard wallets endpoint for Developer-Controlled
     let endpoint = `/v1/w3s/wallets?limit=${limit}`;
     if (userId) {
       endpoint += `&userId=${userId}`;

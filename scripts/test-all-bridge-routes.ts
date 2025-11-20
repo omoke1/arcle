@@ -8,7 +8,7 @@
  * - Arc Testnet is supported by both CCTP V2 and Gateway
  */
 
-import { getCircleClient } from '../lib/circle-sdk';
+import { getCircleClient } from '../lib/archived/circle-sdk-developer-controlled';
 import { circleApiRequest } from '../lib/circle';
 
 interface BridgeRoute {

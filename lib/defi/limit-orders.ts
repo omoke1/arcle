@@ -5,7 +5,7 @@
  * when target price is reached. Uses price monitoring + DEX execution.
  */
 
-import { executeTokenSwap, getTradeQuote } from "./token-trading-dex";
+import { executeTokenSwap, getTradeQuote } from "../archived/legacy-dev-controlled/token-trading-dex";
 
 export type OrderType = "buy" | "sell";
 export type OrderStatus = "pending" | "executed" | "cancelled" | "expired";

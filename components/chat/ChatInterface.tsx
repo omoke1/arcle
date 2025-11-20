@@ -6,7 +6,6 @@ import { EmptyChatState } from "./EmptyChatState";
 import { TypingIndicator } from "./TypingIndicator";
 import { QRCodeDisplay } from "@/components/wallet/QRCodeDisplay";
 import { TransactionPreviewMessage } from "./TransactionPreviewMessage";
-import { TransactionHistory } from "@/components/transactions/TransactionHistory";
 import type { ChatMessage as ChatMessageType } from "@/types";
 
 interface ChatInterfaceProps {
@@ -92,12 +91,6 @@ export function ChatInterface({
                          (message.content.includes("Here's your wallet address") ||
                           message.content.includes("Here is your wallet address"));
             
-            // Check if message is about transaction history
-            const showHistory = message.role === "assistant" && 
-                              (message.content.includes("transaction history") ||
-                               message.content.includes("Fetching your transaction history")) &&
-                              walletId;
-            
             // Check if message has transaction preview
             const hasTransactionPreview = message.transactionPreview;
 
@@ -121,11 +114,6 @@ export function ChatInterface({
                 {showQR && walletAddress && (
                   <div className="mt-3 max-w-xs">
                     <QRCodeDisplay address={walletAddress} />
-                  </div>
-                )}
-                {showHistory && walletId && (
-                  <div className="mt-3 max-w-2xl">
-                    <TransactionHistory walletId={walletId} walletAddress={walletAddress || undefined} limit={5} />
                   </div>
                 )}
                 {hasTransactionPreview && (

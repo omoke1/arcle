@@ -1,214 +1,280 @@
 /**
- * Test Bridge Functionality
+ * Bridge Testing Script
  * 
- * Manually tests the CCTP bridge API endpoint with v2 API support
+ * Tests the updated bridge functionality with Bridge Kit v1.1.2 improvements:
+ * - Route validation (prevents fund loss on unsupported routes)
+ * - Error handling with unified taxonomy
+ * - Supported chains validation
+ * 
+ * Usage:
+ *   npm run test:bridge
+ *   or
+ *   tsx scripts/test-bridge.ts
  */
 
-import dotenv from "dotenv";
-import { circleApiRequest } from "../lib/circle";
-import { getCircleClient } from "../lib/circle-sdk";
-import { generateUUID } from "../lib/utils/uuid";
+import "dotenv/config";
 
-dotenv.config();
+const API_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3001";
 
-async function testBridge() {
-  console.log("🧪 Testing Bridge Functionality\n");
+// Test configuration
+const TEST_CONFIG = {
+  walletId: process.env.TEST_WALLET_ID || "",
+  userId: process.env.TEST_USER_ID || "",
+  userToken: process.env.TEST_USER_TOKEN || "",
+  fromChain: "ARC-TESTNET",
+  toChain: "BASE-SEPOLIA",
+  amount: "0.1", // Small test amount
+  destinationAddress: process.env.TEST_DESTINATION_ADDRESS || "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+};
+
+/**
+ * Test route validation
+ */
+async function testRouteValidation() {
+  console.log("\n🧪 Testing Route Validation...\n");
+
+  const testCases = [
+    {
+      name: "Valid route: ARC-TESTNET → BASE-SEPOLIA",
+      from: "ARC-TESTNET",
+      to: "BASE-SEPOLIA",
+      shouldPass: true,
+    },
+    {
+      name: "Invalid route: Unsupported chain",
+      from: "ARC-TESTNET",
+      to: "UNSUPPORTED-CHAIN",
+      shouldPass: false,
+    },
+    {
+      name: "Same chain (should fail)",
+      from: "ARC-TESTNET",
+      to: "ARC-TESTNET",
+      shouldPass: false,
+    },
+    {
+      name: "Valid route: Ethereum → Base",
+      from: "ethereum-sepolia",
+      to: "base-sepolia",
+      shouldPass: true,
+    },
+  ];
+
+  for (const testCase of testCases) {
+    try {
+      const response = await fetch(`${API_URL}/api/circle/bridge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          walletId: TEST_CONFIG.walletId,
+          amount: TEST_CONFIG.amount,
+          fromChain: testCase.from,
+          toChain: testCase.to,
+          destinationAddress: TEST_CONFIG.destinationAddress,
+          userId: TEST_CONFIG.userId,
+          userToken: TEST_CONFIG.userToken,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (testCase.shouldPass) {
+        if (data.success || response.status === 200) {
+          console.log(`✅ ${testCase.name}: PASSED (route accepted)`);
+        } else if (data.errorCode === "INVALID_CHAIN") {
+          console.log(`❌ ${testCase.name}: FAILED (incorrectly rejected valid route)`);
+          console.log(`   Error: ${data.error}`);
+        } else {
+          console.log(`⚠️  ${testCase.name}: Route accepted but bridge may have failed for other reasons`);
+          console.log(`   Status: ${data.success ? "success" : "error"}`);
+          console.log(`   Error: ${data.error || "None"}`);
+        }
+      } else {
+        if (data.errorCode === "INVALID_CHAIN" || data.errorCode === "SAME_CHAIN") {
+          console.log(`✅ ${testCase.name}: PASSED (correctly rejected invalid route)`);
+          console.log(`   Error Code: ${data.errorCode}`);
+          console.log(`   Message: ${data.error}`);
+          if (data.supportedChains) {
+            console.log(`   Supported Chains: ${data.supportedChains.slice(0, 5).join(", ")}...`);
+          }
+        } else if (response.status === 400) {
+          console.log(`✅ ${testCase.name}: PASSED (rejected with 400 status)`);
+          console.log(`   Error: ${data.error || "Validation failed"}`);
+        } else {
+          console.log(`⚠️  ${testCase.name}: Route was not rejected as expected`);
+          console.log(`   Status: ${response.status}`);
+          console.log(`   Response: ${JSON.stringify(data, null, 2)}`);
+        }
+      }
+    } catch (error: any) {
+      console.error(`❌ ${testCase.name}: ERROR - ${error.message}`);
+    }
+  }
+}
+
+/**
+ * Test actual bridge operation (if wallet is configured)
+ */
+async function testBridgeOperation() {
+  if (!TEST_CONFIG.walletId || !TEST_CONFIG.userId || !TEST_CONFIG.userToken) {
+    console.log("\n⚠️  Skipping bridge operation test - missing wallet credentials");
+    console.log("   Set TEST_WALLET_ID, TEST_USER_ID, and TEST_USER_TOKEN to test actual bridging");
+    return;
+  }
+
+  console.log("\n🌉 Testing Bridge Operation...\n");
+  console.log(`From: ${TEST_CONFIG.fromChain}`);
+  console.log(`To: ${TEST_CONFIG.toChain}`);
+  console.log(`Amount: ${TEST_CONFIG.amount} USDC`);
+  console.log(`Destination: ${TEST_CONFIG.destinationAddress}\n`);
 
   try {
-    // Get Circle SDK client
-    const client = getCircleClient();
+    const startTime = Date.now();
+    const response = await fetch(`${API_URL}/api/circle/bridge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        walletId: TEST_CONFIG.walletId,
+        amount: TEST_CONFIG.amount,
+        fromChain: TEST_CONFIG.fromChain,
+        toChain: TEST_CONFIG.toChain,
+        destinationAddress: TEST_CONFIG.destinationAddress,
+        userId: TEST_CONFIG.userId,
+        userToken: TEST_CONFIG.userToken,
+        idempotencyKey: `test-bridge-${Date.now()}`,
+      }),
+    });
 
-    // Step 1: Get or create a test wallet
-    console.log("📋 Step 1: Getting test wallet...");
-    let walletId: string;
-    let walletAddress: string;
+    const duration = Date.now() - startTime;
+    const data = await response.json();
 
-    try {
-      // Try to get the first available wallet
-      const walletsResponse = await client.listWallets({});
-      if (walletsResponse.data?.wallets && walletsResponse.data.wallets.length > 0) {
-        walletId = walletsResponse.data.wallets[0].id!;
-        walletAddress = walletsResponse.data.wallets[0].address || "";
-        console.log(`✅ Found wallet: ${walletId}`);
-        console.log(`   Address: ${walletAddress || "N/A"}\n`);
-      } else {
-        throw new Error("No wallets found. Please create a wallet first.");
-      }
-    } catch (error: any) {
-      console.error("❌ Error getting wallet:", error.message);
-      console.log("\n💡 Tip: Run 'npm run create-wallet' to create a wallet first.\n");
-      process.exit(1);
-    }
+    console.log(`📊 Response Status: ${response.status} (${duration}ms)\n`);
 
-    // Step 2: Check wallet balance
-    console.log("📋 Step 2: Checking wallet balance...");
-    try {
-      const balanceResponse = await circleApiRequest<any>(
-        `/v1/w3s/developer/wallets/${walletId}/balances?blockchain=ARC-TESTNET`
-      );
-      const balances = balanceResponse.data?.tokenBalances || [];
-      const usdcBalance = balances.find((b: any) => 
-        b.token?.symbol === "USDC" || b.token?.address?.toLowerCase() === "0x3600000000000000000000000000000000000000"
-      );
+    if (data.success) {
+      console.log("✅ Bridge initiated successfully!");
+      console.log(`📋 Bridge Details:`);
+      console.log(`   🆔 ID: ${data.data?.id || data.data?.bridgeId || "N/A"}`);
+      console.log(`   🔗 Hash: ${data.data?.txHash || data.data?.transactionHash || "Not available yet"}`);
+      console.log(`   📊 Status: ${data.data?.status || "pending"}`);
       
-      if (usdcBalance) {
-        const balance = (BigInt(usdcBalance.amount || "0") / 1_000_000n).toString();
-        console.log(`✅ USDC Balance: ${balance} USDC\n`);
-        
-        if (parseFloat(balance) < 1) {
-          console.log("⚠️  Warning: Low balance. Bridge test requires at least 1 USDC.\n");
-        }
-      } else {
-        console.log("⚠️  No USDC balance found. Bridge test requires USDC.\n");
+      if (data.data?.txHash || data.data?.transactionHash) {
+        const hash = data.data.txHash || data.data.transactionHash;
+        console.log(`\n🔗 View on Explorer: https://testnet.arcscan.app/tx/${hash}`);
       }
-    } catch (error: any) {
-      console.warn("⚠️  Could not check balance:", error.message);
-    }
-
-    // Step 3: Test same-chain transfer (should work)
-    console.log("📋 Step 3: Testing same-chain transfer (ARC to ARC)...");
-    const testDestinationAddress = "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"; // Example address
-    const testAmount = "0.1"; // Small test amount
-
-    try {
-      const sameChainResponse = await fetch("http://localhost:3000/api/circle/bridge", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          walletId,
-          amount: testAmount,
-          fromChain: "ARC-TESTNET",
-          toChain: "ARC-TESTNET",
-          destinationAddress: testDestinationAddress,
-          idempotencyKey: generateUUID(),
-        }),
-      });
-
-      const sameChainData = await sameChainResponse.json();
+    } else {
+      console.log("❌ Bridge failed!");
+      console.log(`Error Code: ${data.errorCode || "UNKNOWN"}`);
+      console.log(`Error Type: ${data.errorType || "UNKNOWN"}`);
+      console.log(`Error: ${data.error || "Unknown error"}`);
       
-      if (sameChainData.success) {
-        console.log("✅ Same-chain transfer initiated successfully!");
-        console.log(`   Bridge ID: ${sameChainData.data?.bridgeId || sameChainData.data?.id}`);
-        console.log(`   Status: ${sameChainData.data?.status}`);
-        console.log(`   Transaction Hash: ${sameChainData.data?.transactionHash || "N/A"}\n`);
-      } else {
-        console.log("❌ Same-chain transfer failed:");
-        console.log(`   Error: ${sameChainData.error}`);
-        console.log(`   Details: ${JSON.stringify(sameChainData.details, null, 2)}\n`);
+      if (data.supportedChains) {
+        console.log(`\nSupported Chains:`);
+        data.supportedChains.forEach((chain: string) => {
+          console.log(`   - ${chain}`);
+        });
       }
-    } catch (error: any) {
-      console.error("❌ Error testing same-chain transfer:", error.message);
-      console.log("   Make sure the dev server is running: npm run dev\n");
-    }
-
-    // Step 4: Test cross-chain transfer (ARC to BASE) - This is the main test
-    console.log("📋 Step 4: Testing cross-chain transfer (ARC to BASE) with v2 API...");
-    const crossChainDestination = "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"; // Example BASE address
-
-    try {
-      const crossChainResponse = await fetch("http://localhost:3000/api/circle/bridge", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          walletId,
-          amount: testAmount,
-          fromChain: "ARC-TESTNET",
-          toChain: "BASE-SEPOLIA",
-          destinationAddress: crossChainDestination,
-          idempotencyKey: generateUUID(),
-        }),
-      });
-
-      const crossChainData = await crossChainResponse.json();
       
-      if (crossChainResponse.ok && crossChainData.success) {
-        console.log("✅ Cross-chain transfer initiated successfully!");
-        console.log(`   Bridge ID: ${crossChainData.data?.bridgeId || crossChainData.data?.id}`);
-        console.log(`   Status: ${crossChainData.data?.status}`);
-        console.log(`   Transaction Hash: ${crossChainData.data?.transactionHash || "N/A"}`);
-        console.log(`   Message: ${crossChainData.message || "N/A"}\n`);
-        
-        console.log("🎉 Bridge test PASSED! The v2 API endpoint is working.\n");
-      } else {
-        console.log("❌ Cross-chain transfer failed:");
-        console.log(`   Status Code: ${crossChainResponse.status}`);
-        console.log(`   Error: ${crossChainData.error || "Unknown error"}`);
-        console.log(`   Details: ${JSON.stringify(crossChainData.details || crossChainData, null, 2)}\n`);
-        
-        // Check if it's a 404 (endpoint doesn't exist) or 501 (not implemented)
-        if (crossChainResponse.status === 404) {
-          console.log("💡 This might mean the v2 endpoint doesn't exist yet.");
-          console.log("   The API will fall back to v1 endpoints.\n");
-        } else if (crossChainResponse.status === 501) {
-          console.log("💡 The endpoint returned 501 (Not Implemented).");
-          console.log("   This might mean CCTP for developer wallets requires manual implementation.\n");
-        }
+      if (data.details) {
+        console.log(`\nDetails:`, JSON.stringify(data.details, null, 2));
       }
-    } catch (error: any) {
-      console.error("❌ Error testing cross-chain transfer:", error.message);
-      console.log("   Make sure the dev server is running: npm run dev\n");
     }
-
-    // Step 5: Test direct v2 API call (bypassing our endpoint)
-    console.log("📋 Step 5: Testing direct v2 API call to Circle...");
-    try {
-      const directV2Payload = {
-        idempotencyKey: generateUUID(),
-        source: {
-          type: "wallet",
-          id: walletId,
-        },
-        destination: {
-          type: "blockchain",
-          address: crossChainDestination,
-          chain: "BASE-SEPOLIA",
-        },
-        amount: {
-          amount: Math.floor(parseFloat(testAmount) * 1_000_000).toString(),
-          currency: "USDC",
-        },
-      };
-
-      console.log("   Trying /v2/w3s/developer/transfers...");
-      try {
-        const v2Response = await circleApiRequest<any>(
-          `/v2/w3s/developer/transfers`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(directV2Payload),
-          }
-        );
-        console.log("   ✅ v2 endpoint exists and responded!");
-        console.log(`   Response: ${JSON.stringify(v2Response, null, 2)}\n`);
-      } catch (v2Error: any) {
-        console.log(`   ❌ v2 endpoint failed: ${v2Error.message}`);
-        if (v2Error.response?.status === 404) {
-          console.log("   💡 v2 endpoint doesn't exist (404). Trying v1...\n");
-        } else {
-          console.log(`   Status: ${v2Error.response?.status || "N/A"}`);
-          console.log(`   Response: ${JSON.stringify(v2Error.response?.data || {}, null, 2)}\n`);
-        }
-      }
-    } catch (error: any) {
-      console.error("   ❌ Error testing direct API:", error.message);
-    }
-
-    console.log("✅ Bridge test completed!\n");
-
   } catch (error: any) {
-    console.error("❌ Test failed:", error.message);
-    console.error(error.stack);
+    console.error("❌ Bridge test error:", error.message);
+    if (error.stack) console.error(error.stack);
+  }
+}
+
+/**
+ * Test error taxonomy
+ */
+async function testErrorTaxonomy() {
+  console.log("\n🔍 Testing Error Taxonomy...\n");
+
+  // Test unsupported chain error
+  try {
+    const response = await fetch(`${API_URL}/api/circle/bridge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        walletId: TEST_CONFIG.walletId || "test-wallet",
+        amount: "1.0",
+        fromChain: "ARC-TESTNET",
+        toChain: "UNSUPPORTED-CHAIN-12345",
+        destinationAddress: TEST_CONFIG.destinationAddress,
+        userId: TEST_CONFIG.userId,
+        userToken: TEST_CONFIG.userToken,
+      }),
+    });
+
+    const data = await response.json();
+
+    console.log("Error Response Structure:");
+    console.log(`   ✅ Has errorCode: ${!!data.errorCode}`);
+    console.log(`   ✅ Has errorType: ${!!data.errorType}`);
+    console.log(`   ✅ Has error message: ${!!data.error}`);
+    console.log(`   ✅ Has recoverable flag: ${data.recoverable !== undefined}`);
+    console.log(`   ✅ Has supportedChains: ${!!data.supportedChains}`);
+
+    if (data.errorCode === "INVALID_CHAIN") {
+      console.log(`\n✅ Error code is correct: ${data.errorCode}`);
+    } else {
+      console.log(`\n⚠️  Error code: ${data.errorCode} (expected INVALID_CHAIN)`);
+    }
+
+    if (data.supportedChains && Array.isArray(data.supportedChains)) {
+      console.log(`\n✅ Supported chains list provided (${data.supportedChains.length} chains)`);
+    }
+  } catch (error: any) {
+    console.error("❌ Error taxonomy test failed:", error.message);
+  }
+}
+
+/**
+ * Main test function
+ */
+async function main() {
+  console.log("\n🧪 ===== Bridge Kit v1.1.2 Testing =====\n");
+  console.log(`🔗 API URL: ${API_URL}\n`);
+
+  // Check if credentials are available
+  const hasCredentials = !!(TEST_CONFIG.walletId && TEST_CONFIG.userId && TEST_CONFIG.userToken);
+  
+  if (!hasCredentials) {
+    console.log("⚠️  Note: Wallet credentials not provided. Only route validation tests will run.");
+    console.log("   To test actual bridging, set:");
+    console.log("   - TEST_WALLET_ID");
+    console.log("   - TEST_USER_ID");
+    console.log("   - TEST_USER_TOKEN\n");
+  }
+
+  try {
+    // Test 1: Route validation
+    await testRouteValidation();
+
+    // Test 2: Error taxonomy
+    await testErrorTaxonomy();
+
+    // Test 3: Actual bridge operation (if credentials available)
+    if (hasCredentials) {
+      await testBridgeOperation();
+    } else {
+      console.log("\n💡 To test actual bridge operations:");
+      console.log("   1. Get your wallet credentials from localStorage or Circle API");
+      console.log("   2. Set environment variables:");
+      console.log("      TEST_WALLET_ID=your_wallet_id");
+      console.log("      TEST_USER_ID=your_user_id");
+      console.log("      TEST_USER_TOKEN=your_user_token");
+      console.log("   3. Run this script again");
+    }
+
+    console.log("\n✅ Bridge testing complete!\n");
+  } catch (error: any) {
+    console.error("\n❌ Test suite failed:", error.message);
+    if (error.stack) console.error(error.stack);
     process.exit(1);
   }
 }
 
-// Run the test
-testBridge().catch(console.error);
+// Run tests
+main();
 

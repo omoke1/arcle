@@ -2,7 +2,7 @@
  * Invite Code System for Arcle Testers
  * 
  * Features:
- * - 20 unique codes for testers
+ * - 30 unique codes for testers
  * - One-time use per code
  * - localStorage-based verification
  * - Simple admin interface
@@ -42,6 +42,38 @@ export const DAILY_INVITE_CODES = [
   'QL2MX9HB', // Code 18
   'RP8YN5CJ', // Code 19
   'VG4WT7ZD', // Code 20
+  'R7V4JVY2', // Code 21
+  'GRVDTQTJ', // Code 22
+  'BEAGWP8S', // Code 23
+  'FUN53U3E', // Code 24
+  'PUHJEV8U', // Code 25
+  'PTSWXBXB', // Code 26
+  'HV7YSX5S', // Code 27
+  'PXZZ8DVB', // Code 28
+  '5MNKMJBQ', // Code 29
+  'LUN2ZLX5', // Code 30
+  // New codes added: 2024-11-18
+  'QMV3SSXS', // Code 31
+  'PGKM7ASS', // Code 32
+  '8Z6BCUD4', // Code 33
+  'CRKR5MR9', // Code 34
+  'ANYQPV34', // Code 35
+  'RTSHVBJC', // Code 36
+  'KKYHVQYF', // Code 37
+  'Y4XWPK4X', // Code 38
+  'SYQH557M', // Code 39
+  'JQNC5JNB', // Code 40
+  // New codes added for user testing: 2025-11-15
+  'AVZREXA6', // Code 41
+  'QGLHNC7T', // Code 42
+  'B8MPSBT8', // Code 43
+  'SBAYW6K2', // Code 44
+  'M8LHCE9X', // Code 45
+  'X439VTSZ', // Code 46
+  'EQN6NU5G', // Code 47
+  '6ZYLEAX4', // Code 48
+  'J48MYZFR', // Code 49
+  '7TL97FVN', // Code 50
 ];
 
 // Get all invite codes from environment or fallback to default
@@ -51,13 +83,22 @@ export function getInviteCodes(): string[] {
     return [];
   }
   
-  // Server-side: Get from environment or use default
+  // Server-side: Merge environment codes with default codes
+  // This ensures new codes added to DAILY_INVITE_CODES work even if env var is set
+  const allCodes = new Set<string>(DAILY_INVITE_CODES);
+  
   const envCodes = process.env.INVITE_CODES;
   if (envCodes) {
-    return envCodes.split(',').map(code => code.trim());
+    // Add environment codes to the set (automatically handles duplicates)
+    envCodes.split(',').forEach(code => {
+      const trimmed = code.trim();
+      if (trimmed) {
+        allCodes.add(trimmed);
+      }
+    });
   }
   
-  return DAILY_INVITE_CODES;
+  return Array.from(allCodes);
 }
 
 // Verify if a code is valid (server-side only)
@@ -138,7 +179,7 @@ export interface InviteStats {
 
 export function getInviteStats(): InviteStats {
   const usedCodes = getUsedCodes();
-  const validCodes = DAILY_INVITE_CODES;
+  const validCodes = getInviteCodes();
   
   const usedCodesList = usedCodes.map(code => ({
     code,

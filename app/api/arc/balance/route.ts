@@ -8,6 +8,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getArcClient, getUSDCAddress, arcUtils } from "@/lib/arc";
 import { erc20Abi } from "viem";
 
+// Force dynamic rendering since we use request.url
+export const dynamic = 'force-dynamic';
+
 /**
  * GET /api/arc/balance
  * Get USDC balance for an address on Arc

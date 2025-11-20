@@ -8,6 +8,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { circleApiRequest } from "@/lib/circle";
 
+// Force dynamic rendering since we use request.nextUrl.searchParams
+export const dynamic = 'force-dynamic';
+
 interface TokenBalance {
   token: string;
   symbol: string;

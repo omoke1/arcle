@@ -11,6 +11,9 @@ import { getArcClient, getUSDCAddress, arcUtils } from "@/lib/arc";
 import { erc20Abi } from "viem";
 import { getMultiCurrencyBalance } from "@/lib/fx/multi-currency-balance";
 
+// Force dynamic rendering since we use request.url
+export const dynamic = 'force-dynamic';
+
 interface CircleBalanceResponse {
   data: Array<{
     tokenId: string;
@@ -30,6 +33,8 @@ export async function GET(request: NextRequest) {
     const address = searchParams.get("address"); // Wallet address from Circle
     const useBlockchain = searchParams.get("useBlockchain") === "true"; // Optional: query directly from blockchain
     const multiCurrency = searchParams.get("multiCurrency") === "true"; // Return all currencies
+    const userId = searchParams.get("userId"); // Optional: for user-controlled wallets
+    const userToken = searchParams.get("userToken"); // Optional: for user-controlled wallets
 
     if (!walletId && !address) {
       return NextResponse.json(
@@ -52,12 +57,32 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Option 1: Query via Circle API (recommended)
-    if (walletId && !useBlockchain) {
+    // Option 1: Query via Circle API (recommended, but requires auth for user-controlled wallets)
+    // If address is provided and useBlockchain is true, skip API and go straight to blockchain query
+    if (walletId && !useBlockchain && !address) {
       let balances: CircleBalanceResponse | null = null;
       let error: any = null;
 
-      // Try developer-controlled wallets endpoint first
+      // For user-controlled wallets, try user-specific endpoint first
+      if (userToken || userId) {
+        try {
+          // User-controlled wallets endpoint
+          const userEndpoint = userToken 
+            ? `/v1/w3s/user/wallets/${walletId}/balances`
+            : `/v1/w3s/user/wallets/${walletId}/balances`;
+          
+          // Note: Circle API might require userToken in headers, but we'll try the endpoint first
+          // If it fails, fall through to regular endpoints
+          console.log(`[Balance API] Trying user-controlled wallets endpoint for walletId: ${walletId}`);
+          
+          // For now, fall through to regular endpoints since userToken auth is handled differently
+          // The regular endpoints should work if the wallet is accessible
+        } catch (userError: any) {
+          console.log(`[Balance API] User-controlled endpoint not available, trying regular endpoints...`);
+        }
+      }
+
+      // Try legacy endpoints first for compatibility
       try {
         balances = await circleApiRequest<CircleBalanceResponse>(
           `/v1/w3s/developer/wallets/${walletId}/balances?blockchain=ARC-TESTNET`,

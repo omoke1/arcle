@@ -43,7 +43,7 @@ export function startIncomingTransactionMonitoring(
   const {
     walletId,
     walletAddress,
-    pollInterval = 10000, // 10 seconds (reduced from 15s for faster detection)
+    pollInterval = 30000, // 30 seconds to avoid Circle rate limits
     enabled = true,
     onIncomingToken,
     onSuspiciousToken,
@@ -60,17 +60,126 @@ export function startIncomingTransactionMonitoring(
 
   const poll = async () => {
     try {
+      let userId: string | null = null;
+      let userToken: string | null = null;
+
+      if (typeof window !== "undefined") {
+        userId = localStorage.getItem("arcle_user_id");
+        userToken = localStorage.getItem("arcle_user_token");
+      }
+
+      if (!userId || !userToken) {
+        // Only warn once per minute to avoid console spam
+        const lastWarningKey = `incoming_monitor_warning_${monitorKey}`;
+        const lastWarning = typeof window !== "undefined" 
+          ? parseInt(localStorage.getItem(lastWarningKey) || "0")
+          : 0;
+        const now = Date.now();
+        
+        if (now - lastWarning > 60000) { // Warn at most once per minute
+          console.warn("[IncomingTransactionMonitor] Missing user credentials, skipping poll cycle");
+          console.warn("[IncomingTransactionMonitor] To fix: Ensure userId and userToken are stored in localStorage");
+          console.warn("[IncomingTransactionMonitor] Keys: arcle_user_id, arcle_user_token");
+          if (typeof window !== "undefined") {
+            localStorage.setItem(lastWarningKey, now.toString());
+          }
+        }
+        return;
+      }
+
+      // Check if token is expired or expiring soon, refresh proactively
+      if (userToken) {
+        try {
+          const { checkTokenExpiry, refreshUserToken } = await import('@/lib/circle/token-refresh');
+          const tokenStatus = checkTokenExpiry(userToken, 5);
+          
+          if (tokenStatus.isExpired || tokenStatus.isExpiringSoon) {
+            console.log("[IncomingTransactionMonitor] Token expired or expiring soon, refreshing proactively...");
+            const newToken = await refreshUserToken();
+            
+            if (newToken && newToken.userToken) {
+              console.log("[IncomingTransactionMonitor] ✅ Token refreshed proactively");
+              userToken = newToken.userToken;
+              if (typeof window !== "undefined") {
+                localStorage.setItem("arcle_user_token", newToken.userToken);
+                if (newToken.encryptionKey) {
+                  localStorage.setItem("arcle_encryption_key", newToken.encryptionKey);
+                }
+              }
+            } else {
+              console.warn("[IncomingTransactionMonitor] Proactive token refresh failed, will try on next 403");
+            }
+          }
+        } catch (tokenCheckError) {
+          console.warn("[IncomingTransactionMonitor] Error checking token expiry:", tokenCheckError);
+          // Continue with existing token
+        }
+      }
+
+      const queryParams = new URLSearchParams({
+        walletId,
+        limit: "50",
+        userId,
+        userToken,
+      });
+
       // Fetch recent transactions via our API route (avoids CORS issues)
-      const apiResponse = await fetch(
-        `/api/circle/transactions?walletId=${walletId}&limit=50`
-      );
+      let apiResponse = await fetch(`/api/circle/transactions?${queryParams.toString()}`);
+
+      // Handle 403 (token expired) by refreshing token and retrying
+      if (!apiResponse.ok && apiResponse.status === 403) {
+        console.log("[IncomingTransactionMonitor] Token expired (403), attempting refresh...");
+        try {
+          const { refreshUserToken } = await import('@/lib/circle/token-refresh');
+          const newToken = await refreshUserToken();
+          
+          if (newToken && newToken.userToken) {
+            console.log("[IncomingTransactionMonitor] ✅ Token refreshed, retrying transaction fetch...");
+            
+            // Update localStorage with new token
+            if (typeof window !== "undefined") {
+              localStorage.setItem("arcle_user_token", newToken.userToken);
+              if (newToken.encryptionKey) {
+                localStorage.setItem("arcle_encryption_key", newToken.encryptionKey);
+              }
+            }
+            
+            // Retry with new token
+            const retryParams = new URLSearchParams({
+              walletId,
+              limit: "50",
+              userId: userId || "",
+              userToken: newToken.userToken,
+            });
+            apiResponse = await fetch(`/api/circle/transactions?${retryParams.toString()}`);
+            
+            // If retry also fails, log and return
+            if (!apiResponse.ok && apiResponse.status !== 404) {
+              console.warn(`[IncomingTransactionMonitor] Retry after token refresh failed: ${apiResponse.status}`);
+              return;
+            }
+          } else {
+            console.warn("[IncomingTransactionMonitor] Token refresh failed, skipping this poll cycle");
+            return;
+          }
+        } catch (refreshError) {
+          console.error("[IncomingTransactionMonitor] Error refreshing token:", refreshError);
+          return;
+        }
+      }
 
       if (!apiResponse.ok) {
         // If 404, wallet might not have transactions yet - this is expected
         if (apiResponse.status === 404) {
           return; // Silently return, no need to log
         }
-        throw new Error(`Failed to fetch transactions: ${apiResponse.statusText}`);
+        if (apiResponse.status === 429) {
+          console.warn("[IncomingTransactionMonitor] Circle rate limited transaction polling. Skipping this cycle.");
+          return;
+        }
+        // Don't throw for other errors, just log and return
+        console.warn(`[IncomingTransactionMonitor] Failed to fetch transactions: ${apiResponse.status} ${apiResponse.statusText}`);
+        return;
       }
 
       const data = await apiResponse.json();
@@ -412,8 +521,7 @@ function createSuspiciousTokenNotification(transfer: IncomingTokenTransfer): voi
   const analysis = transfer.analysis!;
   
   let message = `🚨 **SUSPICIOUS TOKEN DETECTED**\n\n`;
-  message += `**Token:** ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\n`;
-  message += `**Amount:** ${transfer.amount}\n`;
+  message += `**Received:** ${transfer.amount} ${transfer.tokenSymbol || "Unknown"}\n`;
   message += `**From:** ${transfer.fromAddress.slice(0, 10)}...${transfer.fromAddress.slice(-8)}\n`;
   message += `**Risk Score:** ${analysis.riskScore}/100 (${analysis.riskLevel.toUpperCase()})\n\n`;
   message += `**Risk Reasons:**\n`;
@@ -442,8 +550,10 @@ function createWarningTokenNotification(transfer: IncomingTokenTransfer): void {
   const analysis = transfer.analysis!;
   
   let message = `⚠️ **Token Received (Medium Risk)**\n\n`;
-  message += `**Token:** ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\n`;
-  message += `**Amount:** ${transfer.amount}\n`;
+  message += `**Received:** ${transfer.amount} ${transfer.tokenSymbol || "Unknown"}\n`;
+  if (transfer.fromAddress) {
+    message += `**From:** ${transfer.fromAddress.slice(0, 10)}...${transfer.fromAddress.slice(-8)}\n`;
+  }
   message += `**Risk Score:** ${analysis.riskScore}/100\n\n`;
   message += `**Warnings:**\n`;
   analysis.riskReasons.forEach(reason => {
@@ -467,11 +577,14 @@ function createWarningTokenNotification(transfer: IncomingTokenTransfer): void {
  */
 function createSafeTokenNotification(transfer: IncomingTokenTransfer): void {
   let message = `✅ **Token Received**\n\n`;
-  message += `**Token:** ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\n`;
-  message += `**Amount:** ${transfer.amount}\n`;
-  message += `**From:** ${transfer.fromAddress.slice(0, 10)}...${transfer.fromAddress.slice(-8)}\n`;
+  message += `**Received:** ${transfer.amount} ${transfer.tokenSymbol || "Unknown"}\n`;
+  if (transfer.fromAddress) {
+    message += `**From:** ${transfer.fromAddress.slice(0, 10)}...${transfer.fromAddress.slice(-8)}\n`;
+  }
   
-  if (transfer.transactionHash) {
+  // Only add explorer link if transactionHash is a valid blockchain hash (0x followed by 64 hex chars)
+  // Circle transaction IDs are UUIDs, not blockchain hashes
+  if (transfer.transactionHash && /^0x[a-fA-F0-9]{64}$/.test(transfer.transactionHash)) {
     message += `\n[View on ArcScan](https://testnet.arcscan.app/tx/${transfer.transactionHash})`;
   }
 

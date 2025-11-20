@@ -58,21 +58,28 @@ export function startBalanceMonitoring(
         const currentBalance = data.data.balance || "0";
 
         // Check if balance changed
+        // Only trigger notifications for significant changes (not tiny fluctuations)
+        // This prevents spam from minor balance adjustments or rounding differences
         if (lastBalance !== null && lastBalance !== currentBalance) {
           const oldBalanceNum = parseFloat(lastBalance);
           const newBalanceNum = parseFloat(currentBalance);
           const change = (newBalanceNum - oldBalanceNum).toFixed(6);
+          const changeNum = Math.abs(parseFloat(change));
 
-          // Create notification
-          createBalanceChangeNotification(
-            lastBalance,
-            currentBalance,
-            change
-          );
+          // Only trigger notification if change is significant (>= 0.000001 USDC)
+          // This filters out tiny rounding differences and only shows real transactions
+          if (changeNum >= 0.000001) {
+            // Create notification
+            createBalanceChangeNotification(
+              lastBalance,
+              currentBalance,
+              change
+            );
 
-          // Call callback if provided
-          if (onBalanceChange) {
-            onBalanceChange(lastBalance, currentBalance, change);
+            // Call callback if provided
+            if (onBalanceChange) {
+              onBalanceChange(lastBalance, currentBalance, change);
+            }
           }
         }
 

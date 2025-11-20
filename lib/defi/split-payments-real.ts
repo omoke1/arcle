@@ -3,7 +3,7 @@
  * Built on top of Circle's native batch operation support
  */
 
-import { executeBatchTransfers, validateBatchTransfers, type BatchTransfer } from "./batch-transactions-real";
+import { executeBatchTransfers, validateBatchTransfers, type BatchTransfer } from "../archived/legacy-dev-controlled/batch-transactions-real";
 
 export interface SplitPaymentRecipient {
   address: string;

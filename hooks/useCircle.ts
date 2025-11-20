@@ -4,6 +4,7 @@
 
 import { useState, useCallback } from "react";
 import type { Wallet, Transaction } from "@/types";
+import { refreshUserToken } from "@/lib/circle/token-refresh";
 
 interface BridgeRequest {
   walletId: string;
@@ -24,15 +25,31 @@ interface BridgeStatus {
   error?: string;
 }
 
+type CreateWalletResult = 
+  | { type: "challenge"; challengeId: string; userId: string; userToken: string; blockchains: string[] }
+  | { type: "wallet"; wallet: Wallet }
+  | null;
+
+type SendTransactionResult =
+  | { type: "challenge"; challengeId: string; walletId: string; destinationAddress: string; amount: string }
+  | { type: "transaction"; transaction: Transaction }
+  | null;
+
 interface UseCircleReturn {
-      createWallet: (forceNew?: boolean) => Promise<Wallet | null>;
-      getBalance: (walletId: string, address?: string) => Promise<string | null>;
+      createUser: () => Promise<{ userId: string; userToken: string; encryptionKey?: string } | null>;
+      createWallet: (forceNew?: boolean, userToken?: string, userId?: string) => Promise<CreateWalletResult>;
+      listWallets: (userId: string, userToken: string) => Promise<Wallet[] | null>;
+      createUserWithEmail: (email: string, deviceId?: string) => Promise<{ deviceId: string; deviceToken: string; deviceEncryptionKey: string; otpToken: string; email: string } | null>;
+      resendEmailOTP: (userId: string, userToken: string, email: string, deviceToken: string, otpToken: string) => Promise<boolean>;
+      getBalance: (walletId: string, address?: string, userId?: string, userToken?: string) => Promise<string | null>;
       sendTransaction: (
         walletId: string,
         to: string,
         amount: string,
-        walletAddress?: string
-      ) => Promise<Transaction | null>;
+        walletAddress?: string,
+        userId?: string,
+        userToken?: string
+      ) => Promise<SendTransactionResult>;
       bridgeTransaction: (request: BridgeRequest) => Promise<BridgeStatus | null>;
       getBridgeStatus: (bridgeId: string) => Promise<BridgeStatus | null>;
       getTransactionStatus: (transactionId: string) => Promise<Transaction | null>;
@@ -45,19 +62,99 @@ export function useCircle(): UseCircleReturn {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const createWallet = useCallback(async (forceNew: boolean = false): Promise<Wallet | null> => {
+  const createUser = useCallback(async (): Promise<{ userId: string; userToken: string; encryptionKey?: string } | null> => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/circle/wallets", {
+      // Check if user already exists in localStorage
+      if (typeof window !== 'undefined') {
+        const storedUserId = localStorage.getItem('arcle_user_id');
+        const storedUserToken = localStorage.getItem('arcle_user_token');
+        const storedEncryptionKey = localStorage.getItem('arcle_encryption_key');
+        
+        if (storedUserId && storedUserToken) {
+          console.log("Using existing user from localStorage");
+          return { 
+            userId: storedUserId, 
+            userToken: storedUserToken,
+            ...(storedEncryptionKey && { encryptionKey: storedEncryptionKey })
+          };
+        }
+      }
+
+      // Create new user
+      const response = await fetch("/api/circle/users", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          idempotencyKey: crypto.randomUUID(), // Always unique to create new wallet
-          forceNew: forceNew, // Force new wallet set for unique wallet
+          // Optional: provide userId or let Circle generate
         }),
+      });
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || "Failed to create user");
+      }
+
+      const userData = {
+        userId: data.data.userId,
+        userToken: data.data.userToken,
+        ...(data.data.encryptionKey && { encryptionKey: data.data.encryptionKey }),
+        ...(data.data.refreshToken && { refreshToken: data.data.refreshToken }),
+      };
+
+      // Store user in localStorage
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('arcle_user_id', userData.userId);
+        localStorage.setItem('arcle_user_token', userData.userToken);
+        if (userData.encryptionKey) {
+          localStorage.setItem('arcle_encryption_key', userData.encryptionKey);
+        }
+        if (userData.refreshToken) {
+          localStorage.setItem('arcle_refresh_token', userData.refreshToken);
+        }
+        // Generate and store deviceId for token refresh
+        const deviceId = localStorage.getItem('arcle_device_id') || `device-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+        localStorage.setItem('arcle_device_id', deviceId);
+      }
+
+      return userData;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+      setError(errorMessage);
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const createWallet = useCallback(async (forceNew: boolean = false, userToken?: string, userId?: string): Promise<CreateWalletResult> => {
+    setLoading(true);
+    setError(null);
+    try {
+      // For User-Controlled Wallets, return challenge data
+      const useUserControlled = !!userToken && !!userId;
+      
+      const requestBody: any = {
+        idempotencyKey: crypto.randomUUID(),
+        forceNew: forceNew,
+      };
+
+      if (useUserControlled) {
+        requestBody.userToken = userToken;
+        requestBody.userId = userId;
+        requestBody.useUserControlled = true;
+      }
+
+      const response = await fetch("/api/circle/wallets", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
       });
 
       const data = await response.json();
@@ -66,9 +163,40 @@ export function useCircle(): UseCircleReturn {
         throw new Error(data.error || "Failed to create wallet");
       }
 
+      // User-Controlled Wallets return challenge data
+      // Challenge must be completed client-side with PIN widget
+      if (data.data.challengeId) {
+        return {
+          type: "challenge",
+          challengeId: data.data.challengeId,
+          userId: data.data.userId,
+          userToken: data.data.userToken,
+          blockchains: data.data.blockchains,
+        };
+      }
+
+      // User-Controlled Wallets: Direct wallet creation (when user already has PIN)
+      if (data.data.wallet) {
+        const wallet: Wallet = {
+          id: data.data.wallet.id,
+          address: data.data.wallet.address,
+          network: "arc" as const,
+          createdAt: new Date(),
+        };
+
+        // Store wallet in localStorage for persistence
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('arcle_wallet_id', wallet.id);
+          localStorage.setItem('arcle_wallet_address', wallet.address);
+        }
+
+        return { type: "wallet", wallet };
+      }
+
+      // Legacy: Direct wallet creation (Developer-Controlled)
       const wallet: Wallet = {
         id: data.data.walletId,
-        address: data.data.address || data.data.walletId, // Use actual address from API
+        address: data.data.address || data.data.walletId,
         network: "arc" as const,
         createdAt: new Date(),
       };
@@ -79,7 +207,7 @@ export function useCircle(): UseCircleReturn {
         localStorage.setItem('arcle_wallet_address', wallet.address);
       }
 
-      return wallet;
+      return { type: "wallet", wallet };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Unknown error";
       setError(errorMessage);
@@ -90,18 +218,67 @@ export function useCircle(): UseCircleReturn {
   }, []);
 
   const getBalance = useCallback(
-    async (walletId: string, address?: string): Promise<string | null> => {
+    async (walletId: string, address?: string, userId?: string, userToken?: string): Promise<string | null> => {
       setLoading(true);
       setError(null);
       try {
-        // Try Circle API first, fallback to blockchain query
-        const url = address
-          ? `/api/circle/balance?address=${address}&useBlockchain=true`
-          : `/api/circle/balance?walletId=${walletId}`;
+        // Get user credentials from localStorage if not provided (for user-controlled wallets)
+        let finalUserId = userId;
+        let finalUserToken = userToken;
+        
+        if (typeof window !== 'undefined' && (!finalUserId || !finalUserToken)) {
+          finalUserId = finalUserId || localStorage.getItem('arcle_user_id') || undefined;
+          finalUserToken = finalUserToken || localStorage.getItem('arcle_user_token') || undefined;
+        }
 
-        const response = await fetch(url);
+        // Build URL with optional user credentials for user-controlled wallets
+        const params = new URLSearchParams();
+        if (address) {
+          params.append('address', address);
+          params.append('useBlockchain', 'true');
+        } else {
+          params.append('walletId', walletId);
+        }
+        
+        // Add user credentials if available (for user-controlled wallets)
+        if (finalUserId) params.append('userId', finalUserId);
+        if (finalUserToken) params.append('userToken', finalUserToken);
 
-        const data = await response.json();
+        const url = `/api/circle/balance?${params.toString()}`;
+
+        let response = await fetch(url);
+        let data = await response.json();
+
+        // Check for token expiration and auto-refresh
+        const isTokenExpired = response.status === 403 && (
+          data?.errorCode === 'TOKEN_EXPIRED' ||
+          data?.code === 155104 ||
+          data?.error?.includes('expired') ||
+          data?.message?.includes('expired')
+        );
+
+        if (isTokenExpired) {
+          console.log("[useCircle] 🔄 Token expired in getBalance, attempting automatic refresh...");
+          const newToken = await refreshUserToken();
+          
+          if (newToken) {
+            console.log("[useCircle] ✅ Token refreshed, retrying getBalance...");
+            // Retry with new token
+            const retryParams = new URLSearchParams();
+            if (address) {
+              retryParams.append('address', address);
+              retryParams.append('useBlockchain', 'true');
+            } else {
+              retryParams.append('walletId', walletId);
+            }
+            if (finalUserId) retryParams.append('userId', finalUserId);
+            if (newToken.userToken) retryParams.append('userToken', newToken.userToken);
+            
+            const retryUrl = `/api/circle/balance?${retryParams.toString()}`;
+            response = await fetch(retryUrl);
+            data = await response.json();
+          }
+        }
 
         if (!data.success) {
           throw new Error(data.error || "Failed to get balance");
@@ -125,11 +302,26 @@ export function useCircle(): UseCircleReturn {
       walletId: string,
       to: string,
       amount: string,
-      walletAddress?: string // CRITICAL: Pass wallet address for SDK transaction creation
-    ): Promise<Transaction | null> => {
+      walletAddress?: string,
+      userId?: string,
+      userToken?: string
+    ): Promise<SendTransactionResult> => {
       setLoading(true);
       setError(null);
       try {
+        // Get user token from localStorage if not provided
+        let finalUserId = userId;
+        let finalUserToken = userToken;
+        
+        if (typeof window !== 'undefined' && (!finalUserId || !finalUserToken)) {
+          finalUserId = finalUserId || localStorage.getItem('arcle_user_id') || undefined;
+          finalUserToken = finalUserToken || localStorage.getItem('arcle_user_token') || undefined;
+        }
+
+        if (!finalUserId || !finalUserToken) {
+          throw new Error("User authentication required. Please create a user first.");
+        }
+
         const response = await fetch("/api/circle/transactions", {
           method: "POST",
           headers: {
@@ -137,32 +329,188 @@ export function useCircle(): UseCircleReturn {
           },
           body: JSON.stringify({
             walletId,
-            walletAddress, // CRITICAL: Include wallet address to avoid SDK public key fetch
+            walletAddress,
             destinationAddress: to,
             amount,
-            idempotencyKey: crypto.randomUUID(),
+            userId: finalUserId,
+            userToken: finalUserToken,
+            idempotencyKey: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`,
           }),
         });
+        
+        // Log response for debugging
+        console.log("[useCircle] Transaction API response status:", response.status);
+        const data = await response.json().catch((parseError) => {
+          console.error("[useCircle] Failed to parse response JSON:", parseError);
+          return null;
+        });
+        console.log("[useCircle] Transaction API response data:", data);
+        console.log("[useCircle] Checking for challengeId - data.data?.challengeId:", data?.data?.challengeId);
+        console.log("[useCircle] Checking for challengeId - data.data?.requiresChallenge:", data?.data?.requiresChallenge);
 
-        const data = await response.json();
+        if (!response.ok) {
+          // Check for token expiration (403 with specific error codes)
+          const isTokenExpired = response.status === 403 && (
+            data?.errorCode === 'TOKEN_EXPIRED' ||
+            data?.code === 155104 ||
+            data?.error?.includes('expired') ||
+            data?.message?.includes('expired')
+          );
 
-        if (!data.success) {
-          // Include error details in the error message for better debugging
-          const errorMsg = data.error || "Failed to send transaction";
-          const detailsMsg = data.details ? ` Details: ${JSON.stringify(data.details)}` : "";
+          if (isTokenExpired) {
+            console.log("[useCircle] 🔄 Token expired, attempting automatic refresh...");
+            const newToken = await refreshUserToken();
+            
+            if (newToken) {
+              console.log("[useCircle] ✅ Token refreshed, retrying transaction...");
+              // Retry the request with new token
+              const retryResponse = await fetch("/api/circle/transactions", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  walletId,
+                  walletAddress,
+                  destinationAddress: to,
+                  amount,
+                  userId: finalUserId,
+                  userToken: newToken.userToken, // Use refreshed token
+                  idempotencyKey: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`,
+                }),
+              });
+              
+              const retryData = await retryResponse.json().catch(() => null);
+              
+              if (!retryResponse.ok) {
+                const errorMsg = retryData?.error || `Failed to send transaction after token refresh (HTTP ${retryResponse.status})`;
+                throw new Error(errorMsg);
+              }
+              
+              // Use retryData instead of data for the rest of the function
+              const finalData = retryData;
+              
+              // Check for challenge in retry response
+              if (finalData && (finalData.data?.challengeId || finalData.data?.requiresChallenge)) {
+                const challengeId = finalData.data.challengeId || 'unknown';
+                console.log("[useCircle] ✅✅✅ Transaction requires PIN challenge detected (after refresh)!");
+                
+                return {
+                  type: "challenge" as const,
+                  challengeId: challengeId,
+                  walletId: finalData.data.walletId || walletId,
+                  destinationAddress: finalData.data.destinationAddress || to,
+                  amount: finalData.data.amount || amount,
+                };
+              }
+              
+              // Process successful transaction from retry
+              if (!finalData?.success) {
+                const errorMsg = finalData?.error || "Failed to send transaction";
+                throw new Error(errorMsg);
+              }
+              
+              const blockchainHash = finalData.data.txHash ||
+                                    finalData.data.transactionHash ||
+                                    finalData.data.hash ||
+                                    null;
+
+              const transaction: Transaction = {
+                id: finalData.data.id || `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`,
+                hash: blockchainHash || finalData.data.id || "",
+                from: finalData.data.from || walletId,
+                to: finalData.data.to || to,
+                amount: finalData.data.amount || amount,
+                token: finalData.data.token || "USDC",
+                status: (finalData.data.status || "pending") as "pending" | "confirmed" | "failed",
+                timestamp: finalData.data.createdAt ? new Date(finalData.data.createdAt) : new Date(),
+              };
+
+              return {
+                type: "transaction" as const,
+                transaction,
+              };
+            } else {
+              // Token refresh failed - clear credentials
+              if (typeof window !== 'undefined') {
+                localStorage.removeItem('arcle_user_id');
+                localStorage.removeItem('arcle_user_token');
+                localStorage.removeItem('arcle_encryption_key');
+                localStorage.removeItem('arcle_refresh_token');
+              }
+              setError("Session expired and token refresh failed. Please re-create your user and PIN.");
+              throw new Error("SESSION_EXPIRED: Token expired and refresh failed. Please set up your wallet PIN again.");
+            }
+          }
+          
+          if (response.status === 401 || response.status === 403) {
+            // Other auth errors - clear cached credentials
+            if (typeof window !== 'undefined') {
+              localStorage.removeItem('arcle_user_id');
+              localStorage.removeItem('arcle_user_token');
+              localStorage.removeItem('arcle_encryption_key');
+              localStorage.removeItem('arcle_refresh_token');
+            }
+            setError("Session expired. Please re-create your user and PIN.");
+            throw new Error("SESSION_EXPIRED: Circle user session expired. Please set up your wallet PIN again.");
+          }
+
+          const errorMsg = data?.error || `Failed to send transaction (HTTP ${response.status})`;
+          const detailsMsg = data?.details ? ` Details: ${JSON.stringify(data.details)}` : "";
+          throw new Error(`${errorMsg}${detailsMsg}`);
+        }
+
+        // Check if transaction requires challenge (PIN confirmation) FIRST
+        // For user-controlled wallets, transactions require PIN approval
+        // The API returns success: true with challengeId when challenge is required
+        // IMPORTANT: Check this BEFORE checking !data?.success
+        if (data && (data.data?.challengeId || data.data?.requiresChallenge)) {
+          // Return challenge information - client needs to complete challenge using Web SDK
+          // This is expected behavior for user-controlled wallets
+          const challengeId = data.data.challengeId || 'unknown';
+          console.log("[useCircle] ✅✅✅ Transaction requires PIN challenge detected!");
+          console.log("[useCircle] ChallengeId:", challengeId);
+          console.log("[useCircle] Full challenge response:", JSON.stringify(data, null, 2));
+          
+          // Return challenge result instead of throwing error
+          return {
+            type: "challenge" as const,
+            challengeId: challengeId,
+            walletId: data.data.walletId || walletId,
+            destinationAddress: data.data.destinationAddress || to,
+            amount: data.data.amount || amount,
+          };
+        }
+        
+        console.log("[useCircle] No challengeId found in response, proceeding with normal transaction flow");
+
+        if (!data?.success) {
+          const errorMsg = data?.error || "Failed to send transaction";
+          const detailsMsg = data?.details ? ` Details: ${JSON.stringify(data.details)}` : "";
           throw new Error(`${errorMsg}${detailsMsg}`);
         }
 
         // Map Circle API response to Transaction type
-        return {
-          id: data.data.id || crypto.randomUUID(),
-          hash: data.data.hash || data.data.id || "",
+        // Extract blockchain hash from multiple possible fields
+        const blockchainHash = data.data.txHash || 
+                              data.data.transactionHash || 
+                              data.data.hash || 
+                              null;
+        
+        const transaction: Transaction = {
+          id: data.data.id || `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`,
+          hash: blockchainHash || data.data.id || "", // Use blockchain hash if available, otherwise transaction ID
           from: data.data.from || walletId,
           to: data.data.to || to,
           amount: data.data.amount || amount,
           token: data.data.token || "USDC",
           status: (data.data.status || "pending") as "pending" | "confirmed" | "failed",
           timestamp: data.data.createdAt ? new Date(data.data.createdAt) : new Date(),
+        };
+        
+        return {
+          type: "transaction" as const,
+          transaction,
         };
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : "Unknown error";
@@ -180,9 +528,21 @@ export function useCircle(): UseCircleReturn {
       setLoading(true);
       setError(null);
       try {
-        const response = await fetch(
-          `/api/circle/transactions?transactionId=${transactionId}`
-        );
+        let finalUserId: string | undefined;
+        let finalUserToken: string | undefined;
+
+        if (typeof window !== "undefined") {
+          finalUserId = localStorage.getItem("arcle_user_id") || undefined;
+          finalUserToken = localStorage.getItem("arcle_user_token") || undefined;
+        }
+
+        const queryParams = new URLSearchParams({ transactionId });
+        if (finalUserId && finalUserToken) {
+          queryParams.append("userId", finalUserId);
+          queryParams.append("userToken", finalUserToken);
+        }
+
+        const response = await fetch(`/api/circle/transactions?${queryParams.toString()}`);
 
         const data = await response.json();
 
@@ -264,6 +624,12 @@ export function useCircle(): UseCircleReturn {
             const data = await response.json();
 
             if (!data.success) {
+              // Handle rate limit specifically
+              if (response.status === 429 || data.error?.includes("rate limit")) {
+                const errorMsg = "⏳ Rate limit exceeded. Circle's faucet has a cooldown period. Please wait 5-10 minutes before requesting again, or use the manual faucet at https://faucet.circle.com";
+                setError(errorMsg);
+                throw new Error(errorMsg);
+              }
               throw new Error(data.error || "Failed to request testnet tokens");
             }
 
@@ -353,8 +719,108 @@ export function useCircle(): UseCircleReturn {
         []
       );
 
+      const listWallets = useCallback(async (userId: string, userToken: string): Promise<Wallet[] | null> => {
+        setLoading(true);
+        setError(null);
+        try {
+          const response = await fetch(`/api/circle/wallets?userId=${userId}&userToken=${encodeURIComponent(userToken)}`);
+          const data = await response.json();
+
+          if (!data.success) {
+            throw new Error(data.error || "Failed to list wallets");
+          }
+
+          const wallets = data.data.wallets || [];
+          return wallets.map((w: any) => ({
+            id: w.id,
+            address: w.address,
+            network: "arc" as const,
+            createdAt: new Date(w.createDate),
+          }));
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : "Unknown error";
+          setError(errorMessage);
+          return null;
+        } finally {
+          setLoading(false);
+        }
+      }, []);
+
+      const createUserWithEmail = useCallback(async (email: string, deviceId?: string): Promise<{
+        deviceId: string;
+        deviceToken: string;
+        deviceEncryptionKey: string;
+        otpToken: string;
+        email: string;
+      } | null> => {
+        setLoading(true);
+        setError(null);
+        try {
+          const response = await fetch("/api/circle/users", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ 
+              action: "email-login",
+              email, 
+              deviceId 
+            }),
+          });
+
+          const data = await response.json();
+
+          if (!data.success) {
+            throw new Error(data.error || "Failed to send OTP email");
+          }
+
+          return data.data;
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : "Unknown error";
+          setError(errorMessage);
+          return null;
+        } finally {
+          setLoading(false);
+        }
+      }, []);
+
+      const resendEmailOTP = useCallback(async (email: string, deviceId: string, otpToken: string, userToken?: string): Promise<boolean> => {
+        setLoading(true);
+        setError(null);
+        try {
+          const response = await fetch("/api/circle/users", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ 
+              action: "resend-otp",
+              deviceToken: otpToken 
+            }),
+          });
+
+          const data = await response.json();
+
+          if (!data.success) {
+            throw new Error(data.error || "Failed to resend OTP");
+          }
+
+          return true;
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : "Unknown error";
+          setError(errorMessage);
+          return false;
+        } finally {
+          setLoading(false);
+        }
+      }, []);
+
       return {
-        createWallet,
+        createUser,
+      createWallet,
+        listWallets,
+        createUserWithEmail,
+        resendEmailOTP,
         getBalance,
         sendTransaction,
         bridgeTransaction,
