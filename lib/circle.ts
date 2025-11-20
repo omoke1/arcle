@@ -19,7 +19,8 @@ export const circleConfig = {
   // Note: NEXT_PUBLIC_ vars are exposed to client, but we need server-side access
   // For server-side API routes, we can use either NEXT_PUBLIC_ or without it
   apiKey: process.env.CIRCLE_API_KEY || process.env.NEXT_PUBLIC_CIRCLE_API_KEY || "",
-  entitySecret: process.env.CIRCLE_ENTITY_SECRET || "",
+  // Entity Secret is NOT used for User-Controlled Wallets - only App ID is required
+  // Removed entitySecret from config since we're using User-Controlled Wallets only
   environment: process.env.NEXT_PUBLIC_ENV || process.env.CIRCLE_ENV || "sandbox",
   // Always use production URL (api.circle.com) - same as SDK
   // The environment (testnet vs mainnet) is determined by the API key, not the base URL
@@ -188,14 +189,15 @@ export async function circleApiRequest<T>(
 
 /**
  * Initialize Circle client
+ * User-Controlled Wallets only - requires App ID, not Entity Secret
  */
 export async function initializeCircleClient() {
   if (!circleConfig.apiKey) {
-    throw new Error("Circle API key is required");
+    throw new Error("Circle API key is required. Set CIRCLE_API_KEY or NEXT_PUBLIC_CIRCLE_API_KEY in .env");
   }
   
-  if (!circleConfig.appId && !circleConfig.entitySecret) {
-    throw new Error("Either Circle App ID (for user wallets) or Entity Secret (for developer wallets) is required");
+  if (!circleConfig.appId) {
+    throw new Error("Circle App ID is required for User-Controlled Wallets. Set NEXT_PUBLIC_CIRCLE_APP_ID in .env");
   }
 
   return {

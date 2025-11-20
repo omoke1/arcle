@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
     console.log("API Key found:", circleConfig.apiKey ? "Yes" : "No");
     console.log("Environment:", circleConfig.environment || "sandbox");
     console.log("App ID:", circleConfig.appId || "Not set");
-    console.log("Entity Secret:", circleConfig.entitySecret ? "Set" : "Not set");
+    console.log("Wallet Type: User-Controlled (requires App ID, not Entity Secret)");
 
     const body: CreateWalletRequest = await request.json();
     console.log("Request body:", body);

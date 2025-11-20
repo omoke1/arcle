@@ -64,7 +64,10 @@ export function getCircleClient() {
   }
 
   const apiKey = circleConfig.apiKey;
-  const entitySecret = circleConfig.entitySecret;
+  // NOTE: This is archived/legacy code for Developer-Controlled Wallets
+  // We now use User-Controlled Wallets only (see lib/circle-user-sdk.ts)
+  // Read entitySecret directly from env since it's removed from circleConfig
+  const entitySecret = process.env.CIRCLE_ENTITY_SECRET || "";
 
   if (!apiKey) {
     throw new Error("Circle API key not configured. Set CIRCLE_API_KEY or NEXT_PUBLIC_CIRCLE_API_KEY in .env");
