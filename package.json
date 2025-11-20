@@ -31,14 +31,15 @@
     "check:env": "tsx scripts/check-env.ts"
   },
   "dependencies": {
-    "@circle-fin/bridge-kit": "^1.1.2",
-    "@circle-fin/adapter-viem-v2": "^1.1.1",
     "@circle-fin/adapter-ethers-v6": "^1.1.1",
     "@circle-fin/adapter-solana": "^1.1.2",
-    "@circle-fin/provider-cctp-v2": "^1.0.4",
+    "@circle-fin/adapter-viem-v2": "^1.1.1",
+    "@circle-fin/bridge-kit": "^1.1.2",
     "@circle-fin/developer-controlled-wallets": "^9.2.1",
+    "@circle-fin/provider-cctp-v2": "^1.0.4",
     "@circle-fin/user-controlled-wallets": "^9.2.0",
     "@circle-fin/w3s-pw-web-sdk": "^1.1.11",
+    "@vercel/kv": "^3.0.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "dotenv": "^17.2.3",
