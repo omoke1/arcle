@@ -3,6 +3,9 @@
  * 
  * Handles cross-chain USDC transfers via CCTP for User-Controlled Wallets
  * 
+ * IMPORTANT: Bridge Kit does NOT support Circle Wallets (User-Controlled, Developer-Controlled, or Modular).
+ * For User-Controlled Wallets, we use Circle's Transfer API directly.
+ * 
  * Updated with Bridge Kit v1.1.2 safety improvements:
  * - Route validation before attempting transfers (prevents fund loss)
  * - Clearer error messages with supported chains
@@ -15,7 +18,11 @@
  * 
  * Reference: 
  * - https://developers.circle.com/cctp
- * - https://developers.circle.com/bridge-kit (Bridge Kit SDK)
+ * - https://developers.circle.com/bridge-kit (Bridge Kit SDK - for self-custody wallets only)
+ * - https://developers.circle.com/bridge-kit/tutorials/installation
+ * 
+ * Note: Bridge Kit is only for self-custody wallets (MetaMask, Phantom) or developer-controlled wallets.
+ * For user-controlled wallets, Circle's Transfer API is used instead.
  */
 
 import { NextRequest, NextResponse } from "next/server";

@@ -1,6 +1,14 @@
 /**
  * Bridge Kit Implementation for User-Controlled Wallets
  * 
+ * IMPORTANT: Bridge Kit does NOT support Circle Wallets (User-Controlled, Developer-Controlled, or Modular).
+ * This file provides route validation and utilities, but actual bridging for user-controlled wallets
+ * must use Circle's Transfer API directly (see /api/circle/bridge route).
+ * 
+ * Bridge Kit is only for:
+ * - Self-custody wallets (MetaMask, Phantom, etc.)
+ * - Developer-controlled wallets (using @circle-fin/adapter-circle-wallets - server-side only)
+ * 
  * Updated with latest Circle Bridge Kit v1.1.2 improvements:
  * - Prevents fund loss on unsupported routes (fails safely before burn)
  * - Clearer error messages with supported chains list
@@ -8,7 +16,9 @@
  * - Unified error taxonomy (codes, types, recoverability)
  * - Better Solana recipient handling
  * 
- * Reference: https://developers.circle.com/bridge-kit
+ * Reference: 
+ * - https://developers.circle.com/bridge-kit
+ * - https://developers.circle.com/bridge-kit/tutorials/installation
  * 
  * Latest Updates (2025-01-XX):
  * - @circle-fin/bridge-kit v1.1.2: Safety improvements, prevents burns on unsupported routes
@@ -16,12 +26,15 @@
  * - @circle-fin/adapter-viem-v2 v1.1.1: Updated adapter
  * - @circle-fin/adapter-ethers-v6 v1.1.1: Updated adapter
  * - @circle-fin/adapter-solana v1.1.2: Production-ready Solana support
+ * - @circle-fin/adapter-circle-wallets v1.0.0: For developer-controlled wallets (server-side only)
  */
 
 import { BridgeKit } from '@circle-fin/bridge-kit';
 import { createAdapterFromPrivateKey as createViemAdapter } from '@circle-fin/adapter-viem-v2';
 import { createAdapterFromPrivateKey as createEthersAdapter } from '@circle-fin/adapter-ethers-v6';
 import { createAdapterFromPrivateKey as createSolanaAdapter } from '@circle-fin/adapter-solana';
+// Note: @circle-fin/adapter-circle-wallets is for developer-controlled wallets only (server-side)
+// It requires Entity Secret and cannot be used with user-controlled wallets
 import { circleConfig } from '@/lib/circle';
 
 /**
