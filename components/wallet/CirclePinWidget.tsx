@@ -108,10 +108,23 @@ export function CirclePinWidget({
             
             // Handle specific errors
             if (executionError.code === 155114 || executionError.message?.includes("app ID is not recognized")) {
-              setError(
-                "App ID configuration error. Please check your Circle App ID in the environment variables. " +
-                "Run 'npx tsx scripts/get-circle-app-id.ts' to get the correct App ID."
-              );
+              const errorMsg = `App ID Configuration Error (Code: ${executionError.code})
+
+Your Circle App ID doesn't match your API key. This usually happens when:
+• The App ID in Vercel environment variables is incorrect
+• The App ID is for a different environment (testnet vs production)
+• The App ID doesn't match the API key's entity
+
+To fix:
+1. Run locally: npx tsx scripts/get-circle-app-id.ts
+2. Copy the App ID it shows
+3. Update Vercel environment variable: NEXT_PUBLIC_CIRCLE_APP_ID
+4. Redeploy your application
+
+Or get it from Circle Console:
+→ https://console.circle.com
+→ Wallets > User Controlled > Configurator`;
+              setError(errorMsg);
             } else if ((executionError as any).code === 155118 || executionError.message?.includes("Invalid encryption key")) {
               setError(
                 "Encryption key error. This usually means the encryption key doesn't match your user token. " +

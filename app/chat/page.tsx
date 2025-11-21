@@ -2097,13 +2097,18 @@ If the issue persists, you may need to clear your browser's localStorage and sta
     } else if (error.code === 155114 || error.message?.includes("app ID is not recognized")) {
       errorMessage = `⚠️ Configuration Issue: Your Circle App ID is not recognized.
 
-This usually means the App ID in your environment variables doesn't match your API key.
+Your Circle App ID doesn't match your API key. This usually happens when:
+• The App ID in Vercel environment variables is incorrect
+• The App ID is for a different environment (testnet vs production)
+• The App ID doesn't match the API key's entity
 
-**To fix this:**
-1. Run: \`npx tsx scripts/get-circle-app-id.ts\`
-2. Copy the App ID it shows
-3. Update \`.env.local\` with: \`NEXT_PUBLIC_CIRCLE_APP_ID=<the-app-id>\`
-4. Restart your dev server
+**To fix on Vercel:**
+
+1. Run locally: \`npx tsx scripts/get-circle-app-id.ts\`
+2. Copy the App ID it shows (should be: e87fb722b2172458c441ac2777815d84)
+3. Go to Vercel Dashboard → Your Project → Settings → Environment Variables
+4. Update \`NEXT_PUBLIC_CIRCLE_APP_ID\` with the correct value
+5. Redeploy your application
 
 Or get it from Circle Console:
 → https://console.circle.com
