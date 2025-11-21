@@ -342,7 +342,20 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
                 amount: txAmount,
                 token: txToken,
                 status: txStatus,
-                timestamp: new Date(actualTx.createDate || actualTx.createdAt || tx.createdAt || Date.now()),
+                // Parse timestamp - prefer API value, but ensure it's a valid date
+                // Use a consistent fallback to prevent timestamp changes on refresh
+                timestamp: (() => {
+                  const dateStr = actualTx.createDate || actualTx.createdAt || tx.createdAt;
+                  if (dateStr) {
+                    const parsed = new Date(dateStr);
+                    // Only use parsed date if it's valid
+                    if (!isNaN(parsed.getTime())) {
+                      return parsed;
+                    }
+                  }
+                  // Fallback: use current time only for new transactions (shouldn't happen often)
+                  return new Date();
+                })(),
                 isIncoming, // Add flag to track direction
               };
             });
@@ -380,22 +393,35 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
             
             // Silently update transactions - React will handle the diff and only update what changed
             setTransactions(prevTransactions => {
+              // Preserve timestamps from existing transactions to prevent timestamp changes on refresh
+              const transactionsWithPreservedTimestamps = finalTransactions.map(newTx => {
+                const prevTx = prevTransactions.find(tx => tx.id === newTx.id);
+                if (prevTx) {
+                  // Preserve the original timestamp from the existing transaction
+                  return {
+                    ...newTx,
+                    timestamp: prevTx.timestamp,
+                  };
+                }
+                return newTx;
+              });
+              
               // Only update if there are actual changes to avoid unnecessary re-renders
               const prevIds = new Set(prevTransactions.map(tx => tx.id));
-              const newIds = new Set(finalTransactions.map(tx => tx.id));
+              const newIds = new Set(transactionsWithPreservedTimestamps.map(tx => tx.id));
               const idsChanged = prevIds.size !== newIds.size || 
                                 !Array.from(prevIds).every(id => newIds.has(id));
               
-              // Check if any transaction data changed
-              const dataChanged = idsChanged || finalTransactions.some(newTx => {
+              // Check if any transaction data changed (excluding timestamp)
+              const dataChanged = idsChanged || transactionsWithPreservedTimestamps.some(newTx => {
                 const prevTx = prevTransactions.find(tx => tx.id === newTx.id);
                 if (!prevTx) return true; // New transaction
-                // Check if status or hash changed
+                // Check if status or hash changed (timestamp is already preserved above)
                 return prevTx.status !== newTx.status || prevTx.hash !== newTx.hash;
               });
               
               // Only update if there are actual changes
-              return dataChanged ? finalTransactions : prevTransactions;
+              return dataChanged ? transactionsWithPreservedTimestamps : prevTransactions;
             });
           } else {
             // Sort by timestamp (newest first)
@@ -403,18 +429,32 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
             
             // Silently update transactions - only if there are changes
             setTransactions(prevTransactions => {
+              // Preserve timestamps from existing transactions to prevent timestamp changes on refresh
+              const transactionsWithPreservedTimestamps = deduplicated.map(newTx => {
+                const prevTx = prevTransactions.find(tx => tx.id === newTx.id);
+                if (prevTx) {
+                  // Preserve the original timestamp from the existing transaction
+                  return {
+                    ...newTx,
+                    timestamp: prevTx.timestamp,
+                  };
+                }
+                return newTx;
+              });
+              
               const prevIds = new Set(prevTransactions.map(tx => tx.id));
-              const newIds = new Set(deduplicated.map(tx => tx.id));
+              const newIds = new Set(transactionsWithPreservedTimestamps.map(tx => tx.id));
               const idsChanged = prevIds.size !== newIds.size || 
                                 !Array.from(prevIds).every(id => newIds.has(id));
               
-              const dataChanged = idsChanged || deduplicated.some(newTx => {
+              const dataChanged = idsChanged || transactionsWithPreservedTimestamps.some(newTx => {
                 const prevTx = prevTransactions.find(tx => tx.id === newTx.id);
                 if (!prevTx) return true;
+                // Check if status or hash changed (timestamp is already preserved above)
                 return prevTx.status !== newTx.status || prevTx.hash !== newTx.hash;
               });
               
-              return dataChanged ? deduplicated : prevTransactions;
+              return dataChanged ? transactionsWithPreservedTimestamps : prevTransactions;
             });
           }
         } else {
