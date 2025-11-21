@@ -62,7 +62,7 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
   }, [userIdProp, userTokenProp]);
 
   useEffect(() => {
-    const fetchTransactions = async (forceFresh = false) => {
+    const fetchTransactions = async (forceFresh = false, isBackgroundRefresh = false) => {
       if (!walletId) {
         setTransactions([]);
         return;
@@ -79,8 +79,14 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
         return;
       }
       
-      setIsLoading(true);
-      setError(null);
+      // Only show loading state for initial load or user-initiated refreshes, not background polling
+      if (!isBackgroundRefresh) {
+        setIsLoading(true);
+      }
+      // Don't clear error on background refresh to avoid flickering
+      if (!isBackgroundRefresh) {
+        setError(null);
+      }
       
       try {
         // Add cache-busting parameter to force fresh data when needed
@@ -366,29 +372,76 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
             const finalTransactions = Array.from(finalUnique.values());
             // Sort by timestamp (newest first)
             finalTransactions.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-            console.log(`[TransactionHistory] 💾 Final deduplicated result: ${finalTransactions.length} unique transactions`);
-            setTransactions(finalTransactions);
+            
+            // Only log in development to avoid console noise
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`[TransactionHistory] 💾 Final deduplicated result: ${finalTransactions.length} unique transactions`);
+            }
+            
+            // Silently update transactions - React will handle the diff and only update what changed
+            setTransactions(prevTransactions => {
+              // Only update if there are actual changes to avoid unnecessary re-renders
+              const prevIds = new Set(prevTransactions.map(tx => tx.id));
+              const newIds = new Set(finalTransactions.map(tx => tx.id));
+              const idsChanged = prevIds.size !== newIds.size || 
+                                !Array.from(prevIds).every(id => newIds.has(id));
+              
+              // Check if any transaction data changed
+              const dataChanged = idsChanged || finalTransactions.some(newTx => {
+                const prevTx = prevTransactions.find(tx => tx.id === newTx.id);
+                if (!prevTx) return true; // New transaction
+                // Check if status or hash changed
+                return prevTx.status !== newTx.status || prevTx.hash !== newTx.hash;
+              });
+              
+              // Only update if there are actual changes
+              return dataChanged ? finalTransactions : prevTransactions;
+            });
           } else {
             // Sort by timestamp (newest first)
             deduplicated.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-            setTransactions(deduplicated);
+            
+            // Silently update transactions - only if there are changes
+            setTransactions(prevTransactions => {
+              const prevIds = new Set(prevTransactions.map(tx => tx.id));
+              const newIds = new Set(deduplicated.map(tx => tx.id));
+              const idsChanged = prevIds.size !== newIds.size || 
+                                !Array.from(prevIds).every(id => newIds.has(id));
+              
+              const dataChanged = idsChanged || deduplicated.some(newTx => {
+                const prevTx = prevTransactions.find(tx => tx.id === newTx.id);
+                if (!prevTx) return true;
+                return prevTx.status !== newTx.status || prevTx.hash !== newTx.hash;
+              });
+              
+              return dataChanged ? deduplicated : prevTransactions;
+            });
           }
         } else {
           setTransactions([]);
         }
       } catch (err: any) {
-        setError(err.message || "Failed to load transactions");
+        // Only show errors for non-background fetches to avoid error flickering
+        if (!isBackgroundRefresh) {
+          setError(err.message || "Failed to load transactions");
+        } else {
+          // Log background errors but don't show them to user
+          console.warn('[TransactionHistory] Background refresh error (silent):', err.message);
+        }
       } finally {
-        setIsLoading(false);
+        // Only clear loading state if we set it (non-background refresh)
+        if (!isBackgroundRefresh) {
+          setIsLoading(false);
+        }
       }
     };
     
-    fetchTransactions(false); // Initial fetch
+    fetchTransactions(false, false); // Initial fetch (not background)
 
     // Listen for refresh events dispatched from the chat view
     const onRefresh = () => {
-      console.log('[TransactionHistory] Refresh event received');
-      fetchTransactions(true); // Force fresh data on manual refresh
+      console.log('[TransactionHistory] Refresh event received (background)');
+      fetchTransactions(true, true); // Force fresh data, but do it silently in background
     };
     if (typeof window !== 'undefined') {
       window.addEventListener('arcle:transactions:refresh', onRefresh);
@@ -396,7 +449,7 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
     
     // Poll periodically to catch new transactions (every 15 seconds to avoid Circle rate limits)
     const pollInterval = setInterval(() => {
-      fetchTransactions(false); // Regular polling doesn't force fresh
+      fetchTransactions(false, true); // Regular polling - silent background refresh
     }, 15000);
     
     return () => {
