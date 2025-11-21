@@ -219,31 +219,57 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
                              circleState === "FAILED" || circleState === "DENIED" || circleState === "CANCELLED" ? "failed" : "pending");
               
               // Extract amount - Circle API can return amounts in decimal format OR smallest unit
-              // Check if it's already in decimal format (contains a decimal point)
+              // The amounts array from Circle API typically contains decimal strings (e.g., "1.000000")
+              // But we need to handle both formats
               const amountRaw = actualTx.amounts && actualTx.amounts.length > 0 
                 ? actualTx.amounts[0] 
                 : (actualTx.amount?.amount || actualTx.amount || "0");
               
-              // Format amount - check if it's already in decimal format or needs conversion from smallest unit
-              // Arc Testnet USDC currently uses 6 decimals (override via NEXT_PUBLIC_ARC_USDC_DECIMALS if needed)
+              // Format amount - Circle API returns amounts in decimal format in the amounts array
+              // But we need to handle edge cases where it might be in smallest unit
               let txAmount = amountRaw;
               try {
                 if (typeof amountRaw === "string" && amountRaw !== "0") {
                   // Check if amount is already in decimal format (contains a decimal point)
                   if (amountRaw.includes(".")) {
-                    // Already in decimal format - just parse and format it
+                    // Already in decimal format - parse and clean it up
                     const num = parseFloat(amountRaw);
-                    // Remove trailing zeros for cleaner display
-                    txAmount = num.toString().replace(/\.?0+$/, '');
+                    // Format to remove unnecessary trailing zeros, but keep meaningful decimals
+                    txAmount = num.toString();
+                    // If it's a whole number, show as integer; otherwise show with decimals
+                    if (num % 1 === 0) {
+                      txAmount = num.toString();
+                    } else {
+                      // Remove trailing zeros but keep at least 2 decimal places for currency
+                      txAmount = num.toFixed(6).replace(/\.?0+$/, '');
+                    }
                   } else {
-                    // Amount is in smallest unit - convert from smallest unit to decimal format
-                    const amountBigInt = BigInt(amountRaw);
-                    const divisor = 10n ** ARC_USDC_DECIMALS_BIGINT;
-                    const whole = amountBigInt / divisor;
-                    const fraction = amountBigInt % divisor;
-                    const fractionStr = fraction.toString().padStart(ARC_USDC_DECIMALS, "0");
-                    // Remove trailing zeros for cleaner display
-                    txAmount = `${whole.toString()}.${fractionStr}`.replace(/\.?0+$/, '');
+                    // No decimal point - need to determine if it's decimal or smallest unit
+                    // Circle API's amounts array typically returns decimal format, so if it's in amounts array,
+                    // it's likely already decimal. But if it's a large number, it might be smallest unit.
+                    const numValue = parseFloat(amountRaw);
+                    
+                    // If the number is very large (>= 1 million), it's almost certainly in smallest unit
+                    // For amounts < 1 million, if it's from amounts array, it's likely already decimal
+                    // But to be safe, we'll check: if dividing by 10^6 gives a reasonable USDC amount (< 1000000), 
+                    // then it's likely smallest unit
+                    const asSmallestUnit = numValue >= 1000000;
+                    
+                    if (asSmallestUnit) {
+                      // Amount is in smallest unit - convert from smallest unit to decimal format
+                      const amountBigInt = BigInt(amountRaw);
+                      const divisor = 10n ** ARC_USDC_DECIMALS_BIGINT;
+                      const whole = amountBigInt / divisor;
+                      const fraction = amountBigInt % divisor;
+                      const fractionStr = fraction.toString().padStart(ARC_USDC_DECIMALS, "0");
+                      // Remove trailing zeros for cleaner display
+                      const decimalValue = `${whole.toString()}.${fractionStr}`.replace(/\.?0+$/, '');
+                      txAmount = decimalValue;
+                    } else {
+                      // Small number without decimal point - treat as already in decimal format
+                      // (e.g., "1" means 1 USDC, not 1 smallest unit which would be 0.000001 USDC)
+                      txAmount = numValue.toString();
+                    }
                   }
                 }
               } catch (e) {
@@ -317,14 +343,35 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
           
           console.log(`[TransactionHistory] Mapped ${mappedTransactions.length} API transactions`);
           
+          // Deduplicate transactions by ID to prevent duplicates
+          const uniqueTransactions = new Map<string, Transaction>();
+          mappedTransactions.forEach(tx => {
+            if (tx.id && !uniqueTransactions.has(tx.id)) {
+              uniqueTransactions.set(tx.id, tx);
+            }
+          });
+          const deduplicated = Array.from(uniqueTransactions.values());
+          
           // Merge with cached transactions to ensure we never lose transactions
           if (typeof window !== 'undefined' && walletId) {
             const { mergeWithAPITransactions } = await import('@/lib/storage/transaction-cache');
-            const merged = mergeWithAPITransactions(walletId, mappedTransactions);
-            console.log(`[TransactionHistory] 💾 Merged result: ${merged.length} total transactions`);
-            setTransactions(merged);
+            const merged = mergeWithAPITransactions(walletId, deduplicated);
+            // Deduplicate merged results as well
+            const finalUnique = new Map<string, Transaction>();
+            merged.forEach(tx => {
+              if (tx.id && !finalUnique.has(tx.id)) {
+                finalUnique.set(tx.id, tx);
+              }
+            });
+            const finalTransactions = Array.from(finalUnique.values());
+            // Sort by timestamp (newest first)
+            finalTransactions.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+            console.log(`[TransactionHistory] 💾 Final deduplicated result: ${finalTransactions.length} unique transactions`);
+            setTransactions(finalTransactions);
           } else {
-            setTransactions(mappedTransactions);
+            // Sort by timestamp (newest first)
+            deduplicated.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+            setTransactions(deduplicated);
           }
         } else {
           setTransactions([]);

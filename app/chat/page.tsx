@@ -1789,13 +1789,19 @@ export default function ChatPage() {
         
         // After PIN confirmation, the transaction should be completed on Circle's side
         // Poll for the transaction status to confirm it went through
+        const progressMsgId = crypto.randomUUID();
         const progressMsg: ChatMessage = {
-          id: crypto.randomUUID(),
+          id: progressMsgId,
           role: "assistant",
           content: "⏳ PIN confirmed! Processing your transaction...",
           timestamp: new Date(),
         };
         setMessages((prev) => [...prev, progressMsg]);
+        
+        // Function to remove the processing message once transaction is found
+        const removeProcessingMessage = () => {
+          setMessages((prev) => prev.filter(msg => msg.id !== progressMsgId));
+        };
         
         // Poll for transaction status (transaction might be processing)
         let attempts = 0;
@@ -1837,23 +1843,41 @@ export default function ChatPage() {
               const transactions = data.data?.data || [];
               
               // Find the most recent transaction matching our criteria
+              // Check the most recent transactions first (they're usually sorted newest first)
               const matchingTx = transactions.find((tx: any) => {
                 const actualTx = tx.transaction || tx;
                 const destAddress = actualTx.destinationAddress || 
                                    actualTx.destination?.address || 
                                    actualTx.to?.address || 
                                    actualTx.to;
-                const amount = actualTx.amount?.amount || 
-                              actualTx.amounts?.[0] || 
-                              actualTx.amount;
                 
-                return destAddress?.toLowerCase() === txChallenge.destinationAddress.toLowerCase() &&
-                       (actualTx.status === "confirmed" || actualTx.status === "pending" || actualTx.state === "COMPLETED" || actualTx.state === "CONFIRMED");
+                // Match by destination address (most reliable)
+                const addressMatches = destAddress?.toLowerCase() === txChallenge.destinationAddress.toLowerCase();
+                
+                // Accept any status that indicates the transaction exists (not failed)
+                const statusMatches = actualTx.status !== "failed" && 
+                                     actualTx.state !== "FAILED" && 
+                                     actualTx.state !== "DENIED" &&
+                                     actualTx.state !== "CANCELLED";
+                
+                return addressMatches && statusMatches;
               });
               
-              if (matchingTx) {
+              // If no exact match, check for the most recent transaction (might be our transaction)
+              // This handles cases where the transaction was just created
+              const mostRecentTx = transactions.length > 0 ? (transactions[0].transaction || transactions[0]) : null;
+              const fallbackMatch = mostRecentTx && 
+                                   (mostRecentTx.status !== "failed" && mostRecentTx.state !== "FAILED") &&
+                                   (!matchingTx); // Only use fallback if no exact match found
+              
+              const txToUse = matchingTx || (fallbackMatch ? mostRecentTx : null);
+              
+              if (txToUse) {
                 transactionFound = true;
-                const actualTx = matchingTx.transaction || matchingTx;
+                const actualTx = txToUse.transaction || txToUse;
+                
+                // Remove the "Processing" message since we found the transaction
+                removeProcessingMessage();
                 
                 // Update balance immediately
                 const newBalance = await getBalance(
@@ -1875,10 +1899,6 @@ export default function ChatPage() {
                 
                 // Validate hash format (should be 0x followed by 64 hex chars)
                 const isValidHash = hash && /^0x[a-fA-F0-9]{64}$/.test(hash);
-                
-                const explorerLink = isValidHash 
-                  ? `\n\n🔗 [View on ArcScan](https://testnet.arcscan.app/tx/${hash})`
-                  : "";
                 
                 // Don't add confirmation message to chat - transaction appears in transaction history panel
                 // Just trigger refresh events
@@ -1920,14 +1940,18 @@ export default function ChatPage() {
         }
         
         if (!transactionFound) {
+          // Remove the processing message since we couldn't find the transaction
+          removeProcessingMessage();
+          
           // Transaction not found after polling - might still be processing
-          const pendingMsg: ChatMessage = {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: "⏳ Your transaction is being processed. It may take a few moments to appear. You can check your transaction history to see the status.",
-            timestamp: new Date(),
-          };
-          setMessages((prev) => [...prev, pendingMsg]);
+          // Don't add another message, just let the transaction appear in history when it's ready
+          console.log("[Transaction] Transaction not found after polling, but it may still be processing");
+          
+          // Still trigger refresh events so transaction history can pick it up when available
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
+            window.dispatchEvent(new CustomEvent('arcle:balance:refresh'));
+          }
         }
       } catch (error) {
         console.error("[Transaction] Error completing transaction after PIN confirmation:", error);
