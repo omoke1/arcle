@@ -22,6 +22,7 @@
     "test:bridge": "tsx scripts/test-bridge.ts",
     "test:bridge:validation": "tsx scripts/test-bridge-validation.ts",
     "test:bridge:comprehensive": "tsx scripts/test-bridge-comprehensive.ts",
+    "test:bridge:with-credentials": "tsx scripts/test-bridge-with-credentials.ts",
     "test:transfer:debug": "tsx scripts/test-transfer-debug.ts",
     "test:transaction:chat": "tsx scripts/test-transaction-from-chat.ts",
     "test:transaction:api": "tsx scripts/test-transaction-api-structure.ts",
