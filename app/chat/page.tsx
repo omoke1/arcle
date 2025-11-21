@@ -2105,7 +2105,7 @@ Your Circle App ID doesn't match your API key. This usually happens when:
 **To fix on Vercel:**
 
 1. Run locally: \`npx tsx scripts/get-circle-app-id.ts\`
-2. Copy the App ID it shows (should be: e87fb722b2172458c441ac2777815d84)
+2. Copy the App ID it shows (should be: 46b9a2f0-73f3-535e-8099-990bb2b543e9)
 3. Go to Vercel Dashboard → Your Project → Settings → Environment Variables
 4. Update \`NEXT_PUBLIC_CIRCLE_APP_ID\` with the correct value
 5. Redeploy your application
