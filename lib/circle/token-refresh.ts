@@ -5,6 +5,8 @@
  * Tokens expire after 60 minutes, so we need to refresh them automatically.
  */
 
+import { loadPreference, savePreference, loadUserCredentials, saveUserCredentials } from "@/lib/supabase-data";
+
 export interface RefreshTokenResult {
   userToken: string;
   encryptionKey?: string;
@@ -16,18 +18,58 @@ export interface RefreshTokenResult {
  * 
  * Tries to use refreshToken if available, otherwise falls back to createUserToken
  * 
+ * @param userId Optional userId - if not provided, will try to load from Supabase
  * @returns New token data or null if refresh failed
  */
-export async function refreshUserToken(): Promise<RefreshTokenResult | null> {
+export async function refreshUserToken(userId?: string): Promise<RefreshTokenResult | null> {
   if (typeof window === 'undefined') return null;
 
-  const userId = localStorage.getItem('arcle_user_id');
-  const refreshToken = localStorage.getItem('arcle_refresh_token');
-  const deviceId = localStorage.getItem('arcle_device_id') || `device-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  // Try to get userId from parameter or Supabase
+  let finalUserId = userId;
+  if (!finalUserId) {
+    // Migration: Try localStorage first, then Supabase
+    const legacyUserId = localStorage.getItem('arcle_user_id');
+    if (legacyUserId) {
+      finalUserId = legacyUserId;
+    } else {
+      // Try to get from a "current_user_id" preference (if set)
+      try {
+        const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
+        if (currentUserPref?.value) {
+          finalUserId = currentUserPref.value;
+        }
+      } catch (error) {
+        // Ignore - will return null below
+      }
+    }
+  }
 
-  if (!userId) {
-    console.warn('[TokenRefresh] No userId found in localStorage');
+  if (!finalUserId) {
+    console.warn('[TokenRefresh] No userId found');
     return null;
+  }
+
+  // Load refreshToken and deviceId from Supabase
+  let refreshToken: string | null = null;
+  let deviceId: string | null = null;
+
+  try {
+    const [refreshPref, devicePref] = await Promise.all([
+      loadPreference({ userId: finalUserId, key: "refresh_token" }).catch(() => null),
+      loadPreference({ userId: finalUserId, key: "device_id" }).catch(() => null),
+    ]);
+    refreshToken = refreshPref?.value ?? null;
+    deviceId = devicePref?.value ?? null;
+  } catch (error) {
+    console.warn('[TokenRefresh] Failed to load preferences from Supabase, trying localStorage migration:', error);
+    // Migration fallback
+    refreshToken = localStorage.getItem('arcle_refresh_token');
+    deviceId = localStorage.getItem('arcle_device_id');
+  }
+
+  // Generate deviceId if not found
+  if (!deviceId) {
+    deviceId = `device-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   }
 
   try {
@@ -49,19 +91,33 @@ export async function refreshUserToken(): Promise<RefreshTokenResult | null> {
       return null;
     }
 
-    // Update localStorage with new tokens
-    localStorage.setItem('arcle_user_token', data.data.userToken);
-    
-    if (data.data.encryptionKey) {
-      localStorage.setItem('arcle_encryption_key', data.data.encryptionKey);
-    }
-    
-    if (data.data.refreshToken) {
-      localStorage.setItem('arcle_refresh_token', data.data.refreshToken);
-    }
-    
-    if (deviceId) {
-      localStorage.setItem('arcle_device_id', deviceId);
+    // Save new tokens to Supabase
+    try {
+      await saveUserCredentials(finalUserId, {
+        userToken: data.data.userToken,
+        encryptionKey: data.data.encryptionKey,
+      });
+      
+      if (data.data.refreshToken) {
+        await savePreference({ userId: finalUserId, key: "refresh_token", value: data.data.refreshToken });
+      }
+      
+      if (deviceId) {
+        await savePreference({ userId: finalUserId, key: "device_id", value: deviceId });
+      }
+    } catch (error) {
+      console.error('[TokenRefresh] Failed to save tokens to Supabase:', error);
+      // Migration fallback: also save to localStorage
+      localStorage.setItem('arcle_user_token', data.data.userToken);
+      if (data.data.encryptionKey) {
+        localStorage.setItem('arcle_encryption_key', data.data.encryptionKey);
+      }
+      if (data.data.refreshToken) {
+        localStorage.setItem('arcle_refresh_token', data.data.refreshToken);
+      }
+      if (deviceId) {
+        localStorage.setItem('arcle_device_id', deviceId);
+      }
     }
 
     console.log('[TokenRefresh] ✅ Token refreshed successfully');

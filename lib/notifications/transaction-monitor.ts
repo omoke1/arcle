@@ -36,13 +36,35 @@ export async function monitorTransaction(
       attempts++;
 
       try {
-        // Get userId and userToken from localStorage for User-Controlled Wallets
+        // Get userId and userToken from Supabase (with localStorage migration fallback)
         let userId: string | null = null;
         let userToken: string | null = null;
         
         if (typeof window !== 'undefined') {
-          userId = localStorage.getItem('arcle_user_id');
-          userToken = localStorage.getItem('arcle_user_token');
+          // Migration: Try localStorage first, then Supabase
+          const legacyUserId = localStorage.getItem('arcle_user_id');
+          const legacyUserToken = localStorage.getItem('arcle_user_token');
+          
+          if (legacyUserId && legacyUserToken) {
+            userId = legacyUserId;
+            userToken = legacyUserToken;
+          } else {
+            // Try to load from Supabase
+            try {
+              const { loadUserCredentials, loadPreference } = await import("@/lib/supabase-data");
+              // Try to get current user ID from a preference (if set)
+              const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
+              if (currentUserPref?.value) {
+                const credentials = await loadUserCredentials(currentUserPref.value);
+                if (credentials.userToken) {
+                  userId = currentUserPref.value;
+                  userToken = credentials.userToken;
+                }
+              }
+            } catch (error) {
+              // Ignore - will use null values
+            }
+          }
         }
         
         // Build query string with optional userId/userToken

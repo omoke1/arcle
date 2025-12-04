@@ -6,36 +6,34 @@ import { Loader2, CheckCircle2, XCircle, X } from "lucide-react";
 import { BorderBeamDemo } from "@/components/ui/border-beam-demo";
 import { BorderBeam } from "@/components/ui/border-beam";
 import { hasValidAccess, grantAccess } from "@/lib/auth/invite-codes";
+import { loadWalletData, loadUserCredentials } from "@/lib/supabase-data";
+
+const designTokens = {
+  aurora: "#E9F28E",
+  carbon: "#0D0D0C",
+};
 
 export default function Home() {
   const router = useRouter();
   const [startVisible, setStartVisible] = useState(false);
   const [showContent, setShowContent] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  
-  // Modal state
   const [showInviteModal, setShowInviteModal] = useState(false);
-  
-  // Invite code state
   const [inviteCode, setInviteCode] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
-  const [verificationStatus, setVerificationStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [verificationStatus, setVerificationStatus] = useState<"idle" | "success" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
 
-  // Handle Get Access button click
-  const handleGetAccess = () => {
-    // Check if user already has access
-    if (hasValidAccess()) {
-      // Already verified, go straight to chat
+  const handleGetAccess = async () => {
+    const hasAccess = await hasValidAccess();
+    if (hasAccess) {
       setIsCreating(true);
       router.push("/chat");
     } else {
-      // Need invite code, show modal
       setShowInviteModal(true);
     }
   };
 
-  // Verify invite code
   const handleVerifyCode = async () => {
     if (!inviteCode.trim()) {
       setVerificationStatus('error');
@@ -58,7 +56,7 @@ export default function Home() {
 
       if (data.valid) {
         setVerificationStatus('success');
-        grantAccess(inviteCode.trim());
+        await grantAccess(inviteCode.trim());
         
         // Redirect after short delay
         setTimeout(() => {
@@ -78,70 +76,121 @@ export default function Home() {
     }
   };
 
-  // Handle Enter key press
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !isVerifying) {
       handleVerifyCode();
     }
   };
 
-  // Fade in the start button after animation loads
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setStartVisible(true);
-    }, 2000);
-    
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Show content after initial animation
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowContent(true);
-    }, 1000);
-    
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Auto-login: Check if user has valid access and wallet
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const hasAccess = hasValidAccess();
-      const storedWalletId = localStorage.getItem('arcle_wallet_id');
-      const storedWalletAddress = localStorage.getItem('arcle_wallet_address');
+      const checkAutoLogin = async () => {
+        const hasAccess = await hasValidAccess();
+        
+        // Try to load wallet data from Supabase
+        try {
+          // Try to get userId from credentials first
+          const credentials = await loadUserCredentials("current").catch(() => null);
+          let userId: string | null = null;
+          
+          if (credentials) {
+            // Try to get current user ID from a preference
+            const { loadPreference } = await import("@/lib/supabase-data");
+            const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
+            userId = currentUserPref?.value || null;
+          }
+          
+          // Migration fallback: try localStorage
+          if (!userId) {
+            const legacyUserId = localStorage.getItem('arcle_user_id');
+            if (legacyUserId) {
+              userId = legacyUserId;
+            }
+          }
+          
+          if (userId) {
+            const walletData = await loadWalletData(userId);
+            if (walletData && walletData.walletId && walletData.walletAddress) {
+              // Wallet exists in Supabase, auto-login
+              if (hasAccess) {
+                router.push("/chat");
+                return;
+              }
+            }
+          }
+          
+          // Migration fallback: check localStorage
+          const storedWalletId = localStorage.getItem('arcle_wallet_id');
+          const storedWalletAddress = localStorage.getItem('arcle_wallet_address');
+          
+          // If user has access and wallet exists, auto-login
+          if (hasAccess && storedWalletId && storedWalletAddress) {
+            router.push("/chat");
+          }
+        } catch (error) {
+          console.error("[Home] Error checking auto-login:", error);
+          // Fallback to localStorage check
+          const storedWalletId = localStorage.getItem('arcle_wallet_id');
+          const storedWalletAddress = localStorage.getItem('arcle_wallet_address');
+          const hasAccess = await hasValidAccess();
+          
+          if (hasAccess && storedWalletId && storedWalletAddress) {
+            router.push("/chat");
+          }
+        }
+      };
       
-      // If user has access and wallet exists, auto-login
-      if (hasAccess && storedWalletId && storedWalletAddress) {
-        router.push("/chat");
-      }
+      checkAutoLogin();
     }
   }, [router]);
 
+  useEffect(() => {
+    const timer = setTimeout(() => setStartVisible(true), 2000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setShowContent(true), 1000);
+    return () => clearTimeout(timer);
+  }, []);
+
   return (
-    <div className="min-h-screen bg-onyx text-white flex flex-col items-center justify-center px-4 py-12">
-      {/* BorderBeam Showcase */}
-      <div className={`w-full max-w-5xl mb-10 transition-all duration-1500 ease-out ${showContent ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
+    <div
+      className="min-h-screen text-white flex flex-col items-center justify-center px-4 py-12"
+      style={{ backgroundColor: designTokens.carbon }}
+    >
+      <div
+        className={`w-full max-w-5xl mb-10 transition-all duration-1500 ease-out ${
+          showContent ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+        }`}
+      >
         <BorderBeamDemo />
       </div>
 
-      {/* Get Access Button */}
-      <div className={`transition-all duration-1500 ease-out ${startVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
-        <button 
+      <div
+        className={`transition-all duration-1500 ease-out ${
+          startVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+        }`}
+      >
+        <button
           onClick={handleGetAccess}
           disabled={isCreating}
           className="
-            text-white text-lg md:text-xl tracking-[0.12em] uppercase font-extralight
+            text-white text-lg md:text-xl tracking-[0.18em] uppercase font-extralight
             transition-all duration-700
-            hover:tracking-[0.18em]
+            hover:tracking-[0.24em]
             hover:text-white/80
             disabled:opacity-50 disabled:cursor-not-allowed
-            px-6 py-3
-            border border-white/20 rounded-lg
-            hover:border-white/40
-            hover:bg-white/10
+            px-8 py-3
+            border border-white/25 rounded-[999px]
+            hover:border-white/60
+            hover:bg-white/5
             backdrop-blur-sm
             flex items-center gap-3
           "
+          style={{
+            boxShadow: "0 0 40px rgba(0,0,0,0.65)",
+          }}
         >
           {isCreating ? (
             <>
@@ -154,7 +203,6 @@ export default function Home() {
         </button>
       </div>
 
-      {/* Invite Code Modal */}
       {showInviteModal && (
         <div 
           className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 px-4"

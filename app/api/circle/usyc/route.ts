@@ -12,6 +12,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { 
   subscribeToUSYC, 
   redeemUSYC, 
+  completeUSYCSubscribe,
+  completeUSYCRedeem,
   getUSYCPosition,
   isUSYCAvailable,
   getAvailableBlockchains 
@@ -62,9 +64,48 @@ export async function POST(request: NextRequest) {
           success: true,
           data: {
             challengeId: result.challengeId,
+            approvalChallengeId: result.approvalChallengeId,
+            step: result.step,
             usdcAmount: result.usdcAmount,
             estimatedUSYC: result.estimatedUSYC,
-            message: "Please complete the approval and subscription challenges in your wallet",
+            message: result.step === 'approve' 
+              ? "Please complete the approval challenge first"
+              : "Please complete the subscription challenge",
+          },
+        });
+      } else {
+        return NextResponse.json(
+          { success: false, error: result.error },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Complete subscription (after approval is done)
+    if (action === "complete-subscribe") {
+      if (!userId || !userToken || !walletId || !amount) {
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: "Missing required fields: userId, userToken, walletId, amount" 
+          },
+          { status: 400 }
+        );
+      }
+
+      const chain = blockchain || "ETH";
+      const result = await completeUSYCSubscribe(userId, userToken, walletId, amount, chain);
+
+      if (result.success) {
+        return NextResponse.json({
+          success: true,
+          data: {
+            challengeId: result.challengeId,
+            subscribeChallengeId: result.subscribeChallengeId,
+            step: result.step,
+            usdcAmount: result.usdcAmount,
+            estimatedUSYC: result.estimatedUSYC,
+            message: "Please complete the subscription challenge",
           },
         });
       } else {
@@ -108,9 +149,48 @@ export async function POST(request: NextRequest) {
           success: true,
           data: {
             challengeId: result.challengeId,
+            approvalChallengeId: result.approvalChallengeId,
+            step: result.step,
             usycAmount: result.usycAmount,
             estimatedUSDC: result.estimatedUSDC,
-            message: "Please complete the approval and redemption challenges in your wallet",
+            message: result.step === 'approve'
+              ? "Please complete the approval challenge first"
+              : "Please complete the redemption challenge",
+          },
+        });
+      } else {
+        return NextResponse.json(
+          { success: false, error: result.error },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Complete redemption (after approval is done)
+    if (action === "complete-redeem") {
+      if (!userId || !userToken || !walletId || !amount) {
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: "Missing required fields: userId, userToken, walletId, amount" 
+          },
+          { status: 400 }
+        );
+      }
+
+      const chain = blockchain || "ETH";
+      const result = await completeUSYCRedeem(userId, userToken, walletId, amount, chain);
+
+      if (result.success) {
+        return NextResponse.json({
+          success: true,
+          data: {
+            challengeId: result.challengeId,
+            redeemChallengeId: result.redeemChallengeId,
+            step: result.step,
+            usycAmount: result.usycAmount,
+            estimatedUSDC: result.estimatedUSDC,
+            message: "Please complete the redemption challenge",
           },
         });
       } else {
@@ -123,13 +203,13 @@ export async function POST(request: NextRequest) {
 
     // Get USYC position
     if (action === "position") {
-      const { walletAddress, initialInvestment } = body;
+      const { walletAddress, walletId } = body;
 
-      if (!walletAddress || !initialInvestment) {
+      if (!walletAddress) {
         return NextResponse.json(
           { 
             success: false, 
-            error: "Missing required fields: walletAddress, initialInvestment" 
+            error: "Missing required field: walletAddress" 
           },
           { status: 400 }
         );
@@ -137,7 +217,7 @@ export async function POST(request: NextRequest) {
 
       const chain = blockchain || "ETH";
 
-      const position = await getUSYCPosition(walletAddress, initialInvestment, chain);
+      const position = await getUSYCPosition(walletAddress, walletId, chain);
 
       if (position) {
         return NextResponse.json({
@@ -194,6 +274,11 @@ export async function GET(request: NextRequest) {
     },
   });
 }
+
+
+
+
+
 
 
 

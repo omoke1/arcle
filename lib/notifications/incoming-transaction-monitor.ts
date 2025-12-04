@@ -357,8 +357,10 @@ export function startIncomingTransactionMonitoring(
                     status: (actualTx.state === "COMPLETED" ? "confirmed" : "pending") as "pending" | "confirmed" | "failed",
                     timestamp: new Date(actualTx.createDate || actualTx.createdAt || Date.now()),
                   };
-                  cacheTransaction(walletId, incomingTx);
-                  console.log(`[IncomingTxMonitor] 💾 Cached suspicious incoming tx for receiver: ${txHash.substring(0, 10)}...`);
+                  if (userId) {
+                    await cacheTransaction(userId, walletId, incomingTx);
+                    console.log(`[IncomingTxMonitor] 💾 Cached suspicious incoming tx for receiver: ${txHash.substring(0, 10)}...`);
+                  }
                   
                   // Also trigger transaction history refresh immediately
                   window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
@@ -393,8 +395,10 @@ export function startIncomingTransactionMonitoring(
                     status: (actualTx.state === "COMPLETED" ? "confirmed" : "pending") as "pending" | "confirmed" | "failed",
                     timestamp: new Date(actualTx.createDate || actualTx.createdAt || Date.now()),
                   };
-                  cacheTransaction(walletId, incomingTx);
-                  console.log(`[IncomingTxMonitor] 💾 Cached medium-risk incoming tx for receiver: ${txHash.substring(0, 10)}...`);
+                  if (userId) {
+                    await cacheTransaction(userId, walletId, incomingTx);
+                    console.log(`[IncomingTxMonitor] 💾 Cached medium-risk incoming tx for receiver: ${txHash.substring(0, 10)}...`);
+                  }
                   
                   // Also trigger transaction history refresh immediately
                   window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
@@ -429,8 +433,10 @@ export function startIncomingTransactionMonitoring(
                     status: (actualTx.state === "COMPLETED" ? "confirmed" : "pending") as "pending" | "confirmed" | "failed",
                     timestamp: new Date(actualTx.createDate || actualTx.createdAt || Date.now()),
                   };
-                  cacheTransaction(walletId, incomingTx);
-                  console.log(`[IncomingTxMonitor] 💾 Cached safe incoming tx for receiver: ${txHash.substring(0, 10)}...`);
+                  if (userId) {
+                    await cacheTransaction(userId, walletId, incomingTx);
+                    console.log(`[IncomingTxMonitor] 💾 Cached safe incoming tx for receiver: ${txHash.substring(0, 10)}...`);
+                  }
                   
                   // Also trigger transaction history refresh immediately
                   window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));

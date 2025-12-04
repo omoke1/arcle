@@ -7,6 +7,7 @@
 
 import { analyzeContract } from "./contract-analysis";
 import { getArcClient } from "@/lib/arc";
+import { loadPreference, savePreference } from "@/lib/supabase-data";
 
 export interface TokenAnalysis {
   tokenAddress: string;
@@ -275,21 +276,32 @@ function levenshteinDistance(str1: string, str2: string): number {
 /**
  * Add token to safe whitelist
  */
-export function addSafeToken(tokenAddress: string): void {
+export async function addSafeToken(userId: string, tokenAddress: string): Promise<void> {
   const normalized = tokenAddress.toLowerCase();
   SAFE_TOKEN_WHITELIST.add(normalized);
   
-  // Persist to localStorage
+  // Persist to Supabase
   if (typeof window !== "undefined") {
     try {
-      const stored = localStorage.getItem("arcle_safe_tokens");
-      const tokenList = stored ? JSON.parse(stored) : [];
+      const pref = await loadPreference({ userId, key: "safe_tokens" });
+      const tokenList = (pref?.value as string[]) || [];
       if (!tokenList.includes(normalized)) {
         tokenList.push(normalized);
-        localStorage.setItem("arcle_safe_tokens", JSON.stringify(tokenList));
+        await savePreference({ userId, key: "safe_tokens", value: tokenList });
       }
     } catch (error) {
-      console.error("Error saving safe token:", error);
+      console.error("[TokenAnalysis] Error saving safe token to Supabase:", error);
+      // Migration fallback
+      try {
+        const stored = localStorage.getItem("arcle_safe_tokens");
+        const tokenList = stored ? JSON.parse(stored) : [];
+        if (!tokenList.includes(normalized)) {
+          tokenList.push(normalized);
+          localStorage.setItem("arcle_safe_tokens", JSON.stringify(tokenList));
+        }
+      } catch (fallbackError) {
+        console.error("[TokenAnalysis] Error saving safe token to localStorage:", fallbackError);
+      }
     }
   }
 }
@@ -297,64 +309,111 @@ export function addSafeToken(tokenAddress: string): void {
 /**
  * Add token to scam list
  */
-export function addScamToken(tokenAddress: string): void {
+export async function addScamToken(userId: string, tokenAddress: string): Promise<void> {
   const normalized = tokenAddress.toLowerCase();
   KNOWN_SCAM_TOKENS.add(normalized);
   
-  // Persist to localStorage
+  // Persist to Supabase
   if (typeof window !== "undefined") {
     try {
-      const stored = localStorage.getItem("arcle_scam_tokens");
-      const tokenList = stored ? JSON.parse(stored) : [];
+      const pref = await loadPreference({ userId, key: "scam_tokens" });
+      const tokenList = (pref?.value as string[]) || [];
       if (!tokenList.includes(normalized)) {
         tokenList.push(normalized);
-        localStorage.setItem("arcle_scam_tokens", JSON.stringify(tokenList));
+        await savePreference({ userId, key: "scam_tokens", value: tokenList });
       }
     } catch (error) {
-      console.error("Error saving scam token:", error);
+      console.error("[TokenAnalysis] Error saving scam token to Supabase:", error);
+      // Migration fallback
+      try {
+        const stored = localStorage.getItem("arcle_scam_tokens");
+        const tokenList = stored ? JSON.parse(stored) : [];
+        if (!tokenList.includes(normalized)) {
+          tokenList.push(normalized);
+          localStorage.setItem("arcle_scam_tokens", JSON.stringify(tokenList));
+        }
+      } catch (fallbackError) {
+        console.error("[TokenAnalysis] Error saving scam token to localStorage:", fallbackError);
+      }
     }
   }
 }
 
 /**
- * Load safe tokens from localStorage
+ * Load safe tokens from Supabase
  */
-function loadSafeTokens(): void {
+async function loadSafeTokens(userId?: string): Promise<void> {
   if (typeof window === "undefined") return;
   
   try {
+    if (userId) {
+      // Try Supabase first
+      const pref = await loadPreference({ userId, key: "safe_tokens" });
+      if (pref?.value && Array.isArray(pref.value)) {
+        pref.value.forEach((addr: string) => SAFE_TOKEN_WHITELIST.add(addr.toLowerCase()));
+        return;
+      }
+    }
+    
+    // Migration fallback: try localStorage
     const stored = localStorage.getItem("arcle_safe_tokens");
     if (stored) {
       const tokenList = JSON.parse(stored) as string[];
       tokenList.forEach(addr => SAFE_TOKEN_WHITELIST.add(addr.toLowerCase()));
+      
+      // Migrate to Supabase if userId is available
+      if (userId) {
+        try {
+          await savePreference({ userId, key: "safe_tokens", value: tokenList });
+          localStorage.removeItem("arcle_safe_tokens");
+        } catch (error) {
+          console.error("[TokenAnalysis] Failed to migrate safe tokens to Supabase:", error);
+        }
+      }
     }
   } catch (error) {
-    console.error("Error loading safe tokens:", error);
+    console.error("[TokenAnalysis] Error loading safe tokens:", error);
   }
 }
 
 /**
- * Load scam tokens from localStorage
+ * Load scam tokens from Supabase
  */
-function loadScamTokens(): void {
+async function loadScamTokens(userId?: string): Promise<void> {
   if (typeof window === "undefined") return;
   
   try {
+    if (userId) {
+      // Try Supabase first
+      const pref = await loadPreference({ userId, key: "scam_tokens" });
+      if (pref?.value && Array.isArray(pref.value)) {
+        pref.value.forEach((addr: string) => KNOWN_SCAM_TOKENS.add(addr.toLowerCase()));
+        return;
+      }
+    }
+    
+    // Migration fallback: try localStorage
     const stored = localStorage.getItem("arcle_scam_tokens");
     if (stored) {
       const tokenList = JSON.parse(stored) as string[];
       tokenList.forEach(addr => KNOWN_SCAM_TOKENS.add(addr.toLowerCase()));
+      
+      // Migrate to Supabase if userId is available
+      if (userId) {
+        try {
+          await savePreference({ userId, key: "scam_tokens", value: tokenList });
+          localStorage.removeItem("arcle_scam_tokens");
+        } catch (error) {
+          console.error("[TokenAnalysis] Failed to migrate scam tokens to Supabase:", error);
+        }
+      }
     }
   } catch (error) {
-    console.error("Error loading scam tokens:", error);
+    console.error("[TokenAnalysis] Error loading scam tokens:", error);
   }
 }
 
-// Load tokens on module initialization
-if (typeof window !== "undefined") {
-  loadSafeTokens();
-  loadScamTokens();
-}
+// Load tokens on module initialization (will be loaded per-user when needed)
 
 /**
  * Get token metadata from blockchain (simplified - would use ERC-20 standard)

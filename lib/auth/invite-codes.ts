@@ -4,9 +4,24 @@
  * Features:
  * - 30 unique codes for testers
  * - One-time use per code
- * - localStorage-based verification
+ * - Supabase-based verification
  * - Simple admin interface
  */
+
+import { loadPreference, savePreference } from "@/lib/supabase-data";
+
+// Invite code batch metadata
+// When you generate a new batch of codes, update INVITE_BATCH_CREATED_AT
+// so that codes automatically expire 24 hours after creation if not used.
+const INVITE_BATCH_CREATED_AT = "2025-11-29T00:00:00.000Z";
+const INVITE_CODE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function isInviteBatchExpired(): boolean {
+  if (!INVITE_BATCH_CREATED_AT) return false;
+  const createdAt = new Date(INVITE_BATCH_CREATED_AT).getTime();
+  if (Number.isNaN(createdAt)) return false;
+  return Date.now() - createdAt > INVITE_CODE_TTL_MS;
+}
 
 // Generate random invite code (8 characters, alphanumeric, readable)
 function generateCode(): string {
@@ -19,83 +34,24 @@ function generateCode(): string {
   return code;
 }
 
-// Pre-generated invite codes (regenerate these daily)
-// Format: CODE:YYYY-MM-DD (so you know when it was created)
-export const DAILY_INVITE_CODES = [
-  'ARC2K9M4', // Code 1
-  'QW7N8PX3', // Code 2
-  'FH5RJ6TY', // Code 3
-  'VM4BK2ZL', // Code 4
-  'DP9CG3WE', // Code 5
-  'XN6TY8QR', // Code 6
-  'JK4MW7VP', // Code 7
-  'BL9FH2ZN', // Code 8
-  'GT3YX5RC', // Code 9
-  'PM8NJ6KW', // Code 10
-  'ZK8QW3RH', // Code 11
-  'TY6PL9DN', // Code 12
-  'HS4VJ7XM', // Code 13
-  'WR9BN2FK', // Code 14
-  'CX5DG8YL', // Code 15
-  'NM3ZT6QP', // Code 16
-  'FJ7KR4WV', // Code 17
-  'QL2MX9HB', // Code 18
-  'RP8YN5CJ', // Code 19
-  'VG4WT7ZD', // Code 20
-  'R7V4JVY2', // Code 21
-  'GRVDTQTJ', // Code 22
-  'BEAGWP8S', // Code 23
-  'FUN53U3E', // Code 24
-  'PUHJEV8U', // Code 25
-  'PTSWXBXB', // Code 26
-  'HV7YSX5S', // Code 27
-  'PXZZ8DVB', // Code 28
-  '5MNKMJBQ', // Code 29
-  'LUN2ZLX5', // Code 30
-  // New codes added: 2024-11-18
-  'QMV3SSXS', // Code 31
-  'PGKM7ASS', // Code 32
-  '8Z6BCUD4', // Code 33
-  'CRKR5MR9', // Code 34
-  'ANYQPV34', // Code 35
-  'RTSHVBJC', // Code 36
-  'KKYHVQYF', // Code 37
-  'Y4XWPK4X', // Code 38
-  'SYQH557M', // Code 39
-  'JQNC5JNB', // Code 40
-  // New codes added for user testing: 2025-11-15
-  'AVZREXA6', // Code 41
-  'QGLHNC7T', // Code 42
-  'B8MPSBT8', // Code 43
-  'SBAYW6K2', // Code 44
-  'M8LHCE9X', // Code 45
-  'X439VTSZ', // Code 46
-  'EQN6NU5G', // Code 47
-  '6ZYLEAX4', // Code 48
-  'J48MYZFR', // Code 49
-  '7TL97FVN', // Code 50
-  // New codes added: 2025-11-20
-  'G2LKFBXD', // Code 51
-  '2F88PMVE', // Code 52
-  '3NEMTDF7', // Code 53
-  'X6JNNB2F', // Code 54
-  'CW97FJ99', // Code 55
-  'M4753KUP', // Code 56
-  'ACUBEL3F', // Code 57
-  'Q8XR8NMT', // Code 58
-  '8JG6WWVA', // Code 59
-  'NFT4WNJW', // Code 60
-  // New codes added: 2025-11-20 (second batch)
-  '25X3D7Y9', // Code 61
-  'WH74BL4Z', // Code 62
-  'A9U7CFLN', // Code 63
-  'CDNQ4JY2', // Code 64
-  'DQWKRUKH', // Code 65
-  'ALPZAAMK', // Code 66
-  'BUY2SRBB', // Code 67
-  '6P25DDK6', // Code 68
-  'XW3HD72B', // Code 69
-  '4M9GFQ6X', // Code 70
+// Pre-generated invite codes (regenerate these as needed)
+// Rules:
+// - 8 characters
+// - Uppercase
+// - Alphanumeric using readable characters only (no 0, O, I, l, 1)
+// - Each code can be used once
+// - Codes expire 24 hours after INVITE_BATCH_CREATED_AT if not used
+export const DAILY_INVITE_CODES: string[] = [
+  "K7ZP3N8Q", // Code 1
+  "H4G9XT27", // Code 2
+  "M8Q2VR5X", // Code 3
+  "S7C6DW3P", // Code 4
+  "B9Y4KU8T", // Code 5
+  "N3F7XZ5G", // Code 6
+  "Q2V8HM7C", // Code 7
+  "R6P3WY8D", // Code 8
+  "T5X8GN2K", // Code 9
+  "W7C2ZP9S", // Code 10
 ];
 
 // Get all invite codes from environment or fallback to default
@@ -135,6 +91,14 @@ export function isValidInviteCode(code: string): boolean {
   if (!code || typeof code !== 'string') {
     return false;
   }
+
+  // Enforce batch-level expiry (24h from INVITE_BATCH_CREATED_AT)
+  if (isInviteBatchExpired()) {
+    if (process.env.NODE_ENV === 'development' || process.env.DEBUG_INVITE_CODES === 'true') {
+      console.log("[Invite Codes] Current batch has expired; no codes are valid anymore.");
+    }
+    return false;
+  }
   
   const trimmedCode = code.toUpperCase().trim();
   if (!trimmedCode || trimmedCode.length !== 8) {
@@ -155,60 +119,226 @@ export function isValidInviteCode(code: string): boolean {
   return isValid;
 }
 
-// Check if code has been used (localStorage)
-export function isCodeUsed(code: string): boolean {
+// Check if code has been used (Supabase)
+export async function isCodeUsed(code: string, userId?: string): Promise<boolean> {
   if (typeof window === 'undefined') return false;
   
-  const usedCodes = getUsedCodes();
+  const usedCodes = await getUsedCodes(userId);
   return usedCodes.includes(code.toUpperCase().trim());
 }
 
-// Get all used codes from localStorage
-export function getUsedCodes(): string[] {
+// Get all used codes from Supabase
+export async function getUsedCodes(userId?: string): Promise<string[]> {
   if (typeof window === 'undefined') return [];
   
+  // Try to get userId if not provided
+  if (!userId) {
+    // Try to get from a "current_user_id" preference
+    try {
+      const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
+      if (currentUserPref?.value) {
+        userId = currentUserPref.value;
+      }
+    } catch (error) {
+      // Ignore
+    }
+  }
+  
+  // If we have userId, try Supabase
+  if (userId) {
+    try {
+      const pref = await loadPreference({ userId, key: "used_invite_codes" });
+      if (pref?.value && Array.isArray(pref.value)) {
+        return pref.value;
+      }
+    } catch (error) {
+      console.warn("[InviteCodes] Failed to load from Supabase, trying localStorage migration:", error);
+    }
+  }
+  
+  // Migration fallback: try localStorage
   const stored = localStorage.getItem('arcle_used_codes');
-  return stored ? JSON.parse(stored) : [];
+  if (stored) {
+    const codes = JSON.parse(stored);
+    if (Array.isArray(codes)) {
+      // Migrate to Supabase if userId is available
+      if (userId) {
+        try {
+          await savePreference({ userId, key: "used_invite_codes", value: codes });
+          localStorage.removeItem('arcle_used_codes');
+        } catch (error) {
+          console.error("[InviteCodes] Failed to migrate used codes to Supabase:", error);
+        }
+      }
+      return codes;
+    }
+  }
+  
+  return [];
 }
 
 // Mark code as used
-export function markCodeAsUsed(code: string): void {
+export async function markCodeAsUsed(code: string, userId?: string): Promise<void> {
   if (typeof window === 'undefined') return;
   
-  const usedCodes = getUsedCodes();
+  // Try to get userId if not provided
+  if (!userId) {
+    try {
+      const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
+      if (currentUserPref?.value) {
+        userId = currentUserPref.value;
+      }
+    } catch (error) {
+      // Ignore
+    }
+  }
+  
+  const usedCodes = await getUsedCodes(userId);
   const upperCode = code.toUpperCase().trim();
   
   if (!usedCodes.includes(upperCode)) {
     usedCodes.push(upperCode);
-    localStorage.setItem('arcle_used_codes', JSON.stringify(usedCodes));
     
-    // Also store timestamp
-    localStorage.setItem(`arcle_code_used_${upperCode}`, new Date().toISOString());
+    // Save to Supabase if userId is available
+    if (userId) {
+      try {
+        await savePreference({ userId, key: "used_invite_codes", value: usedCodes });
+        await savePreference({ userId, key: `code_used_${upperCode}`, value: new Date().toISOString() });
+      } catch (error) {
+        console.error("[InviteCodes] Failed to save to Supabase, using localStorage fallback:", error);
+        // Migration fallback
+        localStorage.setItem('arcle_used_codes', JSON.stringify(usedCodes));
+        localStorage.setItem(`arcle_code_used_${upperCode}`, new Date().toISOString());
+      }
+    } else {
+      // No userId - use localStorage only
+      localStorage.setItem('arcle_used_codes', JSON.stringify(usedCodes));
+      localStorage.setItem(`arcle_code_used_${upperCode}`, new Date().toISOString());
+    }
   }
 }
 
 // Check if user has valid access
-export function hasValidAccess(): boolean {
+export async function hasValidAccess(userId?: string): Promise<boolean> {
   if (typeof window === 'undefined') return false;
   
-  return localStorage.getItem('arcle_invite_verified') === 'true';
+  // Try to get userId if not provided
+  if (!userId) {
+    try {
+      const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
+      if (currentUserPref?.value) {
+        userId = currentUserPref.value;
+      }
+    } catch (error) {
+      // Ignore
+    }
+  }
+  
+  // Try Supabase first
+  if (userId) {
+    try {
+      const pref = await loadPreference({ userId, key: "invite_verified" });
+      if (pref?.value === true || pref?.value === "true") {
+        return true;
+      }
+    } catch (error) {
+      console.warn("[InviteCodes] Failed to load from Supabase, trying localStorage migration:", error);
+    }
+  }
+  
+  // Migration fallback: try localStorage
+  const stored = localStorage.getItem('arcle_invite_verified');
+  if (stored === 'true') {
+    // Migrate to Supabase if userId is available
+    if (userId) {
+      try {
+        await savePreference({ userId, key: "invite_verified", value: true });
+        const code = localStorage.getItem('arcle_invite_code_used');
+        const grantedAt = localStorage.getItem('arcle_access_granted_at');
+        if (code) {
+          await savePreference({ userId, key: "invite_code_used", value: code });
+        }
+        if (grantedAt) {
+          await savePreference({ userId, key: "access_granted_at", value: grantedAt });
+        }
+      } catch (error) {
+        console.error("[InviteCodes] Failed to migrate invite verification to Supabase:", error);
+      }
+    }
+    return true;
+  }
+  
+  return false;
 }
 
 // Grant access to user
-export function grantAccess(code: string): void {
+export async function grantAccess(code: string, userId?: string): Promise<void> {
   if (typeof window === 'undefined') return;
   
-  localStorage.setItem('arcle_invite_verified', 'true');
-  localStorage.setItem('arcle_invite_code_used', code.toUpperCase());
-  localStorage.setItem('arcle_access_granted_at', new Date().toISOString());
+  // Try to get userId if not provided
+  if (!userId) {
+    try {
+      const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
+      if (currentUserPref?.value) {
+        userId = currentUserPref.value;
+      }
+    } catch (error) {
+      // Ignore
+    }
+  }
   
-  markCodeAsUsed(code);
+  const upperCode = code.toUpperCase().trim();
+  
+  // Save to Supabase if userId is available
+  if (userId) {
+    try {
+      await savePreference({ userId, key: "invite_verified", value: true });
+      await savePreference({ userId, key: "invite_code_used", value: upperCode });
+      await savePreference({ userId, key: "access_granted_at", value: new Date().toISOString() });
+    } catch (error) {
+      console.error("[InviteCodes] Failed to save to Supabase, using localStorage fallback:", error);
+      // Migration fallback
+      localStorage.setItem('arcle_invite_verified', 'true');
+      localStorage.setItem('arcle_invite_code_used', upperCode);
+      localStorage.setItem('arcle_access_granted_at', new Date().toISOString());
+    }
+  } else {
+    // No userId - use localStorage only
+    localStorage.setItem('arcle_invite_verified', 'true');
+    localStorage.setItem('arcle_invite_code_used', upperCode);
+    localStorage.setItem('arcle_access_granted_at', new Date().toISOString());
+  }
+  
+  await markCodeAsUsed(code, userId);
 }
 
 // Revoke access (for admin)
-export function revokeAccess(): void {
+export async function revokeAccess(userId?: string): Promise<void> {
   if (typeof window === 'undefined') return;
   
+  // Try to get userId if not provided
+  if (!userId) {
+    try {
+      const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
+      if (currentUserPref?.value) {
+        userId = currentUserPref.value;
+      }
+    } catch (error) {
+      // Ignore
+    }
+  }
+  
+  // Remove from Supabase if userId is available
+  if (userId) {
+    try {
+      // Note: We can't delete preferences easily, so we'll set them to false/null
+      await savePreference({ userId, key: "invite_verified", value: false });
+    } catch (error) {
+      console.error("[InviteCodes] Failed to revoke in Supabase:", error);
+    }
+  }
+  
+  // Also clear localStorage
   localStorage.removeItem('arcle_invite_verified');
   localStorage.removeItem('arcle_invite_code_used');
   localStorage.removeItem('arcle_access_granted_at');
@@ -225,14 +355,38 @@ export interface InviteStats {
   }>;
 }
 
-export function getInviteStats(): InviteStats {
-  const usedCodes = getUsedCodes();
+export async function getInviteStats(userId?: string): Promise<InviteStats> {
+  const usedCodes = await getUsedCodes(userId);
   const validCodes = getInviteCodes();
   
-  const usedCodesList = usedCodes.map(code => ({
-    code,
-    usedAt: localStorage.getItem(`arcle_code_used_${code}`) || 'Unknown',
-  }));
+  // Get timestamps for used codes
+  const usedCodesList = await Promise.all(
+    usedCodes.map(async (code) => {
+      let usedAt = 'Unknown';
+      
+      // Try Supabase first
+      if (userId) {
+        try {
+          const pref = await loadPreference({ userId, key: `code_used_${code}` });
+          if (pref?.value) {
+            usedAt = pref.value;
+          }
+        } catch (error) {
+          // Ignore
+        }
+      }
+      
+      // Migration fallback: try localStorage
+      if (usedAt === 'Unknown' && typeof window !== 'undefined') {
+        const stored = localStorage.getItem(`arcle_code_used_${code}`);
+        if (stored) {
+          usedAt = stored;
+        }
+      }
+      
+      return { code, usedAt };
+    })
+  );
   
   return {
     totalCodes: validCodes.length,

@@ -11,10 +11,10 @@ export async function GET(request: NextRequest) {
     const walletId = searchParams.get("walletId");
     
     if (walletId) {
-      const orders = getOrdersByWallet(walletId);
+      const orders = await getOrdersByWallet(walletId);
       return NextResponse.json({ success: true, data: orders });
     } else {
-      const orders = getPendingOrders();
+      const orders = await getPendingOrders();
       return NextResponse.json({ success: true, data: orders });
     }
   } catch (error: any) {
@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     const { action, walletId, type, fromToken, toToken, amount, targetPrice, blockchain, expiryHours, slippageTolerance, orderId } = body;
     
     if (action === "create" && walletId && type && fromToken && toToken && amount && targetPrice && blockchain) {
-      const order = createLimitOrder({
+      const order = await createLimitOrder({
         walletId,
         type,
         fromToken,
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
     }
     
     if (action === "cancel" && orderId) {
-      const success = cancelOrder(orderId);
+      const success = await cancelOrder(orderId);
       return NextResponse.json({ success, data: { orderId } });
     }
     

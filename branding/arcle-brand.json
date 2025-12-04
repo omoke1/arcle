@@ -1,0 +1,89 @@
+{
+  "meta": {
+    "name": "Arcle",
+    "version": "1.0.0",
+    "source": "design.json",
+    "description": "Canonical brand definition for Arcle – colors, typography, layout principles."
+  },
+  "color": {
+    "primary": {
+      "token": "aurora",
+      "name": "Aurora Lime",
+      "hex": "#E9F28E",
+      "rgb": [233, 242, 142],
+      "usage": [
+        "Hero gradients and large background washes",
+        "Primary CTAs and chat entry points",
+        "Badges and key highlights"
+      ]
+    },
+    "background": {
+      "token": "carbon",
+      "name": "Carbon Void",
+      "hex": "#0D0D0C",
+      "rgb": [13, 13, 12],
+      "usage": [
+        "App background",
+        "Cinematic hero frames",
+        "High-contrast surfaces for typography"
+      ]
+    },
+    "surface": {
+      "token": "graphite",
+      "name": "Graphite Panel",
+      "hex": "#353535",
+      "rgb": [53, 53, 53],
+      "usage": [
+        "Cards and chat surfaces",
+        "Secondary buttons and modules"
+      ]
+    },
+    "neutrals": {
+      "softMist": {
+        "token": "soft-mist",
+        "name": "Soft Mist",
+        "hex": "#F4F7EA"
+      },
+      "signalWhite": {
+        "token": "signal-white",
+        "name": "Signal White",
+        "hex": "#FFFFFF"
+      }
+    },
+    "gradients": {
+      "auroraHorizon": {
+        "stops": [
+          { "color": "#E9F28E", "position": 0 },
+          { "color": "#F7FFD9", "position": 0.6 },
+          { "color": "#D7FF7E", "position": 1 }
+        ]
+      }
+    }
+  },
+  "typography": {
+    "family": "Inter",
+    "weights": {
+      "hero": 800,
+      "headline": 700,
+      "subhead": 600,
+      "body": 400,
+      "caption": 300
+    },
+    "lineHeight": {
+      "display": 0.92,
+      "body": 1.35,
+      "chat": 1.4
+    }
+  },
+  "radii": {
+    "card": 20,
+    "badge": 22,
+    "pill": 999
+  },
+  "shadows": {
+    "card": "0 12px 60px rgba(0,0,0,0.65)",
+    "badge": "0 8px 30px rgba(0,0,0,0.45)"
+  }
+}
+
+

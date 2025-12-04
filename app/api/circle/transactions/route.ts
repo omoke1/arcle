@@ -15,6 +15,7 @@ import { circleApiRequest } from "@/lib/circle";
 import { getUserCircleClient } from "@/lib/circle-user-sdk";
 import { getUSDCAddress, arcUtils, getUsdcDecimals } from "@/lib/arc";
 import { generateUUID } from "@/lib/utils/uuid";
+import { rateLimit } from "@/lib/api/rate-limit";
 
 interface CreateTransactionRequest {
   idempotencyKey?: string;
@@ -60,6 +61,28 @@ export async function POST(request: NextRequest) {
   let body: CreateTransactionRequest | null = null;
   
   try {
+    // Basic IP-based rate limiting for transaction creation
+    const ip =
+      request.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
+      request.headers.get("x-real-ip") ||
+      "unknown";
+    const rl = await rateLimit(`circle:transactions:${ip}`, 20, 60); // 20 tx/min/IP
+    if (!rl.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Rate limit exceeded for transactions. Please wait a bit and try again.",
+        },
+        {
+          status: 429,
+          headers: {
+            "X-RateLimit-Limit": "20",
+            "X-RateLimit-Remaining": String(rl.remaining),
+          },
+        }
+      );
+    }
+
     // Parse request body with error handling
     try {
       body = await request.json();

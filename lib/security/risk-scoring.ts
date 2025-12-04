@@ -24,47 +24,76 @@ const KNOWN_SCAM_ADDRESSES = new Set<string>([
 
 /**
  * Address history cache (in production, this would be persistent storage)
- * Uses localStorage for persistence across sessions
+ * Uses Supabase for persistence across sessions
  */
+import { loadPreference, savePreference } from "@/lib/supabase-data";
+
 interface AddressHistory {
   firstSeen: string; // ISO date string for serialization
   transactionCount: number;
   lastSeen: string; // ISO date string for serialization
 }
 
-const STORAGE_KEY = "arcle_address_history";
+const STORAGE_KEY = "address_history";
 
-function loadAddressHistory(): Map<string, AddressHistory> {
-  if (typeof window === "undefined") {
+async function loadAddressHistory(userId?: string): Promise<Map<string, AddressHistory>> {
+  if (typeof window === "undefined" || !userId) {
     return new Map();
   }
   
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored) as Record<string, AddressHistory>;
+    // Try Supabase first
+    const pref = await loadPreference({ userId, key: STORAGE_KEY });
+    if (pref?.value && typeof pref.value === 'object') {
+      const parsed = pref.value as Record<string, AddressHistory>;
       return new Map(Object.entries(parsed));
     }
   } catch (error) {
-    console.error("Error loading address history:", error);
+    console.warn("[RiskScoring] Failed to load from Supabase, trying localStorage migration:", error);
+  }
+  
+  // Migration fallback: try localStorage
+  try {
+    const stored = localStorage.getItem("arcle_address_history");
+    if (stored) {
+      const parsed = JSON.parse(stored) as Record<string, AddressHistory>;
+      const cache = new Map(Object.entries(parsed));
+      // Migrate to Supabase
+      try {
+        await savePreference({ userId, key: STORAGE_KEY, value: parsed });
+        localStorage.removeItem("arcle_address_history");
+      } catch (error) {
+        console.error("[RiskScoring] Failed to migrate address history to Supabase:", error);
+      }
+      return cache;
+    }
+  } catch (error) {
+    console.error("[RiskScoring] Error loading address history:", error);
   }
   
   return new Map();
 }
 
-function saveAddressHistory(cache: Map<string, AddressHistory>): void {
+async function saveAddressHistory(userId: string, cache: Map<string, AddressHistory>): Promise<void> {
   if (typeof window === "undefined") return;
   
   try {
     const obj = Object.fromEntries(cache);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+    await savePreference({ userId, key: STORAGE_KEY, value: obj });
   } catch (error) {
-    console.error("Error saving address history:", error);
+    console.error("[RiskScoring] Error saving address history to Supabase:", error);
+    // Migration fallback
+    try {
+      const obj = Object.fromEntries(cache);
+      localStorage.setItem("arcle_address_history", JSON.stringify(obj));
+    } catch (fallbackError) {
+      console.error("[RiskScoring] Error saving address history to localStorage:", fallbackError);
+    }
   }
 }
 
-// Initialize cache from localStorage
-let addressHistoryCache = loadAddressHistory();
+// Per-user address history cache
+const addressHistoryCaches = new Map<string, Map<string, AddressHistory>>();
 
 /**
  * Known risky contract patterns (in production, this would query contract verification)
@@ -124,7 +153,8 @@ export async function calculateRiskScore(
   address: string,
   amount?: string,
   isContractAddress?: boolean,
-  message?: string // Optional: message text for phishing detection
+  message?: string, // Optional: message text for phishing detection
+  userId?: string // Optional: userId for address history
 ): Promise<RiskScoreResult> {
   const reasons: string[] = [];
   let score = 0;
@@ -171,22 +201,37 @@ export async function calculateRiskScore(
   }
 
   // Factor 3: New address (never seen before) (+20 points)
-  const addressHistory = addressHistoryCache.get(normalizedAddress);
-  if (!addressHistory) {
+  let addressHistory: AddressHistory | null = null;
+  if (userId && typeof window !== "undefined") {
+    // Load or get cache for this user
+    let cache = addressHistoryCaches.get(userId);
+    if (!cache) {
+      cache = await loadAddressHistory(userId);
+      addressHistoryCaches.set(userId, cache);
+    }
+    
+    addressHistory = cache.get(normalizedAddress) || null;
+    
+    if (!addressHistory) {
+      score += 20;
+      reasons.push("New address (never seen before)");
+      // Initialize history
+      const now = new Date().toISOString();
+      cache.set(normalizedAddress, {
+        firstSeen: now,
+        transactionCount: 0,
+        lastSeen: now,
+      });
+      await saveAddressHistory(userId, cache);
+    } else {
+      // Update last seen
+      addressHistory.lastSeen = new Date().toISOString();
+      await saveAddressHistory(userId, cache);
+    }
+  } else {
+    // No userId - treat as new address
     score += 20;
     reasons.push("New address (never seen before)");
-    // Initialize history
-    const now = new Date().toISOString();
-    addressHistoryCache.set(normalizedAddress, {
-      firstSeen: now,
-      transactionCount: 0,
-      lastSeen: now,
-    });
-    saveAddressHistory(addressHistoryCache);
-  } else {
-    // Update last seen
-    addressHistory.lastSeen = new Date().toISOString();
-    saveAddressHistory(addressHistoryCache);
   }
 
   // Factor 4: Zero transaction history (+30 points)
@@ -197,23 +242,33 @@ export async function calculateRiskScore(
 
   // Factor 5: Check on-chain transaction count (simplified)
   // In production, this would query the blockchain
-  try {
-    const transactionCount = await getTransactionCount(normalizedAddress);
-    if (transactionCount === 0 && !addressHistory) {
-      score += 30;
-      reasons.push("No on-chain transaction history");
-    } else if (addressHistory) {
-      // Update cache
-      addressHistory.transactionCount = Math.max(
-        addressHistory.transactionCount,
-        transactionCount
-      );
-    }
-  } catch (error) {
-    // If we can't check, assume it's a new address
-    if (!addressHistory) {
-      score += 20;
-      reasons.push("Unable to verify transaction history");
+  if (userId && typeof window !== "undefined") {
+    try {
+      const transactionCount = await getTransactionCount(normalizedAddress);
+      let cache = addressHistoryCaches.get(userId);
+      if (!cache) {
+        cache = await loadAddressHistory(userId);
+        addressHistoryCaches.set(userId, cache);
+      }
+      
+      const currentHistory = cache.get(normalizedAddress);
+      if (transactionCount === 0 && !currentHistory) {
+        score += 30;
+        reasons.push("No on-chain transaction history");
+      } else if (currentHistory) {
+        // Update cache
+        currentHistory.transactionCount = Math.max(
+          currentHistory.transactionCount,
+          transactionCount
+        );
+        await saveAddressHistory(userId, cache);
+      }
+    } catch (error) {
+      // If we can't check, assume it's a new address
+      if (!addressHistory) {
+        score += 20;
+        reasons.push("Unable to verify transaction history");
+      }
     }
   }
 
@@ -316,79 +371,125 @@ async function getTransactionCount(address: string): Promise<number> {
  * Add address to known scam database
  * Uses normalized address for consistency
  */
-export function addScamAddress(address: string): void {
+export async function addScamAddress(userId: string, address: string): Promise<void> {
   const normalizedAddress = address.toLowerCase();
   KNOWN_SCAM_ADDRESSES.add(normalizedAddress);
   
-  // Persist to localStorage
+  // Persist to Supabase
   if (typeof window !== "undefined") {
     try {
-      const stored = localStorage.getItem("arcle_scam_addresses");
-      const scamList = stored ? JSON.parse(stored) : [];
+      const pref = await loadPreference({ userId, key: "scam_addresses" });
+      const scamList = (pref?.value as string[]) || [];
       if (!scamList.includes(normalizedAddress)) {
         scamList.push(normalizedAddress);
-        localStorage.setItem("arcle_scam_addresses", JSON.stringify(scamList));
+        await savePreference({ userId, key: "scam_addresses", value: scamList });
       }
     } catch (error) {
-      console.error("Error saving scam address:", error);
+      console.error("[RiskScoring] Error saving scam address to Supabase:", error);
+      // Migration fallback
+      try {
+        const stored = localStorage.getItem("arcle_scam_addresses");
+        const scamList = stored ? JSON.parse(stored) : [];
+        if (!scamList.includes(normalizedAddress)) {
+          scamList.push(normalizedAddress);
+          localStorage.setItem("arcle_scam_addresses", JSON.stringify(scamList));
+        }
+      } catch (fallbackError) {
+        console.error("[RiskScoring] Error saving scam address to localStorage:", fallbackError);
+      }
     }
   }
 }
 
 /**
- * Load known scam addresses from localStorage
+ * Load known scam addresses from Supabase
  */
-function loadScamAddresses(): void {
+async function loadScamAddresses(userId?: string): Promise<void> {
   if (typeof window === "undefined") return;
   
   try {
+    if (userId) {
+      // Try Supabase first
+      const pref = await loadPreference({ userId, key: "scam_addresses" });
+      if (pref?.value && Array.isArray(pref.value)) {
+        pref.value.forEach((addr: string) => KNOWN_SCAM_ADDRESSES.add(addr.toLowerCase()));
+        return;
+      }
+    }
+    
+    // Migration fallback: try localStorage
     const stored = localStorage.getItem("arcle_scam_addresses");
     if (stored) {
       const scamList = JSON.parse(stored) as string[];
       scamList.forEach(addr => KNOWN_SCAM_ADDRESSES.add(addr.toLowerCase()));
+      
+      // Migrate to Supabase if userId is available
+      if (userId) {
+        try {
+          await savePreference({ userId, key: "scam_addresses", value: scamList });
+          localStorage.removeItem("arcle_scam_addresses");
+        } catch (error) {
+          console.error("[RiskScoring] Failed to migrate scam addresses to Supabase:", error);
+        }
+      }
     }
   } catch (error) {
-    console.error("Error loading scam addresses:", error);
+    console.error("[RiskScoring] Error loading scam addresses:", error);
   }
 }
 
-// Load scam addresses on module initialization
-if (typeof window !== "undefined") {
-  loadScamAddresses();
-}
+// Load scam addresses on module initialization (will be loaded per-user when needed)
 
 
 /**
  * Update address history after successful transaction
  * Uses normalized (checksummed) address for consistency
  */
-export function updateAddressHistory(address: string): void {
+export async function updateAddressHistory(userId: string, address: string): Promise<void> {
+  if (typeof window === "undefined" || !userId) return;
+  
+  // Load or get cache for this user
+  let cache = addressHistoryCaches.get(userId);
+  if (!cache) {
+    cache = await loadAddressHistory(userId);
+    addressHistoryCaches.set(userId, cache);
+  }
+  
   // Normalize address (should already be checksummed, but ensure lowercase for cache)
   const normalizedAddress = address.toLowerCase();
-  const history = addressHistoryCache.get(normalizedAddress);
+  const history = cache.get(normalizedAddress);
   const now = new Date().toISOString();
   
   if (history) {
     history.transactionCount += 1;
     history.lastSeen = now;
   } else {
-    addressHistoryCache.set(normalizedAddress, {
+    cache.set(normalizedAddress, {
       firstSeen: now,
       transactionCount: 1,
       lastSeen: now,
     });
   }
   
-  // Persist to localStorage
-  saveAddressHistory(addressHistoryCache);
+  // Persist to Supabase
+  await saveAddressHistory(userId, cache);
 }
 
 /**
  * Get address history with proper date conversion
  */
-export function getAddressHistory(address: string) {
+export async function getAddressHistory(userId: string, address: string) {
+  if (typeof window === "undefined" || !userId) return null;
+  
+  // Load or get cache for this user
+  let cache = addressHistoryCaches.get(userId);
+  if (!cache) {
+    cache = await loadAddressHistory(userId);
+    addressHistoryCaches.set(userId, cache);
+  }
+  
   const normalizedAddress = address.toLowerCase();
-  const history = addressHistoryCache.get(normalizedAddress);
+  const history = cache.get(normalizedAddress);
   
   if (!history) return null;
   

@@ -1,0 +1,314 @@
+{
+  "meta": {
+    "title": "Arcle Design Direction",
+    "version": "1.0.0",
+    "author": "Design Systems - Creative Direction",
+    "intent": "Translate the attached Arcle concept art into executable design DNA that AI and humans can apply consistently across product, marketing, and chat UI surfaces."
+  },
+  "brand_outline": {
+    "promise": "Money moves faster in chat.",
+    "tone": ["futuristic", "confident", "lux-minimal"],
+    "keywords": ["neo-finance", "precision", "immersive", "calm urgency"],
+    "voice": {
+      "style": "Short sentences, declarative headlines, frictionless microcopy.",
+      "do": ["sound certain", "focus on speed", "speak to outcomes"],
+      "dont": ["use slang", "over explain technology", "add filler"]
+    }
+  },
+  "foundations": {
+    "color": {
+      "primary": {
+        "name": "Aurora Lime",
+        "value": "#E9F28E",
+        "rgb": "233, 242, 142",
+        "usage": "Hero backdrops, CTA fills, icon badges, glow strokes.",
+        "balance": "Never exceed 40% of any frame; pair with deep charcoal to preserve contrast."
+      },
+      "secondary": {
+        "name": "Carbon Void",
+        "value": "#0D0D0C",
+        "rgb": "13, 13, 12",
+        "usage": "Full-bleed backgrounds, typography, CTA outlines."
+      },
+      "tertiary": {
+        "name": "Graphite Panel",
+        "value": "#353535",
+        "rgb": "53, 53, 53",
+        "usage": "Card surfaces, mid-tone dividers, muted buttons."
+      },
+      "accents": [
+        {
+          "name": "Soft Mist",
+          "value": "#F4F7EA",
+          "usage": "High-contrast blocks, data callouts, white cards."
+        },
+        {
+          "name": "Signal White",
+          "value": "#FFFFFF",
+          "usage": "Logo reverse, icon strokes, typography over Aurora Lime."
+        }
+      ],
+      "gradients": [
+        {
+          "name": "Aurora Horizon",
+          "stops": [
+            {"color": "#E9F28E", "position": 0},
+            {"color": "#F7FFD9", "position": 60},
+            {"color": "#D7FF7E", "position": 100}
+          ],
+          "usage": "Large hero canvases behind photography or logo lockups."
+        }
+      ]
+    },
+    "typography": {
+      "family": "Inter",
+      "weights": {
+        "hero": 800,
+        "headline": 700,
+        "subhead": 600,
+        "body": 400,
+        "caption": 300
+      },
+      "tracking": "Tight (-1% to -3%) at display sizes to mimic poster typography.",
+      "line_height": {
+        "display": 0.92,
+        "body": 1.35,
+        "chat": 1.4
+      },
+      "rules": [
+        "All-caps only for micro labels.",
+        "Hero headline splits line intentionally to emphasize verbs ('MONEY MOVE / FASTER IN / CHAT').",
+        "Numerals use tabular figures when showing rates or balances."
+      ]
+    },
+    "spacing": {
+      "base_unit": 4,
+      "scale": [4, 8, 12, 16, 24, 32, 40, 56, 72, 96],
+      "application": {
+        "card_padding": "24 horizontal / 32 vertical",
+        "grid_gap": "24px between cards in desktop mosaic, 16px on tablet.",
+        "hero_margins": "96px top and bottom breathing room."
+      },
+      "philosophy": "High tension between dense typography blocks and generous negative space."
+    },
+    "imagery": {
+      "style": "High-contrast portrait photography with silhouetted subjects facing right, illuminated by Aurora Lime rim lights.",
+      "treatments": ["Use feathered masks to fade into background gradient.", "Apply subtle grain overlay (8–12%).", "Never show busy environments; isolate subject on void."],
+      "usage": "Only one photographic subject per frame; everything else remains vector or typographic."
+    },
+    "iconography": {
+      "logo": {
+        "mark": "Rounded square with centered 'A' arrow-cut motif.",
+        "corner_radius": 36,
+        "stroke": "None; rely on fill contrast.",
+        "alignment": "Mark is optically centered vertically and horizontally."
+      },
+      "system": {
+        "shape_language": "Perpendicular cuts with softened corners.",
+        "line_weight": 1.5,
+        "fill_usage": "Use solid fills only on action buttons; elsewhere keep icons as punched-out silhouettes."
+      }
+    }
+  },
+  "layout_principles": {
+    "grid": "12-column fluid grid with 160px max gutter on XL, 1200px content lockup for hero mosaic.",
+    "card_system": "Nested rounded-rectangle tiles (20px radius) stacked in collage. Alternate sizes to create rhythm.",
+    "hierarchy": [
+      "Photography tile anchors left column.",
+      "Logo tiles repeat to establish recognition.",
+      "Bold typographic block sits on stark white tile to punctuate message.",
+      "Color swatches or icon chips fill negative space."
+    ],
+    "motion": {
+      "behavior": "Slow drift parallax on hero cards (4–8px). Buttons snap quickly (120ms) with cubic-bezier(0.2, 0.8, 0.3, 1).",
+      "micro": "Hover lifts cards by 4px with soft shadow (#000000 / 25% blur 24)."
+    }
+  },
+  "components": [
+    {
+      "name": "HeroBillboard",
+      "purpose": "Primary acquisition hero communicating speed + innovation.",
+      "structure": [
+        "Left 60%: gradient canvas with silhouette portrait or product render.",
+        "Right 40%: stacked card mosaic containing logo, colors, typography specimen."
+      ],
+      "visual_direction": {
+        "background": "Aurora Horizon gradient fading to Carbon Void edges.",
+        "type": "Ultra-bold Inter with extreme kerning; align text flush left.",
+        "photography": "Subject facing toward headline to guide gaze."
+      },
+      "copy_tone": ["Energetic", "Commanding", "Benefit-first"],
+      "states": {
+        "default": "Glass-smooth surfaces, crisp edges.",
+        "scroll": "Apply slight parallax offset (max 12px).",
+        "dark_mode": "Invert cards to Carbon + Aurora outlines; maintain white typography tile."
+      },
+      "rules": [
+        "Never place more than one block of body copy inside hero.",
+        "Always include tagline 'Money move faster in chat' in at least one card."
+      ]
+    },
+    {
+      "name": "LogoBadge",
+      "purpose": "Brand anchor used across navigation, chat badges, and tiles.",
+      "structure": {
+        "shape": "Rounded square 84px with 22px radius.",
+        "content": "Centered A-mark sized to 60% of container height."
+      },
+      "visual_direction": {
+        "fills": ["Aurora Lime fill with Carbon Void mark", "Carbon Void fill with Signal White mark"],
+        "shadow": "0 8px 30px rgba(0, 0, 0, 0.45) when floating."
+      },
+      "usage_rules": [
+        "Keep badge alone on tiles or pair with short label below.",
+        "Scale proportionally on mobile (min 48px)."
+      ]
+    },
+    {
+      "name": "TypographyPanel",
+      "purpose": "Showcase bold messaging in marketing blocks and chat promos.",
+      "structure": {
+        "container": "Pure white or Soft Mist tile with 20px radius.",
+        "padding": "48px desktop / 32px mobile",
+        "text": "Stacked words broken by manual line returns for rhythm."
+      },
+      "visual_direction": {
+        "type_scale": "Clamp between 48px and 96px depending on viewport.",
+        "contrast": "Use Carbon Void text only; never colorize headline."
+      },
+      "states": {
+        "default": "Static type.",
+        "animated": "Optional kerning breathing animation (1.6s)."
+      },
+      "rules": [
+        "Each line should feature one verb or noun.",
+        "Maintain consistent left alignment even within mosaic."
+      ]
+    },
+    {
+      "name": "ColorSwatchTile",
+      "purpose": "Communicate palette quickly across product surfaces.",
+      "structure": {
+        "split": "Top 70% color fill, bottom 30% Carbon label bar.",
+        "labeling": "Hex + RGB stacked, Inter 500 12px."
+      },
+      "visual_direction": {
+        "corner_radius": 20,
+        "shadow": "Optional inner shadow for tactile feel."
+      },
+      "usage_rules": [
+        "Always include at least three palette tiles in hero collage.",
+        "Use as legend inside design system docs and color pickers."
+      ]
+    },
+    {
+      "name": "ChatCTA",
+      "purpose": "Bridge marketing story to in-product chat experience.",
+      "structure": {
+        "container": "Aurora Lime tile with centered CTA button or copy.",
+        "button": "Carbon Void fill, rounded pill (radius 999px), Inter 600 uppercase."
+      },
+      "visual_direction": {
+        "copy": "Invite direct action: 'Open the chat', 'Move funds now'.",
+        "icon": "Optional arrow chevron pointing right."
+      },
+      "states": {
+        "hover": "Invert to Carbon background with Aurora outline (2px).",
+        "active": "Compress shadow to 0 2px 8px rgba(0,0,0,0.6)."
+      },
+      "rules": [
+        "Never mix more than two colors in CTA.",
+        "Place CTA adjacent to headline tile for narrative continuity."
+      ]
+    },
+    {
+      "name": "ChatInterfaceCard",
+      "purpose": "In-product chat module reflecting hero aesthetics.",
+      "structure": {
+        "background": "Deep Carbon gradient (#0D0D0C → #1A1A1A).",
+        "bubble_style": {
+          "user": "Aurora Lime outline 1px, transparent fill, Inter 500.",
+          "assistant": "Graphite Panel fill with Signal White text."
+        },
+        "input": "Rounded pill with dual-tone gradient border and minimal icons."
+      },
+      "visual_direction": {
+        "glow": "Subtle neon glow under assistant bubbles (0 0 18px Aurora).",
+        "typography": "Keep replies concise; emphasize numbers in bold."
+      },
+      "interaction": {
+        "focus": "Input border animates from Aurora to Signal White over 300ms.",
+        "typing": "Three-dot indicator using Aurora pulses."
+      },
+      "rules": [
+        "Chat area should feel like floating tile within void; drop shadow 0 12px 60px rgba(0,0,0,0.65).",
+        "Never use pure white backgrounds inside chat to maintain cinematic vibe."
+      ]
+    },
+    {
+      "name": "StatCapsule",
+      "purpose": "Display KPIs (latency, settlement speed, yield).",
+      "structure": {
+        "container": "Pill 56px height, Graphite fill, 999px radius.",
+        "content": "Label (Inter 500 12px upper) + Value (Inter 700 18px)."
+      },
+      "visual_direction": {
+        "divider": "2px Aurora Lime dot separating label and value.",
+        "icon": "Optional micro glyph at left."
+      },
+      "usage_rules": [
+        "Group in threes for rhythm.",
+        "Align capsules along card edges or overlay on photography."
+      ]
+    },
+    {
+      "name": "TestimonialTile",
+      "purpose": "Quote card echoing product performance.",
+      "structure": {
+        "background": "Carbon Void with subtle noise.",
+        "content": [
+          "Quote text Inter 500 18px, Signal White color.",
+          "Client name Inter 600 14px uppercase in Aurora Lime."
+        ]
+      },
+      "visual_direction": {
+        "marks": "Use logo badge watermarked at 12% opacity bottom right.",
+        "spacing": "Generous padding (40px)."
+      },
+      "rules": [
+        "Keep quotes under 120 characters.",
+        "Pair with StatCapsules to reinforce proof."
+      ]
+    }
+  ],
+  "design_principles": [
+    "Contrast is the hero: bright finance energy against black void.",
+    "Every frame tells a story about speed; remove anything that slows the read.",
+    "Repetition builds trust—reuse the badge, the lime, the type system deliberately.",
+    "Cards behave like tangible hardware; respect consistent radii and clean shadows.",
+    "Chat should feel like a premium control room, not a casual messenger."
+  ],
+  "implementation_notes": {
+    "tokens": {
+      "css": "Expose colors, spacing scale, and typography as CSS variables or design tokens for easy theming.",
+      "theme_example": {
+        "--color-aurora": "#E9F28E",
+        "--color-carbon": "#0D0D0C",
+        "--color-graphite": "#353535",
+        "--radius-card": "20px",
+        "--radius-pill": "999px"
+      }
+    },
+    "responsiveness": [
+      "Collapse tile collage into vertical stack on <= 768px while preserving alternating color rhythm.",
+      "Scale hero typography using clamp(2.5rem, 6vw, 6rem).",
+      "Ensure tap targets remain >48px with consistent pill buttons."
+    ],
+    "accessibility": [
+      "Maintain minimum 4.5:1 contrast (Aurora on Carbon, Carbon on Soft Mist).",
+      "Provide text alternatives for photography tiles (describe innovation + finance).",
+      "Support reduced motion by disabling parallax and glow pulses when prefers-reduced-motion is true."
+    ]
+  }
+}
+

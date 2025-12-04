@@ -167,9 +167,9 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
           if (Array.isArray(data.data.data) && data.data.data.length === 0) {
             // API returned empty, but we might have cached transactions
             console.log('[TransactionHistory] API returned empty, checking cache...');
-            if (typeof window !== 'undefined' && walletId) {
+            if (typeof window !== 'undefined' && walletId && authParams.userId) {
               const { getCachedTransactions } = await import('@/lib/storage/transaction-cache');
-              const cached = getCachedTransactions(walletId);
+              const cached = await getCachedTransactions(authParams.userId, walletId);
               if (cached.length > 0) {
                 console.log(`[TransactionHistory] 💾 Found ${cached.length} cached transactions`);
                 setTransactions(cached);
@@ -374,7 +374,9 @@ export function TransactionHistory({ walletId, walletAddress, limit = 50, classN
           // Merge with cached transactions to ensure we never lose transactions
           if (typeof window !== 'undefined' && walletId) {
             const { mergeWithAPITransactions } = await import('@/lib/storage/transaction-cache');
-            const merged = mergeWithAPITransactions(walletId, deduplicated);
+            const merged = authParams.userId 
+              ? await mergeWithAPITransactions(authParams.userId, walletId, deduplicated)
+              : deduplicated;
             // Deduplicate merged results as well
             const finalUnique = new Map<string, Transaction>();
             merged.forEach(tx => {

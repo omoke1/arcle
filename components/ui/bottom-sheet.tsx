@@ -56,8 +56,8 @@ export function BottomSheet({
       <div
         ref={sheetRef}
         className={cn(
-          "fixed bottom-0 left-0 right-0 z-[60] bg-dark-grey rounded-t-3xl",
-          "shadow-2xl border-t border-dark-grey/50",
+          "fixed bottom-0 left-0 right-0 z-[60] bg-carbon rounded-t-3xl",
+          "shadow-2xl border-t border-graphite/50",
           "animate-in slide-in-from-bottom duration-300 ease-out",
           "max-h-[85vh] flex flex-col",
           className
@@ -65,16 +65,16 @@ export function BottomSheet({
       >
         {/* Draggable Handle */}
         <div className="flex justify-center pt-3 pb-2">
-          <div className="w-12 h-1 bg-white/20 rounded-full" />
+          <div className="w-12 h-1 bg-soft-mist/20 rounded-full" />
         </div>
 
         {/* Header */}
         {title && (
-          <div className="px-6 py-4 flex items-center justify-between border-b border-dark-grey/50">
-            <h2 className="text-lg font-semibold text-white">{title}</h2>
+          <div className="px-6 py-4 flex items-center justify-between border-b border-graphite/50">
+            <h2 className="text-lg font-semibold text-signal-white">{title}</h2>
             <button
               onClick={onClose}
-              className="text-casper hover:text-white transition-colors"
+              className="text-soft-mist/70 hover:text-signal-white transition-colors"
             >
               <X className="w-5 h-5" />
             </button>

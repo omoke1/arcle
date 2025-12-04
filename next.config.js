@@ -1,9 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Transpile Circle SDK to ensure it works with Next.js
+  transpilePackages: ['@circle-fin/w3s-pw-web-sdk'],
   // Note: Next.js 14 requires Node 18+, but project is set to Node 16
   // If issues arise, consider downgrading to Next.js 13.x which supports Node 16
-  webpack: (config, { isServer }) => {
+  webpack: (config, { isServer, webpack }) => {
     // Fix for QR code library compatibility
     if (!isServer) {
       config.resolve.fallback = {
@@ -13,6 +15,37 @@ const nextConfig = {
         crypto: false,
       };
     }
+
+    // Fix for Circle SDK dynamic import chunk loading issues
+    // Prevent webpack from incorrectly code-splitting the Circle SDK
+    if (!isServer) {
+      // Ensure Circle SDK is handled as a single chunk with a proper name
+      const originalSplitChunks = config.optimization?.splitChunks;
+      if (originalSplitChunks) {
+        config.optimization.splitChunks = {
+          ...originalSplitChunks,
+          cacheGroups: {
+            ...originalSplitChunks.cacheGroups,
+            // Dedicated chunk for Circle SDK with explicit name
+            circleSdk: {
+              test: /[\\/]node_modules[\\/]@circle-fin[\\/]w3s-pw-web-sdk[\\/]/,
+              name: 'circle-sdk',
+              chunks: 'async',
+              priority: 30,
+              enforce: true,
+            },
+          },
+        };
+      }
+
+      // Ignore warnings about dynamic imports and source maps
+      config.ignoreWarnings = [
+        ...(config.ignoreWarnings || []),
+        { module: /node_modules\/@circle-fin\/w3s-pw-web-sdk/ },
+        /Failed to parse source map/,
+      ];
+    }
+
     return config;
   },
 };

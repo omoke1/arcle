@@ -239,51 +239,51 @@ export async function bridgeUSDCWithKit(params: {
       bridgeConfig.maxFee = maxFee;
     }
 
-    // Step 4: Execute bridge
-    // NOTE: BridgeKit API has changed - this implementation needs to be updated
-    // For now, throw an error indicating this needs to be implemented
-    // The actual bridge functionality is handled via Circle's Transfer API in the bridge route
-    throw new Error(
-      'Bridge Kit direct integration is not yet implemented. ' +
-      'Please use the /api/circle/bridge endpoint which uses Circle\'s Transfer API for cross-chain transfers.'
-    );
-    
-    // TODO: Update when BridgeKit API is finalized
-    // const result = await kit.transfer({
-    //   source: {
-    //     address: sourceAddress,
-    //     chain: fromChain as any,
-    //   },
-    //   destination: {
-    //     address: destinationAddress,
-    //     chain: toChain as any,
-    //   },
-    //   amount,
-    //   config: bridgeConfig,
-    // }, {
-    //   from: sourceAdapter,
-    //   to: destAdapter,
-    // });
+    // Step 4: Execute bridge using BridgeKit API
+    // BridgeKit v1.1.2 uses the bridge() method with adapter contexts
+    const result = await kit.bridge({
+      from: {
+        adapter: sourceAdapter,
+        chain: fromChain as any,
+        address: sourceAddress, // Required for developer-controlled adapters
+      },
+      to: {
+        adapter: destAdapter,
+        chain: toChain as any,
+        recipientAddress: destinationAddress, // Custom recipient address
+      },
+      amount,
+      config: bridgeConfig,
+      token: 'USDC',
+    });
 
-    // Step 5: Map result to our format (commented out until BridgeKit API is updated)
-    // return {
-    //   state: result.state === 'success' ? 'success' : result.state === 'error' ? 'error' : 'pending',
-    //   bridgeId: result.id,
-    //   transactionHash: result.txHash,
-    //   steps: result.steps?.map(step => ({
-    //     name: step.name,
-    //     state: step.state === 'success' ? 'success' : step.state === 'error' ? 'error' : 'pending',
-    //     txHash: step.txHash,
-    //     errorMessage: step.errorMessage,
-    //   })),
-    //   error: result.state === 'error' ? {
-    //     code: result.error?.code || 'UNKNOWN',
-    //     type: result.error?.code === 'INVALID_CHAIN' ? 'INVALID_CHAIN' : 'UNKNOWN',
-    //     message: result.error?.message || 'Bridge failed',
-    //     recoverable: result.error?.recoverable ?? false,
-    //     supportedChains: result.error?.supportedChains,
-    //   } : undefined,
-    // };
+    // Step 5: Map result to our format
+    const errorStep = result.steps?.find(step => step.state === 'error');
+    const errorMessage = errorStep?.errorMessage || 
+      (errorStep?.error && typeof errorStep.error === 'object' && 'message' in errorStep.error 
+        ? String(errorStep.error.message) 
+        : undefined);
+
+    return {
+      state: result.state,
+      bridgeId: result.destination.address, // Use destination address as bridge ID
+      transactionHash: result.steps?.find(step => step.txHash)?.txHash,
+      steps: result.steps?.map(step => ({
+        name: step.name,
+        state: step.state === 'noop' ? 'pending' : step.state as 'pending' | 'success' | 'error',
+        txHash: step.txHash,
+        errorMessage: step.errorMessage || 
+          (step.error && typeof step.error === 'object' && 'message' in step.error 
+            ? String(step.error.message) 
+            : undefined),
+      })),
+      error: result.state === 'error' ? {
+        code: 'BRIDGE_ERROR',
+        type: 'UNKNOWN',
+        message: errorMessage || 'Bridge operation failed',
+        recoverable: false,
+      } : undefined,
+    };
   } catch (error: any) {
     // Handle errors with unified taxonomy
     const errorCode = error.code || 'UNKNOWN';

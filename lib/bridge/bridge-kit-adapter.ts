@@ -79,21 +79,21 @@ export async function bridgeWithKit(params: {
   const { initiateBridge } = await import("./cctp-bridge");
   
   try {
-    const result = await initiateBridge({
-      walletId: params.walletId,
-      amount: params.amount,
-      fromChain: params.fromChain as any,
-      toChain: params.toChain as any,
-      destinationAddress: params.destinationAddress,
-    });
+  const result = await initiateBridge({
+    walletId: params.walletId,
+    amount: params.amount,
+    fromChain: params.fromChain as any,
+    toChain: params.toChain as any,
+    destinationAddress: params.destinationAddress,
+  });
 
-    return {
-      bridgeId: result.bridgeId,
-      status: result.status,
-      transactionHash: result.transactionHash,
-      estimatedTime: result.estimatedTime,
-      progress: result.progress,
-    };
+  return {
+    bridgeId: result.bridgeId,
+    status: result.status,
+    transactionHash: result.transactionHash,
+    estimatedTime: result.estimatedTime,
+    progress: result.progress,
+  };
   } catch (error: any) {
     // Return error with unified taxonomy
     return {

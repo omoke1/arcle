@@ -75,7 +75,7 @@ export function ChatInterface({
   const hasMessages = localMessages.length > 0;
 
   return (
-    <div className="flex flex-col h-full bg-onyx">
+    <div className="flex flex-col h-full bg-carbon">
       {/* Chat Messages Area - Chat-first: 90% of screen per ui-plans.md */}
       <div className="flex-1 overflow-y-auto pb-24">
         {!hasMessages ? (

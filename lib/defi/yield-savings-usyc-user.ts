@@ -54,6 +54,10 @@ export interface SubscribeResult {
   error?: string;
   usdcAmount: string;
   estimatedUSYC: string;
+  // For two-step flow
+  step?: 'approve' | 'subscribe';
+  approvalChallengeId?: string;
+  subscribeChallengeId?: string;
 }
 
 export interface RedeemResult {
@@ -64,6 +68,10 @@ export interface RedeemResult {
   error?: string;
   usycAmount: string;
   estimatedUSDC: string;
+  // For two-step flow
+  step?: 'approve' | 'redeem';
+  approvalChallengeId?: string;
+  redeemChallengeId?: string;
 }
 
 /**
@@ -113,40 +121,15 @@ export async function subscribeToUSYC(
 
     console.log(`[USYC User] ✅ Approval challenge created: ${approveResult.challengeId}`);
 
-    // Wait for approval to be completed by user
-    console.log(`[USYC User] Waiting for user to complete approval...`);
-    await new Promise(resolve => setTimeout(resolve, 5000));
-
-    // Step 2: Subscribe to USYC by calling buy() on Teller
-    console.log(`[USYC User] Step 2: Creating subscription challenge...`);
-    
-    const subscribeResult = await executeContract({
-      userId,
-      userToken,
-      walletId,
-      contractAddress: teller,
-      abiFunctionSignature: "buy(uint256)",
-      abiParameters: [amountInSmallestUnit],
-      feeLevel: "MEDIUM",
-      refId: `usyc-subscribe-${Date.now()}`,
-    });
-
-    if (!subscribeResult.success) {
-      throw new Error(`Failed to subscribe to USYC: ${subscribeResult.error}`);
-    }
-
-    console.log(`[USYC User] ✅ Subscription challenge created: ${subscribeResult.challengeId}`);
-
-    // USYC maintains 1:1 peg with USDC initially, but grows with yield
-    const estimatedUSYC = usdcAmount;
-
+    // Return approval challenge first - user will complete it, then we'll create subscribe challenge
+    // This allows the chat flow to handle each step separately
     return {
       success: true,
-      challengeId: subscribeResult.challengeId,
-      transactionId: subscribeResult.transactionId,
-      transactionHash: subscribeResult.transactionHash,
+      step: 'approve',
+      approvalChallengeId: approveResult.challengeId,
+      challengeId: approveResult.challengeId, // Main challenge ID for this step
       usdcAmount,
-      estimatedUSYC,
+      estimatedUSYC: usdcAmount, // 1:1 initially
     };
   } catch (error: any) {
     console.error(`[USYC User] Subscription error:`, error);
@@ -205,11 +188,202 @@ export async function redeemUSYC(
 
     console.log(`[USYC User] ✅ Approval challenge created: ${approveResult.challengeId}`);
 
-    // Wait for approval
-    console.log(`[USYC User] Waiting for user to complete approval...`);
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    // Return approval challenge first - user will complete it, then we'll create redeem challenge
+    return {
+      success: true,
+      step: 'approve',
+      approvalChallengeId: approveResult.challengeId,
+      challengeId: approveResult.challengeId, // Main challenge ID for this step
+      usycAmount,
+      estimatedUSDC: usycAmount, // Will include yield when redeemed
+    };
+  } catch (error: any) {
+    console.error(`[USYC User] Redemption error:`, error);
+    return {
+      success: false,
+      error: error.message || "Failed to redeem USYC",
+      usycAmount,
+      estimatedUSDC: "0",
+    };
+  }
+}
 
-    // Step 2: Redeem USYC by calling sell() on Teller
+/**
+ * Get current USYC position and yield information
+ * Queries on-chain data via Circle API or direct RPC calls
+ */
+export async function getUSYCPosition(
+  walletAddress: string,
+  walletId?: string,
+  blockchain: string = "ETH"
+): Promise<YieldPosition | null> {
+  try {
+    if (!USYC_ADDRESSES[blockchain]) {
+      return null;
+    }
+
+    const { usyc } = USYC_ADDRESSES[blockchain];
+    const currentAPY = "5.25"; // Overnight federal funds rate (example)
+
+    // Try to get USYC balance from Circle API if walletId is provided
+    let usycBalance = "0";
+    let usdcValue = "0";
+
+    if (walletId) {
+      try {
+        // Query token balances from Circle API
+        const { circleApiRequest } = await import("@/lib/circle");
+        const balances = await circleApiRequest<any>(
+          `/v1/w3s/wallets/${walletId}/balances?blockchain=${blockchain}`
+        );
+
+        const tokenBalances = balances.data?.tokenBalances || balances.data || [];
+        
+        // Find USYC token balance
+        const usycBalanceData = tokenBalances.find((b: any) => {
+          const token = b.token || {};
+          const tokenAddress = token.address || b.tokenAddress || "";
+          return tokenAddress.toLowerCase() === usyc.toLowerCase();
+        });
+
+        if (usycBalanceData) {
+          const amount = usycBalanceData.amount || "0";
+          const decimals = usycBalanceData.token?.decimals || 18;
+          usycBalance = (parseFloat(amount) / Math.pow(10, decimals)).toFixed(6);
+          
+          // USYC maintains ~1:1 with USDC but grows with yield
+          // For now, assume 1:1 (in production, query oracle for exact price)
+          usdcValue = usycBalance;
+        }
+      } catch (apiError) {
+        console.warn("[USYC] Failed to fetch from Circle API, trying RPC:", apiError);
+        // Fall through to RPC query if API fails
+      }
+    }
+
+    // If no balance found via API, try RPC query (for any wallet address)
+    if (parseFloat(usycBalance) === 0 && walletAddress) {
+      try {
+        // This would require an RPC client - for now return what we have
+        // In production, add RPC query here using viem or ethers
+        console.log("[USYC] RPC query not implemented yet, using API data");
+      } catch (rpcError) {
+        console.warn("[USYC] RPC query failed:", rpcError);
+      }
+    }
+
+    // Calculate yield (simplified - in production, track initial investment and time)
+    const initialInvestment = parseFloat(usdcValue) > 0 ? usdcValue : "0";
+    const currentYield = parseFloat(usdcValue) > parseFloat(initialInvestment) 
+      ? (parseFloat(usdcValue) - parseFloat(initialInvestment)).toFixed(6)
+      : "0";
+    const yieldPercentage = parseFloat(initialInvestment) > 0
+      ? ((parseFloat(currentYield) / parseFloat(initialInvestment)) * 100).toFixed(2)
+      : "0";
+
+    return {
+      usycBalance,
+      usdcValue,
+      initialInvestment,
+      currentYield,
+      yieldPercentage,
+      apy: currentAPY,
+      blockchain,
+    };
+  } catch (error: any) {
+    console.error(`[USYC User] Error fetching position:`, error);
+    return null;
+  }
+}
+
+/**
+ * Complete USYC subscription after approval is done
+ * Call this after the approval challenge is completed
+ */
+export async function completeUSYCSubscribe(
+  userId: string,
+  userToken: string,
+  walletId: string,
+  usdcAmount: string,
+  blockchain: string = "ETH"
+): Promise<SubscribeResult> {
+  try {
+    if (!USYC_ADDRESSES[blockchain]) {
+      return {
+        success: false,
+        error: `USYC not available on ${blockchain}`,
+        usdcAmount,
+        estimatedUSYC: "0",
+      };
+    }
+
+    const { teller } = USYC_ADDRESSES[blockchain];
+    const amountInSmallestUnit = Math.floor(parseFloat(usdcAmount) * 1_000_000).toString();
+
+    console.log(`[USYC User] Step 2: Creating subscription challenge...`);
+    
+    const subscribeResult = await executeContract({
+      userId,
+      userToken,
+      walletId,
+      contractAddress: teller,
+      abiFunctionSignature: "buy(uint256)",
+      abiParameters: [amountInSmallestUnit],
+      feeLevel: "MEDIUM",
+      refId: `usyc-subscribe-${Date.now()}`,
+    });
+
+    if (!subscribeResult.success) {
+      throw new Error(`Failed to subscribe to USYC: ${subscribeResult.error}`);
+    }
+
+    console.log(`[USYC User] ✅ Subscription challenge created: ${subscribeResult.challengeId}`);
+
+    return {
+      success: true,
+      step: 'subscribe',
+      subscribeChallengeId: subscribeResult.challengeId,
+      challengeId: subscribeResult.challengeId,
+      transactionId: subscribeResult.transactionId,
+      transactionHash: subscribeResult.transactionHash,
+      usdcAmount,
+      estimatedUSYC: usdcAmount,
+    };
+  } catch (error: any) {
+    console.error(`[USYC User] Complete subscription error:`, error);
+    return {
+      success: false,
+      error: error.message || "Failed to complete USYC subscription",
+      usdcAmount,
+      estimatedUSYC: "0",
+    };
+  }
+}
+
+/**
+ * Complete USYC redemption after approval is done
+ * Call this after the approval challenge is completed
+ */
+export async function completeUSYCRedeem(
+  userId: string,
+  userToken: string,
+  walletId: string,
+  usycAmount: string,
+  blockchain: string = "ETH"
+): Promise<RedeemResult> {
+  try {
+    if (!USYC_ADDRESSES[blockchain]) {
+      return {
+        success: false,
+        error: `USYC not available on ${blockchain}`,
+        usycAmount,
+        estimatedUSDC: "0",
+      };
+    }
+
+    const { teller } = USYC_ADDRESSES[blockchain];
+    const amountInSmallestUnit = Math.floor(parseFloat(usycAmount) * 1_000_000).toString();
+
     console.log(`[USYC User] Step 2: Creating redemption challenge...`);
     
     const redeemResult = await executeContract({
@@ -229,61 +403,24 @@ export async function redeemUSYC(
 
     console.log(`[USYC User] ✅ Redemption challenge created: ${redeemResult.challengeId}`);
 
-    // USYC value grows with yield, so you get back more USDC than you put in
-    const estimatedUSDC = usycAmount;
-
     return {
       success: true,
+      step: 'redeem',
+      redeemChallengeId: redeemResult.challengeId,
       challengeId: redeemResult.challengeId,
       transactionId: redeemResult.transactionId,
       transactionHash: redeemResult.transactionHash,
       usycAmount,
-      estimatedUSDC,
+      estimatedUSDC: usycAmount, // Will include yield
     };
   } catch (error: any) {
-    console.error(`[USYC User] Redemption error:`, error);
+    console.error(`[USYC User] Complete redemption error:`, error);
     return {
       success: false,
-      error: error.message || "Failed to redeem USYC",
+      error: error.message || "Failed to complete USYC redemption",
       usycAmount,
       estimatedUSDC: "0",
     };
-  }
-}
-
-/**
- * Get current USYC position and yield information
- * This would need to query on-chain data
- */
-export async function getUSYCPosition(
-  walletAddress: string,
-  initialInvestment: string,
-  blockchain: string = "ETH"
-): Promise<YieldPosition | null> {
-  try {
-    if (!USYC_ADDRESSES[blockchain]) {
-      return null;
-    }
-
-    // In a real implementation, we would:
-    // 1. Query USYC balance from the token contract
-    // 2. Query current USYC price from the Oracle
-    // 3. Calculate yield based on time held and current value
-
-    const currentAPY = "5.25"; // Overnight federal funds rate (example)
-
-    return {
-      usycBalance: "0", // Would query from contract
-      usdcValue: "0", // Would calculate from oracle price
-      initialInvestment,
-      currentYield: "0",
-      yieldPercentage: "0",
-      apy: currentAPY,
-      blockchain,
-    };
-  } catch (error: any) {
-    console.error(`[USYC User] Error fetching position:`, error);
-    return null;
   }
 }
 
@@ -313,6 +450,11 @@ export function formatUSYCPosition(position: YieldPosition): string {
          `APY: ${position.apy}%\n` +
          `Blockchain: ${position.blockchain}`;
 }
+
+
+
+
+
 
 
 

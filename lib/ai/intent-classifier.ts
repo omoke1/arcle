@@ -49,6 +49,7 @@ export type IntentType =
   | "approve_token"
   | "reject_token"
   | "help"
+  | "location"
   | "unknown";
 
 export interface ParsedIntent {
@@ -85,6 +86,16 @@ export class IntentClassifier {
         intent: "greeting",
         confidence: 0.95,
         entities: {},
+        rawCommand: command,
+      };
+    }
+    
+    // Location sharing intent - check early for coordinates/maps
+    if (this.matchesLocation(command, lowerCommand)) {
+      return {
+        intent: "location",
+        confidence: 0.95,
+        entities: this.extractLocationEntities(command, lowerCommand),
         rawCommand: command,
       };
     }
@@ -767,6 +778,26 @@ export class IntentClassifier {
   }
 
   private static matchesSchedule(command: string): boolean {
+    // If the user explicitly mentions recurring/subscription language, let the subscription intent handle it
+    const recurringPatterns = [
+      "recurring",
+      "subscription",
+      "subscribe",
+      "auto renew",
+      "auto-renew",
+      "auto pay",
+      "autopay",
+      "every day",
+      "every week",
+      "every month",
+      "monthly",
+      "weekly",
+      "daily",
+    ];
+    if (recurringPatterns.some((keyword) => command.includes(keyword))) {
+      return false;
+    }
+
     const scheduleKeywords = [
       "schedule", 
       "schedule payment", 
@@ -1713,6 +1744,66 @@ export class IntentClassifier {
       entities.currency = "USDC";
     } else if (lower.includes("eurc") || lower.includes("eur")) {
       entities.currency = "EURC";
+    }
+    
+    return entities;
+  }
+
+  /**
+   * Check if command contains location sharing
+   */
+  private static matchesLocation(original: string, lower: string): boolean {
+    // Check for location emoji
+    if (original.includes("📍") || original.includes("🗺️") || original.includes("🌍")) {
+      return true;
+    }
+    
+    // Check for "my location" or "location"
+    if (lower.includes("my location") || lower.includes("📍")) {
+      return true;
+    }
+    
+    // Check for coordinates pattern (latitude, longitude)
+    const coordPattern = /-?\d+\.?\d*,\s*-?\d+\.?\d*/;
+    if (coordPattern.test(original)) {
+      return true;
+    }
+    
+    // Check for Google Maps URL
+    if (original.includes("google.com/maps") || original.includes("maps.google.com")) {
+      return true;
+    }
+    
+    // Check for location-related keywords
+    const locationKeywords = ["location", "coordinates", "where i am", "my position", "gps"];
+    if (locationKeywords.some(keyword => lower.includes(keyword))) {
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * Extract location entities from command
+   */
+  private static extractLocationEntities(original: string, lower: string): ParsedIntent["entities"] {
+    const entities: ParsedIntent["entities"] = {};
+    
+    // Extract coordinates (latitude, longitude)
+    const coordMatch = original.match(/(-?\d+\.?\d*),\s*(-?\d+\.?\d*)/);
+    if (coordMatch) {
+      entities.address = `${coordMatch[1]},${coordMatch[2]}`; // Store coordinates in address field
+    }
+    
+    // Extract Google Maps URL
+    const mapsMatch = original.match(/maps\.google\.com\/\?q=([^&\s]+)|google\.com\/maps\?q=([^&\s]+)/);
+    if (mapsMatch) {
+      entities.address = mapsMatch[1] || mapsMatch[2];
+    }
+    
+    // Check for delivery context
+    if (lower.includes("delivery") || lower.includes("order") || lower.includes("track")) {
+      entities.recipient = "delivery"; // Store context in recipient field
     }
     
     return entities;

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ArrowLeft, Loader2, CheckCircle2, Wallet } from "lucide-react";
 import { useCircle } from "@/hooks/useCircle";
+import { saveWalletData } from "@/lib/supabase-data";
 
 interface CreateWalletPageProps {
   onBack: () => void;
@@ -23,11 +24,24 @@ export function CreateWalletPage({ onBack, onWalletCreated }: CreateWalletPagePr
         const wallet = result.wallet;
         setWalletId(wallet.id);
         setWalletAddress(wallet.address);
-        // Store in localStorage
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('arcle_wallet_id', wallet.id);
-          localStorage.setItem('arcle_wallet_address', wallet.address);
+        
+        // Get userId from useCircle hook or try to load it
+        // Note: This assumes userId is available from the hook context
+        // If not available, we'll need to pass it as a prop or get it from Supabase
+        try {
+          // Try to get userId from a preference or from the wallet creation result
+          // For now, we'll save wallet data without userId (will be set when user is created)
+          // The wallet creation in useCircle should handle saving to Supabase
+          // But we'll also save here as a backup
+          if (typeof window !== 'undefined') {
+            // Migration: Also save to localStorage as fallback
+            localStorage.setItem('arcle_wallet_id', wallet.id);
+            localStorage.setItem('arcle_wallet_address', wallet.address);
+          }
+        } catch (error) {
+          console.error("[CreateWalletPage] Failed to save wallet data:", error);
         }
+        
         // Call callback to proceed to permissions
         onWalletCreated(wallet.id, wallet.address);
       } else if (result && result.type === "challenge") {
@@ -121,7 +135,7 @@ export function CreateWalletPage({ onBack, onWalletCreated }: CreateWalletPagePr
               • No seed phrases - secure cloud backup
             </p>
             <p className="text-sm text-white">
-              • Set custom permissions for bot control
+              • Manage agent permissions for automatic execution
             </p>
           </div>
 

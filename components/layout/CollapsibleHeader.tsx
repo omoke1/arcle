@@ -13,6 +13,7 @@ interface CollapsibleHeaderProps {
   isLoading?: boolean;
   walletId?: string | null;
   walletAddress?: string | null;
+  userId?: string | null;
   onSend?: () => void;
   onReceive?: () => void;
   onBridge?: () => void;
@@ -30,6 +31,7 @@ export function CollapsibleHeader({
   isLoading = false,
   walletId,
   walletAddress,
+  userId,
   onSend,
   onReceive,
   onBridge,
@@ -85,6 +87,7 @@ export function CollapsibleHeader({
         onClose={() => setIsSidebarOpen(false)}
         walletId={walletId}
         walletAddress={walletAddress}
+        userId={userId}
         onLogout={onLogout}
         onWalletCreated={onWalletCreated}
         openView={sidebarView === "main" ? undefined : sidebarView}

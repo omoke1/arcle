@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, History, Settings, Wallet, HelpCircle, LogOut, Plus, CalendarDays, Search } from "lucide-react";
+import { X, History, Settings, Wallet, HelpCircle, LogOut, Plus, CalendarDays, Search, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TransactionHistory } from "@/components/transactions/TransactionHistory";
 import { SettingsPage } from "./SettingsPage";
@@ -9,24 +9,34 @@ import { WalletSettingsPage } from "./WalletSettingsPage";
 import { HelpPage } from "./HelpPage";
 import { CreateWalletPage } from "./CreateWalletPage";
 import { CreateSubAccountPage } from "./CreateSubAccountPage";
-import { BotPermissionsPage } from "./BotPermissionsPage";
+import { AgentPermissionsPage } from "./AgentPermissionsPage";
 import { SchedulesPage } from "./SchedulesPage";
 import { ScanReportsPage } from "./ScanReportsPage";
 import { TransactionHistoryPage } from "./TransactionHistoryPage";
 
-type SidebarView = "main" | "settings" | "wallet" | "help" | "create-wallet" | "create-subaccount" | "permissions" | "schedules" | "scan-reports" | "transaction-history";
+type SidebarView = "main" | "settings" | "wallet" | "help" | "create-wallet" | "create-subaccount" | "agent-permissions" | "schedules" | "scan-reports" | "transaction-history";
 
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
   walletId?: string | null;
   walletAddress?: string | null;
+  userId?: string | null;
   onLogout?: () => void;
   onWalletCreated?: (walletId: string, walletAddress: string) => void;
   openView?: SidebarView;
 }
 
-export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, onWalletCreated, openView }: SidebarProps) {
+export function Sidebar({
+  isOpen,
+  onClose,
+  walletId,
+  walletAddress,
+  userId,
+  onLogout,
+  onWalletCreated,
+  openView,
+}: SidebarProps) {
   const [currentView, setCurrentView] = useState<SidebarView>("main");
   const [newWalletId, setNewWalletId] = useState<string | null>(null);
   const [newWalletAddress, setNewWalletAddress] = useState<string | null>(null);
@@ -65,8 +75,8 @@ export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, on
   }, [isOpen]);
 
   const handleBack = () => {
-    if (currentView === "permissions") {
-      // If going back from permissions, check if we're editing or creating
+    if (currentView === "agent-permissions") {
+      // If going back from agent permissions, check if we're editing or creating
       if (editingWalletId) {
         // If editing, go back to wallet settings
         setEditingWalletId(null);
@@ -89,18 +99,9 @@ export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, on
   const handleWalletCreated = (walletId: string, walletAddress: string) => {
     setNewWalletId(walletId);
     setNewWalletAddress(walletAddress);
-    setCurrentView("permissions");
+    setCurrentView("agent-permissions");
   };
 
-  const handlePermissionsComplete = () => {
-    if (newWalletId && newWalletAddress && onWalletCreated) {
-      onWalletCreated(newWalletId, newWalletAddress);
-    }
-    setCurrentView("main");
-    setNewWalletId(null);
-    setNewWalletAddress(null);
-    onClose();
-  };
 
   return (
     <>
@@ -207,7 +208,10 @@ export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, on
             </div>
           </>
         ) : currentView === "settings" ? (
-          <SettingsPage onBack={handleBack} onLogout={onLogout} />
+          <SettingsPage 
+            onBack={handleBack} 
+            onLogout={onLogout}
+          />
         ) : currentView === "wallet" ? (
           <WalletSettingsPage 
             onBack={handleBack} 
@@ -215,11 +219,11 @@ export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, on
             walletId={walletId}
             onCreateWallet={() => setCurrentView("create-subaccount")}
             onViewPermissions={() => {
-              // Navigate to permissions page with existing wallet
+              // Navigate to agent permissions page with existing wallet
               if (walletId && walletAddress) {
                 setEditingWalletId(walletId);
                 setEditingWalletAddress(walletAddress);
-                setCurrentView("permissions");
+                setCurrentView("agent-permissions");
               }
             }}
           />
@@ -236,22 +240,14 @@ export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, on
             masterWalletId={walletId}
             masterAddress={walletAddress}
             onSubAccountCreated={(subAccountId, subWalletId, subAddress) => {
-              // Navigate to permissions for sub-account
+              // Navigate to agent permissions for sub-account
               setNewWalletId(subWalletId);
               setNewWalletAddress(subAddress);
-              setCurrentView("permissions");
+              setCurrentView("agent-permissions");
             }}
           />
-        ) : currentView === "permissions" && (newWalletId && newWalletAddress || editingWalletId && editingWalletAddress) ? (
-          <BotPermissionsPage
-            onBack={handleBack}
-            onComplete={newWalletId ? handlePermissionsComplete : undefined}
-            walletId={newWalletId || editingWalletId!}
-            walletAddress={newWalletAddress || editingWalletAddress!}
-            isEditing={!!editingWalletId}
-          />
         ) : currentView === "schedules" ? (
-          <SchedulesPage onBack={handleBack} />
+          <SchedulesPage onBack={handleBack} userId={userId} />
         ) : currentView === "scan-reports" ? (
           <ScanReportsPage onBack={handleBack} />
         ) : currentView === "transaction-history" ? (
@@ -259,6 +255,17 @@ export function Sidebar({ isOpen, onClose, walletId, walletAddress, onLogout, on
             onBack={handleBack} 
             walletId={walletId}
             walletAddress={walletAddress}
+          />
+        ) : currentView === "agent-permissions" ? (
+          <AgentPermissionsPage 
+            onBack={handleBack}
+            walletId={newWalletId || editingWalletId || walletId}
+            onComplete={() => {
+              // Complete wallet creation flow
+              if (onWalletCreated && newWalletId && newWalletAddress) {
+                onWalletCreated(newWalletId, newWalletAddress);
+              }
+            }}
           />
         ) : null}
       </aside>

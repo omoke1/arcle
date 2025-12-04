@@ -31,6 +31,66 @@ import { circleApiRequest, circleConfig } from "@/lib/circle";
 import { generateUUID } from "@/lib/utils/uuid";
 import { validateBridgeRoute, getSupportedChainsList } from "@/lib/bridge/bridge-kit-user-wallets";
 import type { CCTPTransferResult } from "@/lib/archived/legacy-dev-controlled/cctp-implementation";
+import { delegateExecution } from "@/lib/wallet/sessionKeys/delegateExecution";
+import { isSessionKeysEnabled } from "@/lib/config/featureFlags";
+import { checkSessionKeyStatus } from "@/lib/ai/sessionKeyHelper";
+import { rateLimit } from "@/lib/api/rate-limit";
+
+/**
+ * Server-side token expiration check
+ */
+function checkTokenExpiryServer(token: string | null | undefined): {
+  isExpired: boolean;
+  isExpiringSoon: boolean;
+  expiresAt: number | null;
+} {
+  if (!token) {
+    return { isExpired: true, isExpiringSoon: true, expiresAt: null };
+  }
+
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+      return { isExpired: true, isExpiringSoon: true, expiresAt: null };
+    }
+
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf-8'));
+    const expiresAt = payload.exp * 1000; // Convert to milliseconds
+    const now = Date.now();
+    const timeUntilExpiry = expiresAt - now;
+    const bufferMs = 5 * 60 * 1000; // 5 minutes buffer
+
+    return {
+      isExpired: timeUntilExpiry <= 0,
+      isExpiringSoon: timeUntilExpiry < bufferMs,
+      expiresAt,
+    };
+  } catch (error) {
+    console.error('[Bridge] Error parsing token:', error);
+    return { isExpired: true, isExpiringSoon: true, expiresAt: null };
+  }
+}
+
+/**
+ * Refresh token server-side
+ */
+async function refreshTokenServer(userId: string): Promise<string | null> {
+  try {
+    const client = getUserCircleClient();
+    const response = await client.createUserToken({ userId });
+
+    if (!response.data?.userToken) {
+      console.error('[Bridge] Failed to refresh token: No userToken in response');
+      return null;
+    }
+
+    console.log('[Bridge] ✅ Token refreshed successfully');
+    return response.data.userToken;
+  } catch (error: any) {
+    console.error('[Bridge] Token refresh failed:', error.message);
+    return null;
+  }
+}
 
 interface BridgeRequest {
   walletId: string;
@@ -42,16 +102,62 @@ interface BridgeRequest {
   fastTransfer?: boolean; // Enable Fast Transfer mode (seconds vs 13-19 minutes)
   userId?: string; // Required for User-Controlled Wallets
   userToken?: string; // Required for User-Controlled Wallets
+  agentId?: string; // Optional agent ID for session key lookup
+}
+
+const TESTNET_CHAIN_ALIAS_MAP: Record<string, string> = {
+  BASE: "BASE-SEPOLIA",
+  ETHEREUM: "ETHEREUM-SEPOLIA",
+  ARBITRUM: "ARBITRUM-SEPOLIA",
+  POLYGON: "POLYGON-AMOY",
+  AVALANCHE: "AVALANCHE-FUJI",
+};
+
+function normalizeBridgeChain(
+  chain: string | undefined,
+  sourceChain: string
+): string {
+  if (!chain) return chain ?? "";
+  const upper = chain.toUpperCase();
+  const isTestnetSource = sourceChain.toUpperCase().includes("TESTNET") || sourceChain.toUpperCase().includes("SEPOLIA");
+  if (isTestnetSource && TESTNET_CHAIN_ALIAS_MAP[upper]) {
+    return TESTNET_CHAIN_ALIAS_MAP[upper];
+  }
+  return upper;
 }
 
 export async function POST(request: NextRequest) {
   try {
+    // Basic IP-based rate limiting for bridge operations
+    const ip =
+      request.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
+      request.headers.get("x-real-ip") ||
+      "unknown";
+    const rl = await rateLimit(`circle:bridge:${ip}`, 10, 60); // 10 bridge ops/min/IP
+    if (!rl.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Rate limit exceeded for bridge operations. Please wait a bit and try again.",
+        },
+        {
+          status: 429,
+          headers: {
+            "X-RateLimit-Limit": "10",
+            "X-RateLimit-Remaining": String(rl.remaining),
+          },
+        }
+      );
+    }
+
     const body: BridgeRequest = await request.json();
     
     const { walletId, amount, fromChain, toChain, destinationAddress, idempotencyKey, fastTransfer, userId, userToken } = body;
+    const sourceChain = (fromChain || "ARC-TESTNET").toUpperCase();
+    const targetChain = normalizeBridgeChain(toChain, sourceChain);
 
     // Validate required fields
-    if (!walletId || !amount || !toChain || !destinationAddress) {
+    if (!walletId || !amount || !targetChain || !destinationAddress) {
       return NextResponse.json(
         {
           success: false,
@@ -65,7 +171,7 @@ export async function POST(request: NextRequest) {
 
     // SAFETY: Validate route BEFORE attempting any operations
     // This prevents fund loss on unsupported routes (Bridge Kit v1.1.2 improvement)
-    const routeValidation = validateBridgeRoute(fromChain || 'ARC-TESTNET', toChain);
+    const routeValidation = validateBridgeRoute(sourceChain, targetChain);
     if (!routeValidation.valid) {
       return NextResponse.json(
         {
@@ -85,14 +191,140 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // ⚠️ TOKEN EXPIRATION CHECK & REFRESH
+    // Check if token is expired or expiring soon, refresh if needed
+    let activeUserToken = userToken;
+    if (userId && userToken) {
+      const tokenStatus = checkTokenExpiryServer(userToken);
+      
+      if (tokenStatus.isExpired || tokenStatus.isExpiringSoon) {
+        console.log('[Bridge] Token expired or expiring soon, refreshing...', {
+          isExpired: tokenStatus.isExpired,
+          isExpiringSoon: tokenStatus.isExpiringSoon,
+          expiresAt: tokenStatus.expiresAt ? new Date(tokenStatus.expiresAt).toISOString() : null,
+        });
+        
+        const refreshedToken = await refreshTokenServer(userId);
+        if (refreshedToken) {
+          activeUserToken = refreshedToken;
+          console.log('[Bridge] ✅ Token refreshed, using new token');
+        } else {
+          return NextResponse.json(
+            {
+              success: false,
+              error: "User token expired and could not be refreshed. Please re-authenticate.",
+              errorCode: "TOKEN_EXPIRED",
+              errorType: "AUTH_ERROR",
+              recoverable: true,
+            },
+            { status: 401 }
+          );
+        }
+      }
+    }
+
     // Convert amount to decimal string (SDK expects decimal format)
     const amountDecimal = parseFloat(amount).toFixed(6);
+    
+    // Convert amount to smallest unit for session key checks (1 USDC = 1000000)
+    const amountInSmallestUnit = (parseFloat(amount) * 1000000).toString();
+
+    // Check if session keys can handle this bridge operation
+    // Session keys can sign Gateway EIP-712 messages for cross-chain transfers (no PIN required)
+    // Same-chain transfers can also bypass PIN with session keys
+    if (isSessionKeysEnabled() && userId && activeUserToken) {
+      try {
+        const { checkSessionKeyStatus } = await import("@/lib/ai/sessionKeyHelper");
+        const sessionStatus = await checkSessionKeyStatus(
+          walletId,
+          userId,
+          activeUserToken,
+          'bridge',
+          amountInSmallestUnit
+        );
+
+        // For same-chain transfers, session keys can bypass PIN
+        if (sourceChain === targetChain && sessionStatus.hasActiveSession && sessionStatus.canAutoExecute) {
+          console.log("[Bridge] ✅ Same-chain transfer with active session, executing via session key");
+          
+          const { delegateExecution } = await import("@/lib/wallet/sessionKeys/delegateExecution");
+          const result = await delegateExecution({
+            walletId,
+            userId,
+            userToken: activeUserToken,
+            action: 'transfer', // Same-chain uses transfer, not bridge
+            amount: amountInSmallestUnit,
+            destinationAddress,
+          });
+
+          if (result.success && result.executedViaSessionKey) {
+            return NextResponse.json({
+              success: true,
+              data: {
+                transactionHash: result.transactionHash,
+                transactionId: result.transactionId,
+                executedViaSessionKey: true,
+                fromChain: sourceChain,
+                toChain: targetChain,
+                amount,
+                destinationAddress,
+              },
+              message: "Transfer executed automatically via session key (no PIN required)",
+            });
+          }
+        }
+        // For cross-chain: Check if we can use session key for Gateway signing
+        if (sourceChain !== targetChain && sessionStatus.hasActiveSession && sessionStatus.canAutoExecute) {
+          console.log("[Bridge] ✅ Cross-chain Gateway transfer with active session - attempting PIN-less execution");
+          
+          // Get the session key for Gateway signing
+          const { getAgentSessionKey } = await import('@/core/sessionKeys/agentSessionKeys');
+          const agentId = body.agentId || 'inera'; // Use body.agentId if available
+          const agentSessionKey = await getAgentSessionKey(walletId, userId, activeUserToken, agentId);
+          
+          if (agentSessionKey) {
+            // Route through delegateExecution which will use session key for Gateway signing
+            const { delegateExecution } = await import("@/lib/wallet/sessionKeys/delegateExecution");
+            const result = await delegateExecution({
+              walletId,
+              userId,
+              userToken: activeUserToken,
+              action: 'gateway',
+              amount: amountInSmallestUnit,
+              destinationAddress,
+              fromChain: sourceChain,
+              toChain: targetChain,
+              agentId: agentId,
+            });
+
+            if (result.success && result.executedViaSessionKey) {
+              return NextResponse.json({
+                success: true,
+                data: {
+                  transactionHash: result.transactionHash,
+                  transactionId: result.transactionId,
+                  executedViaSessionKey: true,
+                  fromChain: sourceChain,
+                  toChain: targetChain,
+                  amount,
+                  destinationAddress,
+                },
+                message: "Cross-chain bridge executed automatically via session key (no PIN required)",
+              });
+            }
+          }
+        }
+      } catch (error: any) {
+        console.error("[Bridge] Error checking session status:", error);
+        // Fall through to regular flow
+      }
+    }
 
     // Get User-Controlled Wallets SDK client
     const userClient = getUserCircleClient();
 
     // Check if this is a same-chain transfer
-    if (fromChain === toChain) {
+    if (sourceChain === targetChain) {
       // Same-chain transfer - use regular transaction API
       const transactionRequest: any = {
         walletId: walletId,
@@ -110,7 +342,7 @@ export async function POST(request: NextRequest) {
       const response = await userClient.createTransaction({
         ...transactionRequest,
         userId: userId!,
-        userToken: userToken!,
+        userToken: activeUserToken!,
       });
       
       if (!response.data) {
@@ -128,435 +360,294 @@ export async function POST(request: NextRequest) {
                   txData.state === "FAILED" ? "failed" : "pending",
           transactionHash: txData.txHash || txData.transactionHash,
           txHash: txData.txHash || txData.transactionHash,
-          fromChain,
-          toChain,
+          fromChain: sourceChain,
+          toChain: targetChain,
           amount,
         },
       });
     }
 
-    // Cross-chain transfer via CCTP
-    // For User-Controlled Wallets, we need to:
-    // 1. Create a transaction that burns USDC on the source chain
-    // 2. Poll Circle's Attestation Service for the attestation
-    // 3. Use the attestation to mint on the destination chain
+    // Cross-chain transfer via Gateway
+    // For User-Controlled Wallets, we use Gateway API (not Transfer API)
+    // Gateway works with user-controlled wallets using SDK's signTypedData (EIP-712)
+    // No Entity Secret required! Session keys can sign EIP-712 messages (no PIN required)
     
-    // Step 1: Create a burn transaction on the source chain
-    // Note: This requires interacting with CCTP smart contracts
-    // For now, we'll attempt to use Circle's API if it supports cross-chain destinations
-    
-    // Try using the Circle SDK with a cross-chain destination specification
-    // The SDK might support this if we specify the destination blockchain
+    console.log("[Bridge] 🔄 Using Gateway for user-controlled wallet cross-chain transfer...");
+      
     try {
-      // First, get the wallet to understand its current blockchain
-      // Get wallet via REST API (User-Controlled SDK may not support getWallet)
-      const walletResponse = await circleApiRequest<any>(
-        `/v1/w3s/wallets/${walletId}`,
-        {
-          method: "GET",
-          headers: {
-            "Authorization": `Bearer ${circleConfig.apiKey}`,
-            "X-User-Token": userToken!,
+      // Import Gateway implementation for user-controlled wallets
+      const { 
+        transferViaGatewayUser, 
+        checkGatewayBalanceUser,
+        isGatewayAvailable 
+      } = await import("@/lib/gateway/gateway-sdk-implementation-user");
+      
+      // Check if Gateway supports this route
+      if (!isGatewayAvailable(sourceChain, targetChain)) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Gateway not available between ${sourceChain} and ${targetChain}`,
+            errorCode: "GATEWAY_NOT_AVAILABLE",
+            errorType: "ROUTE_NOT_SUPPORTED",
+            details: {
+              fromChain: sourceChain,
+              toChain: targetChain,
+              message: "Gateway does not support this route. Check supported chains.",
+            },
           },
+          { status: 400 }
+        );
+      }
+      
+      // Get wallet address
+      let walletAddress: string | undefined;
+      try {
+        const walletResponse = await circleApiRequest<any>(
+          `/v1/w3s/wallets/${walletId}`,
+          {
+            method: "GET",
+            headers: {
+              "X-User-Token": activeUserToken!,
+            },
+          }
+        );
+        const walletData = walletResponse.data as any;
+        walletAddress = walletData?.address || walletData?.wallet?.address || walletData?.data?.address;
+        
+        if (!walletAddress && walletData?.addresses && walletData.addresses.length > 0) {
+          // Find address for source chain
+          const chainAddress = walletData.addresses.find(
+            (addr: any) =>
+              addr.chain?.toUpperCase() === sourceChain ||
+              addr.chain?.toUpperCase() === sourceChain.replace("-TESTNET", "")
+          );
+          walletAddress = chainAddress?.address || walletData.addresses[0]?.address;
         }
-      );
-      const walletData = walletResponse.data as any;
-      let walletAddress = walletData?.address || walletData?.wallet?.address;
+      } catch (walletError) {
+        console.error("[Bridge] Error getting wallet address:", walletError);
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Could not retrieve wallet address",
+            errorCode: "WALLET_ADDRESS_NOT_FOUND",
+          },
+          { status: 400 }
+        );
+      }
       
       if (!walletAddress) {
-        console.warn("Could not retrieve wallet address, proceeding anyway");
-      }
-
-      // For CCTP, we need to send USDC to the CCTP burn contract on the source chain
-      // Then poll for attestation and mint on destination
-      // This is complex and requires CCTP contract addresses
-      
-      // CCTP V2 Implementation for User-Controlled Wallets
-      // Circle API v2 supports cross-chain transfers via CCTP V2
-      // Reference: https://developers.circle.com/cctp
-      //
-      // CCTP V2 features:
-      // - Fast Transfer: Settles in seconds (vs 13-19 minutes in v1)
-      // - Hooks: Automate post-transfer actions
-      // - Native burn-and-mint: 1:1 USDC transfers
-      
-      // Try Circle API v2 transfers endpoint for cross-chain transfers
-      // v2 API should support cross-chain destinations for user-controlled wallets
-      const transferPayload = {
-        idempotencyKey: idempotencyKey || generateUUID(),
-        source: {
-          type: "wallet",
-          id: walletId,
-        },
-        destination: {
-          type: "blockchain",
-          address: destinationAddress,
-          chain: toChain,
-        },
-        amount: {
-          amount: Math.floor(parseFloat(amount) * 1_000_000).toString(), // Convert to smallest unit (6 decimals)
-          currency: "USDC",
-        },
-      };
-
-      // Try v2 API endpoint first (preferred for cross-chain)
-      let transferResponse: any;
-      let lastError: any | null = null;
-      
-      // Attempt 1: v2 developer transfers endpoint
-      try {
-        transferResponse = await circleApiRequest<any>(
-          `/v2/w3s/developer/transfers`,
+        return NextResponse.json(
           {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(transferPayload),
-          }
-        );
-        
-        // Success with v2 endpoint
-        return NextResponse.json({
-          success: true,
-          data: {
-            id: transferResponse.data?.id || generateUUID(),
-            bridgeId: transferResponse.data?.id || generateUUID(),
-            status: transferResponse.data?.status === "pending" ? "pending" : 
-                    transferResponse.data?.status === "complete" ? "completed" : "attesting",
-            transactionHash: transferResponse.data?.transactionHash,
-            txHash: transferResponse.data?.transactionHash,
-            fromChain,
-            toChain,
-            amount,
+            success: false,
+            error: "Wallet address not found",
+            errorCode: "WALLET_ADDRESS_NOT_FOUND",
           },
-          message: "CCTP V2 cross-chain transfer initiated successfully.",
-        });
-      } catch (v2Error: any) {
-        lastError = v2Error;
-        console.warn("v2 API endpoint failed, trying v1:", v2Error.message);
-      }
-
-      // Attempt 2: v2 general transfers endpoint
-      try {
-        transferResponse = await circleApiRequest<any>(
-          `/v2/w3s/transfers`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(transferPayload),
-          }
+          { status: 400 }
         );
-        
-        // Success with v2 general endpoint
-        return NextResponse.json({
-          success: true,
-          data: {
-            id: transferResponse.data?.id || generateUUID(),
-            bridgeId: transferResponse.data?.id || generateUUID(),
-            status: transferResponse.data?.status === "pending" ? "pending" : 
-                    transferResponse.data?.status === "complete" ? "completed" : "attesting",
-            transactionHash: transferResponse.data?.transactionHash,
-            txHash: transferResponse.data?.transactionHash,
-            fromChain,
-            toChain,
-            amount,
-          },
-          message: "CCTP V2 cross-chain transfer initiated successfully.",
-        });
-      } catch (v2GeneralError: any) {
-        lastError = v2GeneralError;
-        console.warn("v2 general endpoint failed, trying v1:", v2GeneralError.message);
       }
-
-      // Attempt 3: v1 developer transfers endpoint (fallback)
-      try {
-        transferResponse = await circleApiRequest<any>(
-          `/v1/w3s/developer/transfers`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(transferPayload),
-          }
-        );
         
-        return NextResponse.json({
-          success: true,
-          data: {
-            id: transferResponse.data?.id || generateUUID(),
-            bridgeId: transferResponse.data?.id || generateUUID(),
-            status: transferResponse.data?.status === "pending" ? "pending" : 
-                    transferResponse.data?.status === "complete" ? "completed" : "attesting",
-            transactionHash: transferResponse.data?.transactionHash,
-            txHash: transferResponse.data?.transactionHash,
-            fromChain,
-            toChain,
-            amount,
-          },
-          message: "Cross-chain transfer initiated via v1 API.",
-        });
-      } catch (v1Error: any) {
-        lastError = v1Error;
-        console.warn("v1 API endpoint also failed:", v1Error.message);
-      }
-
-      // All API endpoints failed - fall back to smart contract implementation
-      console.log("API endpoints failed, attempting smart contract-based CCTP...");
-      
-      // Try using the CCTP smart contract implementation
-      // Reference: https://github.com/circlefin/evm-cctp-contracts
-      try {
-        // Get wallet address if not already available
-        if (!walletAddress) {
+        // Check Gateway balance
+        console.log(`[Bridge] Checking Gateway balance for ${walletAddress} on ${sourceChain}...`);
+        const gatewayBalance = await checkGatewayBalanceUser(walletAddress, sourceChain);
+        const requiredAmount = parseFloat(amount);
+        
+        if (gatewayBalance < requiredAmount) {
+          // Auto-deposit to Gateway if balance is insufficient
+          // Gateway requires one-time deposit before transfers
+          console.log(`[Bridge] Gateway balance insufficient (${gatewayBalance} < ${requiredAmount}). Initiating deposit...`);
+          
           try {
-            // Get wallet via REST API (User-Controlled SDK may not support getWallet)
-      const walletResponse = await circleApiRequest<any>(
-        `/v1/w3s/wallets/${walletId}`,
-        {
-          method: "GET",
-          headers: {
-            "Authorization": `Bearer ${circleConfig.apiKey}`,
-            "X-User-Token": userToken!,
-          },
-        }
-      );
-            const walletData = walletResponse.data as any;
-            walletAddress = walletData?.address || walletData?.wallet?.address || walletData?.data?.address;
+            const { depositToGatewayUser } = await import("@/lib/gateway/gateway-sdk-implementation-user");
             
-            // If still not found, try to get from balances endpoint
-            if (!walletAddress) {
-              const balancesResponse = await circleApiRequest<any>(
-                `/v1/w3s/developer/wallets/${walletId}/balances?blockchain=${fromChain}`
-              );
-              // Sometimes wallet address is in the response
-              walletAddress = balancesResponse.data?.walletAddress || balancesResponse.walletAddress;
-            }
-          } catch (walletError: any) {
-            console.error("Error getting wallet address:", walletError);
-            throw new Error(`Could not retrieve wallet address: ${walletError.message}`);
-          }
-        }
-        
-        if (!walletAddress) {
-          throw new Error("Could not retrieve wallet address for CCTP transfer. Wallet may not exist or may not be accessible.");
-        }
-        
-        console.log(`[Bridge] Using wallet address: ${walletAddress}`);
-        
-        // For now, initiate just the burn and return
-        // The full flow will complete in the background
-        const { burnUSDC, executeCCTPTransfer } = await import("@/lib/archived/legacy-dev-controlled/cctp-implementation");
-        
-        // Start the CCTP transfer asynchronously (don't await)
-        // This allows us to return immediately after initiating the burn
-        // Log the full flow for verification
-        const transferMode = fastTransfer ? "⚡ Fast Transfer" : "🐢 Standard Transfer";
-        console.log(`[Bridge] Using CCTP ${transferMode} mode`);
-        
-        executeCCTPTransfer({
-          walletId,
-          walletAddress,
-          amount,
-          fromChain,
-          toChain,
-          destinationAddress,
-          fastTransfer: fastTransfer ?? false, // Default to Standard Transfer
-        })
-        .then((result) => {
-          console.log("[Bridge] ✅ CCTP Transfer Completed Successfully!");
-          console.log("[Bridge] Burn TX:", result.burnTxHash);
-          console.log("[Bridge] Mint TX:", result.mintTxHash);
-          console.log("[Bridge] Status:", result.status);
-          if (result.error) {
-            console.error("[Bridge] Error:", result.error);
-          }
-        })
-        .catch((error) => {
-          console.error("[Bridge] ❌ CCTP transfer error (async):", error);
-          console.error("[Bridge] Error details:", {
-            message: error.message,
-            stack: error.stack,
-          });
-        });
-        
-        try {
-          const burnResult = await burnUSDC({
-            walletId,
-            walletAddress,
-            amount,
-            fromChain,
-            toChain,
-            destinationAddress,
-          });
-          
-          // Return immediately after burn is initiated
-          return NextResponse.json({
-            success: true,
-            data: {
-              id: burnResult.messageHash || generateUUID(),
-              bridgeId: burnResult.messageHash || generateUUID(),
-              status: "pending",
-              transactionHash: burnResult.txHash,
-              txHash: burnResult.txHash,
-              burnTxHash: burnResult.txHash,
-              fromChain,
-              toChain,
-              amount,
-            },
-            message: "CCTP burn transaction initiated. Bridge is processing in the background.",
-          });
-        } catch (burnError: any) {
-          throw new Error(`Failed to initiate burn: ${burnError.message}`);
-        }
-      } catch (cctpError: any) {
-        // If CCTP fails, try Gateway as alternative
-        console.warn("CCTP failed, trying Gateway as alternative:", cctpError.message);
-        
-        try {
-          // Use NEW Gateway SDK implementation (uses Circle SDK signing)
-          const { executeGatewayTransferSDK } = await import("@/lib/archived/legacy-dev-controlled/gateway-sdk-implementation");
-          
-          // Get wallet address if not already available
-          if (!walletAddress) {
-            try {
-              // Get wallet via REST API (User-Controlled SDK may not support getWallet)
-      const walletResponse = await circleApiRequest<any>(
-        `/v1/w3s/wallets/${walletId}`,
-        {
-          method: "GET",
-          headers: {
-            "Authorization": `Bearer ${circleConfig.apiKey}`,
-            "X-User-Token": userToken!,
-          },
-        }
-      );
-              const walletData = walletResponse.data as any;
-              walletAddress = walletData?.address || walletData?.wallet?.address || walletData?.data?.address;
-              
-              if (!walletAddress) {
-                const balancesResponse = await circleApiRequest<any>(
-                  `/v1/w3s/developer/wallets/${walletId}/balances?blockchain=${fromChain}`
-                );
-                walletAddress = balancesResponse.data?.walletAddress || balancesResponse.walletAddress;
+            // Deposit the required amount (with a small buffer for fees)
+            const depositAmount = (requiredAmount * 1.1).toFixed(6); // 10% buffer
+            
+            console.log(`[Bridge] Depositing ${depositAmount} USDC to Gateway...`);
+            
+            // Try to get session key for deposit (reduces PIN prompts)
+            let depositSessionKey: any = null;
+            if (isSessionKeysEnabled() && userId && activeUserToken) {
+              try {
+                const { getAgentSessionKey } = await import('@/core/sessionKeys/agentSessionKeys');
+                const agentId = body.agentId || 'inera';
+                depositSessionKey = await getAgentSessionKey(walletId, userId, activeUserToken, agentId);
+              } catch (error) {
+                console.warn('[Bridge] Could not get session key for deposit, will use regular flow');
               }
-            } catch (walletError: any) {
-              console.error("Error getting wallet address for Gateway:", walletError);
             }
-          }
-          
-          if (!walletAddress) {
-            throw new Error("Could not retrieve wallet address for Gateway transfer");
-          }
-          
-          console.log(`[Bridge] Attempting Gateway transfer with Circle SDK signing...`);
-          console.log(`[Bridge] Using wallet address: ${walletAddress}`);
-          
-          // Check if this is the user's first time using Gateway (for conversational messaging)
-          let firstTimeUser = false;
-          try {
-            const { checkGatewayBalanceSDK } = await import("@/lib/archived/legacy-dev-controlled/gateway-sdk-implementation");
-            const gatewayBalance = await checkGatewayBalanceSDK(walletId, fromChain);
-            // If balance is zero or check fails, assume first-time user (balance is returned as number)
-            firstTimeUser = !gatewayBalance || gatewayBalance === 0;
-            if (firstTimeUser) {
-              console.log(`[Bridge] First-time Gateway user - will auto-deposit for instant future bridges`);
+            
+            const depositResult = await depositToGatewayUser(
+              userId!,
+              activeUserToken!,
+              walletId,
+              sourceChain,
+              depositAmount,
+              depositSessionKey // Pass session key to reduce PIN prompts
+            );
+            
+            if (!depositResult.success) {
+              return NextResponse.json(
+                {
+                  success: false,
+                  error: `Failed to deposit to Gateway: ${depositResult.error}`,
+                  errorCode: "GATEWAY_DEPOSIT_FAILED",
+                  errorType: "DEPOSIT_ERROR",
+                  details: {
+                    fromChain: sourceChain,
+                    toChain: targetChain,
+                    walletAddress,
+                    currentBalance: gatewayBalance,
+                    requiredAmount,
+                    depositAmount,
+                    message: "Gateway deposit failed. Please try depositing manually using /api/circle/gateway-user with action=deposit",
+                  },
+                },
+                { status: 400 }
+              );
             }
-          } catch (balanceError: any) {
-            console.log(`[Bridge] Could not check Gateway balance, assuming first-time: ${balanceError.message}`);
-            firstTimeUser = true; // Assume first-time if we can't check
-          }
-          
-          // Execute Gateway transfer using Circle SDK for signing
-          // NO PRIVATE KEY REQUIRED - Circle SDK handles signing
-          // This will auto-deposit to Gateway if it's the first time
-          const gatewayResult = await executeGatewayTransferSDK({
-            walletId,
-            walletAddress,
-            amount,
-            fromChain,
-            toChain,
-            destinationAddress,
-          });
-          
-          if (gatewayResult.status === "completed") {
+            
+            // Deposit initiated - requires user to complete approval and deposit challenges
             return NextResponse.json({
               success: true,
-              firstTimeUser, // Flag to show conversational message about setup
               data: {
-                id: generateUUID(),
-                bridgeId: generateUUID(),
-                status: "attesting",
-                attestation: gatewayResult.attestation,
-                signature: gatewayResult.signature,
-                fromChain,
-                toChain,
-                amount,
-                method: "gateway-sdk",
-              },
-              message: firstTimeUser 
-                ? "Setting up your instant bridging... Your USDC is on its way! Future bridges will be even faster."
-                : "Your USDC is on its way! Should arrive in about 10-30 seconds.",
-            });
-          } else {
-            throw new Error(gatewayResult.error || "Gateway transfer failed");
-          }
-        } catch (gatewayError: any) {
-          // If Gateway also fails, provide detailed error for both methods
-          console.error("Gateway transfer error:", gatewayError);
-          console.error("CCTP error:", cctpError);
-          
-          const errorMessage = cctpError.message || "Unknown error";
-          const errorResponse = cctpError.response?.data || cctpError.response || {};
-          const errorCode = cctpError.code || cctpError.response?.status || "N/A";
-          
-          return NextResponse.json(
-            {
-              success: false,
-              error: `Failed to initiate cross-chain transfer. Tried CCTP and Gateway methods.`,
-              details: {
-                fromChain,
-                toChain,
-                apiError: lastError?.message || "N/A",
-                cctpError: errorMessage,
-                gatewayError: gatewayError.message || "N/A",
-                errorCode: errorCode,
-                errorResponse: errorResponse,
+                challengeId: depositResult.challengeId,
+                requiresChallenge: true,
+                requiresDeposit: true,
+                status: "depositing",
                 walletId: walletId,
-                walletAddress: walletAddress || "Not available",
-                note: "Both CCTP and Gateway were attempted. " +
-                      "CCTP Bridge Kit does NOT support Circle Wallets yet (confirmed by Circle). " +
-                      "Gateway attempted using Circle SDK signing (signTypedData). " +
-                      "Smart Contract Accounts (SCA) may have EIP-1271 compatibility issues. " +
-                      "Check https://eip1271.io/ for SCA compatibility with Gateway.",
-                resources: [
-                  "https://docs.arc.network/arc/references/contract-addresses#cctp",
-                  "https://docs.arc.network/arc/references/contract-addresses#gateway",
-                  "https://developers.circle.com/gateway/concepts/technical-guide",
-                  "https://developers.circle.com/cctp",
-                ],
+                fromChain: sourceChain,
+                toChain: targetChain,
+                amount: amount,
+                depositAmount,
+                method: "gateway",
               },
-            },
-            { status: 500 }
-          );
+              message: "Gateway deposit initiated. Please complete the approval and deposit challenges (PIN) to proceed. After deposit is complete, retry the bridge transfer.",
+            });
+          } catch (depositError: any) {
+            console.error("[Bridge] Auto-deposit error:", depositError);
+            return NextResponse.json(
+              {
+                success: false,
+                error: `Insufficient Gateway balance and auto-deposit failed: ${depositError.message}`,
+                errorCode: "INSUFFICIENT_GATEWAY_BALANCE",
+                errorType: "BALANCE_ERROR",
+                details: {
+                  fromChain: sourceChain,
+                  toChain: targetChain,
+                  walletAddress,
+                  currentBalance: gatewayBalance,
+                  requiredAmount,
+                  depositError: depositError.message,
+                  message: "Please deposit USDC to Gateway first using /api/circle/gateway-user with action=deposit",
+                  gatewayDepositEndpoint: "/api/circle/gateway-user",
+                },
+              },
+              { status: 400 }
+            );
+          }
+        }
+        
+      // Get session key for Gateway transfer (if available) to avoid PIN prompts
+      let gatewaySessionKey: any = null;
+      if (isSessionKeysEnabled() && userId && activeUserToken) {
+        try {
+          const { getAgentSessionKey } = await import('@/core/sessionKeys/agentSessionKeys');
+          const agentId = body.agentId || 'inera';
+          gatewaySessionKey = await getAgentSessionKey(walletId, userId, activeUserToken, agentId);
+          if (gatewaySessionKey) {
+            console.log(`[Bridge] ✅ Session key available for Gateway transfer (no PIN required)`);
+          }
+        } catch (error) {
+          console.warn('[Bridge] Could not get session key for Gateway transfer, will use regular flow:', error);
         }
       }
-    } catch (error: any) {
-      // If API approach fails, provide detailed error with next steps
-      console.error("CCTP bridge error:", error);
       
+      // Initiate Gateway transfer
+      console.log(`[Bridge] Initiating Gateway transfer: ${amount} USDC from ${sourceChain} to ${targetChain}`);
+        
+      const gatewayResult = await transferViaGatewayUser({
+        userId: userId!,
+        userToken: activeUserToken!,
+        walletId: walletId,
+        walletAddress: walletAddress,
+        amount: amount,
+        fromChain: sourceChain,
+        toChain: targetChain,
+        destinationAddress: destinationAddress,
+      }, gatewaySessionKey); // Pass session key for PIN-less execution
+        
+      if (!gatewayResult.success) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: gatewayResult.error || "Gateway transfer failed",
+            errorCode: "GATEWAY_TRANSFER_FAILED",
+            details: {
+              fromChain: sourceChain,
+              toChain: targetChain,
+              walletAddress,
+            },
+          },
+          { status: 400 }
+        );
+      }
+      
+      // Gateway transfer result
+      if (gatewayResult.status === "completed") {
+        // Transfer completed via session key (no PIN required)
+        return NextResponse.json({
+          success: true,
+          data: {
+            executedViaSessionKey: !!gatewaySessionKey,
+            status: "completed",
+            walletId: walletId,
+            destinationAddress: destinationAddress,
+            amount: amount,
+            fromChain: sourceChain,
+            toChain: targetChain,
+            method: "gateway",
+            attestation: gatewayResult.attestation,
+          },
+          message: gatewaySessionKey 
+            ? "Gateway transfer completed automatically via session key (no PIN required)"
+            : "Gateway transfer completed successfully",
+        });
+      } else {
+        // Gateway transfer initiated - requires user to complete signing challenge (if no session key)
+        return NextResponse.json({
+          success: true,
+          data: {
+            challengeId: gatewayResult.challengeId,
+            requiresChallenge: true,
+            burnIntent: gatewayResult.burnIntent,
+            status: "signing",
+            walletId: walletId,
+            destinationAddress: destinationAddress,
+            amount: amount,
+            fromChain: sourceChain,
+            toChain: targetChain,
+            method: "gateway",
+          },
+          message: gatewaySessionKey
+            ? "Gateway transfer initiated with session key"
+            : "Gateway transfer initiated. Please complete the signing challenge (PIN) to proceed. After signing, call /api/circle/gateway-user with action=submit to complete the transfer.",
+        });
+      }
+    } catch (gatewayError: any) {
+      console.error("[Bridge] Gateway error:", gatewayError);
       return NextResponse.json(
         {
           success: false,
-          error: error.message || "Failed to initiate CCTP bridge",
+          error: `Gateway transfer failed: ${gatewayError.message}`,
+          errorCode: "GATEWAY_ERROR",
+          errorType: "TRANSFER_FAILED",
           details: {
-            fromChain,
-            toChain,
-            note: "CCTP for User-Controlled Wallets requires smart contract interaction. " +
-                  "See https://github.com/circlefin/evm-cctp-contracts for contract addresses and ABIs.",
+            fromChain: sourceChain,
+            toChain: targetChain,
+            walletId,
+            gatewayError: gatewayError.message,
+            message: "Gateway transfer failed. Gateway is the recommended approach for user-controlled wallets.",
           },
         },
         { status: 500 }

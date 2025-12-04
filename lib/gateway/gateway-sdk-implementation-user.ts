@@ -80,13 +80,16 @@ export async function checkGatewayBalanceUser(
 
 /**
  * Deposit USDC to Gateway (one-time setup)
+ * 
+ * @param sessionKey Optional session key to use for approval (reduces PIN prompts)
  */
 export async function depositToGatewayUser(
   userId: string,
   userToken: string,
   walletId: string,
   chain: string,
-  amount: string
+  amount: string,
+  sessionKey?: any // CircleSessionKey - optional for PIN-less approval
 ): Promise<ContractExecutionResult> {
   try {
     const addresses = getGatewayAddresses(chain);
@@ -99,18 +102,73 @@ export async function depositToGatewayUser(
     console.log(`[Gateway User] Depositing ${amount} USDC to Gateway on ${chain}`);
 
     // Step 1: Approve Gateway to spend USDC
+    // Try using session key first if available (reduces PIN prompts)
     console.log(`[Gateway User] Step 1: Creating approval challenge...`);
     
-    const approveResult = await executeContract({
-      userId,
-      userToken,
-      walletId,
-      contractAddress: addresses.usdc,
-      abiFunctionSignature: "approve(address,uint256)",
-      abiParameters: [addresses.gatewayWallet, amountInSmallestUnit],
-      feeLevel: "MEDIUM",
-      refId: `gateway-approve-${Date.now()}`,
-    });
+    let approveResult: ContractExecutionResult;
+    
+    if (sessionKey) {
+      console.log(`[Gateway User] Attempting approval via session key (no PIN)...`);
+      try {
+        const { delegateExecution } = await import('@/lib/wallet/sessionKeys/delegateExecution');
+        const delegateResult = await delegateExecution({
+          walletId,
+          userId,
+          userToken,
+          action: 'approve',
+          contractAddress: addresses.usdc,
+          abiFunctionSignature: "approve(address,uint256)",
+          abiParameters: [addresses.gatewayWallet, amountInSmallestUnit],
+          agentId: sessionKey.agentId || 'inera',
+        });
+        
+        if (delegateResult.success && delegateResult.executedViaSessionKey) {
+          console.log(`[Gateway User] ✅ Approval executed via session key (no PIN)`);
+          approveResult = {
+            success: true,
+            challengeId: delegateResult.challengeId,
+            transactionId: delegateResult.transactionId,
+            transactionHash: delegateResult.transactionHash,
+          };
+        } else {
+          // Fall through to regular approval
+          console.log(`[Gateway User] Session key approval not available, using regular approval...`);
+          approveResult = await executeContract({
+            userId,
+            userToken,
+            walletId,
+            contractAddress: addresses.usdc,
+            abiFunctionSignature: "approve(address,uint256)",
+            abiParameters: [addresses.gatewayWallet, amountInSmallestUnit],
+            feeLevel: "MEDIUM",
+            refId: `gateway-approve-${Date.now()}`,
+          });
+        }
+      } catch (error: any) {
+        console.warn(`[Gateway User] Session key approval failed, falling back to regular approval:`, error.message);
+        approveResult = await executeContract({
+          userId,
+          userToken,
+          walletId,
+          contractAddress: addresses.usdc,
+          abiFunctionSignature: "approve(address,uint256)",
+          abiParameters: [addresses.gatewayWallet, amountInSmallestUnit],
+          feeLevel: "MEDIUM",
+          refId: `gateway-approve-${Date.now()}`,
+        });
+      }
+    } else {
+      approveResult = await executeContract({
+        userId,
+        userToken,
+        walletId,
+        contractAddress: addresses.usdc,
+        abiFunctionSignature: "approve(address,uint256)",
+        abiParameters: [addresses.gatewayWallet, amountInSmallestUnit],
+        feeLevel: "MEDIUM",
+        refId: `gateway-approve-${Date.now()}`,
+      });
+    }
 
     if (!approveResult.success) {
       throw new Error(`Failed to approve USDC: ${approveResult.error}`);
@@ -152,9 +210,13 @@ export async function depositToGatewayUser(
  * 
  * This creates a burn intent and signs it with EIP-712
  * The signature is then submitted to Gateway API for instant transfer
+ * 
+ * If sessionKey is provided, signs with session key (no PIN required)
+ * Otherwise, uses Circle's signTypedData API (requires PIN)
  */
 export async function transferViaGatewayUser(
-  params: GatewayUserTransferParams
+  params: GatewayUserTransferParams,
+  sessionKey?: any // CircleSessionKey - optional for PIN-less execution
 ): Promise<GatewayUserTransferResult> {
   try {
     const addresses = getGatewayAddresses(params.fromChain);
@@ -220,7 +282,51 @@ export async function transferViaGatewayUser(
     // Create EIP-712 typed data for signing
     const typedData = createBurnIntentTypedData(burnIntent);
 
-    console.log(`[Gateway User] Creating EIP-712 signing challenge...`);
+    // Check if session key is provided for PIN-less signing
+    if (sessionKey) {
+      console.log(`[Gateway User] Signing with session key (no PIN required)...`);
+      
+      try {
+        const { signTypedDataWithSessionKey } = await import('@/lib/wallet/sessionKeys/sessionKeyWallet');
+        const signature = await signTypedDataWithSessionKey(
+          typedData.domain,
+          typedData.types,
+          typedData.message,
+          sessionKey
+        );
+
+        console.log(`[Gateway User] ✅ Signed with session key, submitting to Gateway API...`);
+
+        // Submit directly to Gateway API (no PIN required)
+        const submitResult = await submitGatewayTransfer(burnIntent, signature);
+        
+        if (submitResult.success) {
+          return {
+            success: true,
+            signature,
+            burnIntent,
+            attestation: submitResult.attestation,
+            status: "completed",
+          };
+        } else {
+          return {
+            success: false,
+            error: submitResult.error || "Failed to submit to Gateway API",
+            status: "failed",
+          };
+        }
+      } catch (error: any) {
+        console.error(`[Gateway User] Session key signing error:`, error);
+        return {
+          success: false,
+          error: `Session key signing failed: ${error.message}`,
+          status: "failed",
+        };
+      }
+    }
+
+    // Fallback to Circle's signTypedData API (requires PIN)
+    console.log(`[Gateway User] No session key provided, creating EIP-712 signing challenge (PIN required)...`);
 
     // Sign with User-Controlled Wallet
     const signResult = await signTypedData({

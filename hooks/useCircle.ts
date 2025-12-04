@@ -66,14 +66,36 @@ export function useCircle(): UseCircleReturn {
     setLoading(true);
     setError(null);
     try {
-      // Check if user already exists in localStorage
+      // Check if user already exists (try Supabase first, then localStorage for migration)
       if (typeof window !== 'undefined') {
+        // Try to load from Supabase if we have a userId from preferences
+        try {
+          const { loadPreference } = await import("@/lib/supabase-data");
+          // Try to get userId from a preference (if it exists)
+          // Note: This is a migration helper - in production, userId should come from context
+          const userIdPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
+          if (userIdPref?.value) {
+            const credentials = await import("@/lib/supabase-data").then(m => m.loadUserCredentials(userIdPref.value));
+            if (credentials.userToken) {
+              console.log("Using existing user from Supabase");
+              return {
+                userId: userIdPref.value,
+                userToken: credentials.userToken,
+                ...(credentials.encryptionKey && { encryptionKey: credentials.encryptionKey })
+              };
+            }
+          }
+        } catch (error) {
+          // Supabase not available or no user found, fall through to localStorage
+        }
+        
+        // Migration fallback: Check localStorage
         const storedUserId = localStorage.getItem('arcle_user_id');
         const storedUserToken = localStorage.getItem('arcle_user_token');
         const storedEncryptionKey = localStorage.getItem('arcle_encryption_key');
         
         if (storedUserId && storedUserToken) {
-          console.log("Using existing user from localStorage");
+          console.log("Using existing user from localStorage (migration)");
           return { 
             userId: storedUserId, 
             userToken: storedUserToken,
@@ -106,8 +128,25 @@ export function useCircle(): UseCircleReturn {
         ...(data.data.refreshToken && { refreshToken: data.data.refreshToken }),
       };
 
-      // Store user in localStorage
+      // Store user in Supabase (and localStorage for migration)
       if (typeof window !== 'undefined') {
+        try {
+          const { saveUserCredentials, savePreference } = await import("@/lib/supabase-data");
+          await saveUserCredentials(userData.userId, {
+            userToken: userData.userToken,
+            encryptionKey: userData.encryptionKey,
+          });
+          if (userData.refreshToken) {
+            await savePreference({ userId: userData.userId, key: "refresh_token", value: userData.refreshToken });
+          }
+          // Generate and store deviceId for token refresh
+          const deviceId = `device-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+          await savePreference({ userId: userData.userId, key: "device_id", value: deviceId });
+        } catch (error) {
+          console.error("[useCircle] Failed to save user to Supabase:", error);
+        }
+        
+        // Migration: Also save to localStorage (will be removed after full migration)
         localStorage.setItem('arcle_user_id', userData.userId);
         localStorage.setItem('arcle_user_token', userData.userToken);
         if (userData.encryptionKey) {
@@ -116,7 +155,6 @@ export function useCircle(): UseCircleReturn {
         if (userData.refreshToken) {
           localStorage.setItem('arcle_refresh_token', userData.refreshToken);
         }
-        // Generate and store deviceId for token refresh
         const deviceId = localStorage.getItem('arcle_device_id') || `device-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
         localStorage.setItem('arcle_device_id', deviceId);
       }
@@ -184,8 +222,15 @@ export function useCircle(): UseCircleReturn {
           createdAt: new Date(),
         };
 
-        // Store wallet in localStorage for persistence
-        if (typeof window !== 'undefined') {
+        // Store wallet in Supabase (and localStorage for migration)
+        if (typeof window !== 'undefined' && userId) {
+          try {
+            const { saveWalletData } = await import("@/lib/supabase-data");
+            await saveWalletData(userId, { walletId: wallet.id, walletAddress: wallet.address });
+          } catch (error) {
+            console.error("[useCircle] Failed to save wallet to Supabase:", error);
+          }
+          // Migration: Also save to localStorage
           localStorage.setItem('arcle_wallet_id', wallet.id);
           localStorage.setItem('arcle_wallet_address', wallet.address);
         }

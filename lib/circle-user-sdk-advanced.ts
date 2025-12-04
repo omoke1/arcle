@@ -36,10 +36,44 @@ export interface ContractExecutionResult {
  * 
  * This creates a challenge that the user must complete to execute the transaction.
  * The user will be prompted to approve the transaction via their authentication method.
+ * 
+ * Now supports session key delegation - will use Circle MSCA session keys if available.
  */
 export async function executeContract(
   params: ContractExecutionParams
 ): Promise<ContractExecutionResult> {
+  // Check if session keys are enabled and try to use them first
+  if (process.env.NEXT_PUBLIC_ENABLE_SESSION_KEYS === 'true') {
+    try {
+      const { delegateExecution } = await import('@/lib/wallet/sessionKeys/delegateExecution');
+      const result = await delegateExecution({
+        walletId: params.walletId,
+        userId: params.userId,
+        userToken: params.userToken,
+        action: 'approve', // Contract execution typically involves approvals
+        contractAddress: params.contractAddress,
+        abiFunctionSignature: params.abiFunctionSignature,
+        abiParameters: params.abiParameters,
+        amount: params.amount,
+      });
+
+      if (result.success && result.executedViaSessionKey) {
+        // Executed via session key - return the result
+        return {
+          success: true,
+          challengeId: result.challengeId,
+          transactionId: result.transactionId,
+          transactionHash: result.transactionHash,
+        };
+      }
+      // If session key execution failed or not available, fall through to regular flow
+    } catch (error) {
+      console.warn('[User SDK] Session key delegation failed, falling back to regular flow:', error);
+      // Fall through to regular execution
+    }
+  }
+
+  // Regular execution flow (existing code)
   try {
     const client = getUserCircleClient();
 
@@ -176,7 +210,8 @@ export async function signTypedData(
  */
 export async function getChallengeStatus(
   userToken: string,
-  challengeId: string
+  challengeId: string,
+  userId?: string
 ): Promise<{
   status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETE' | 'FAILED' | 'EXPIRED';
   transactionId?: string;
@@ -187,6 +222,7 @@ export async function getChallengeStatus(
 
     const response = await (client as any).getChallenge({
       userToken,
+      ...(userId ? { userId } : {}),
       id: challengeId,
     });
 
@@ -211,10 +247,11 @@ export async function waitForChallengeCompletion(
   userToken: string,
   challengeId: string,
   maxAttempts: number = 60,
-  intervalMs: number = 2000
+  intervalMs: number = 2000,
+  userId?: string
 ): Promise<ContractExecutionResult> {
   for (let i = 0; i < maxAttempts; i++) {
-    const status = await getChallengeStatus(userToken, challengeId);
+    const status = await getChallengeStatus(userToken, challengeId, userId);
 
     if (status.status === 'COMPLETE') {
       return {
@@ -258,8 +295,10 @@ export async function executeContractAndWait(
   }
 
   console.log(`[User SDK] Waiting for challenge completion...`);
-  return waitForChallengeCompletion(params.userToken, result.challengeId);
+  return waitForChallengeCompletion(params.userToken, result.challengeId, 60, 2000, params.userId);
 }
+
+
 
 
 

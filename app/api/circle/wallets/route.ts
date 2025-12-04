@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserCircleClient } from "@/lib/circle-user-sdk";
 import { circleConfig, circleApiRequest } from "@/lib/circle";
+import { rateLimit } from "@/lib/api/rate-limit";
 
 export interface CreateWalletRequest {
   idempotencyKey?: string;
@@ -52,6 +53,22 @@ export interface CircleWalletResponse {
  */
 export async function POST(request: NextRequest) {
   try {
+    // Basic IP-based rate limiting for wallet creation
+    const ip =
+      request.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
+      request.headers.get("x-real-ip") ||
+      "unknown";
+    const rl = await rateLimit(`circle:wallets:${ip}`, 20, 60); // 20 wallet ops/min/IP
+    if (!rl.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Rate limit exceeded for wallet operations. Please wait a bit and try again.",
+        },
+        { status: 429 }
+      );
+    }
+
     // Use circleConfig which has fallback to NEXT_PUBLIC_CIRCLE_API_KEY
     if (!circleConfig.apiKey) {
       console.error("Circle API key not configured");
@@ -155,6 +172,14 @@ export async function POST(request: NextRequest) {
               address: wallet.address,
             });
             
+            await syncWalletToSupabase({
+              circleUserId: body.userId,
+              circleWalletId: wallet.id,
+              address: wallet.address,
+              chain: mappedBlockchains[0] || "ARC-TESTNET",
+              isActive: wallet.state !== "ARCHIVED",
+            });
+
             return NextResponse.json(
               {
                 success: true,
@@ -291,6 +316,15 @@ export async function POST(request: NextRequest) {
           
           if (existingWallets.length > 0) {
             const wallet = existingWallets[0];
+
+            await syncWalletToSupabase({
+              circleUserId: body.userId,
+              circleWalletId: wallet.id,
+              address: wallet.address,
+              chain: mappedBlockchains[0] || "ARC-TESTNET",
+              isActive: wallet.state !== "ARCHIVED",
+            });
+
             return NextResponse.json(
               {
                 success: true,
@@ -495,5 +529,56 @@ export async function GET(request: NextRequest) {
       },
       { status: 500 }
     );
+  }
+}
+
+/**
+ * Persist wallet metadata to Supabase (if configured).
+ */
+async function syncWalletToSupabase(params: {
+  circleUserId: string;
+  circleWalletId: string;
+  address: string;
+  chain: string;
+  isActive: boolean;
+}) {
+  try {
+    const { isSupabaseConfigured } = await import("@/lib/db/supabase");
+    if (!isSupabaseConfigured()) {
+      return;
+    }
+
+    const [{ getOrCreateUser }, { getWalletByCircleId, createWallet, updateWallet }] = await Promise.all([
+      import("@/lib/db/services/users"),
+      import("@/lib/db/services/wallets"),
+    ]);
+
+    const userRecord = await getOrCreateUser({
+      circle_user_id: params.circleUserId,
+    });
+
+    if (!userRecord) {
+      return;
+    }
+
+    const existingWallet = await getWalletByCircleId(params.circleWalletId);
+
+    if (existingWallet) {
+      await updateWallet(existingWallet.id, {
+        address: params.address,
+        chain: params.chain,
+        is_active: params.isActive,
+      });
+    } else {
+      await createWallet({
+        user_id: userRecord.id,
+        circle_wallet_id: params.circleWalletId,
+        address: params.address,
+        chain: params.chain,
+        is_active: params.isActive,
+      });
+    }
+  } catch (error) {
+    console.error("[Supabase Sync] Failed to persist wallet metadata:", error);
   }
 }

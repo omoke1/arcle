@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
     }
     
     if (action === "list" && walletId) {
-      const strategies = getStrategiesByWallet(walletId);
+      const strategies = await getStrategiesByWallet(walletId);
       return NextResponse.json({ success: true, data: strategies });
     }
     
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     const { action, walletId, name, frequency, minimumYield, reinvestPercentage, walletAddress, strategy } = body;
     
     if (action === "create-strategy" && walletId && name && frequency) {
-      const newStrategy = createCompoundStrategy(walletId, name, frequency, minimumYield, reinvestPercentage);
+      const newStrategy = await createCompoundStrategy(walletId, name, frequency, minimumYield, reinvestPercentage);
       return NextResponse.json({ success: true, data: newStrategy });
     }
     

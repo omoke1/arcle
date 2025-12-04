@@ -30,20 +30,20 @@ function buildSystemPrompt(context: AgentContext, conversationHistory?: string):
   
   prompt += `\n\n⚠️ CRITICAL: Always return valid JSON matching this schema:\n`;
   prompt += `{\n`;
-  prompt += `  "reply": string (your conversational response with emojis, structure, cost comparisons, and confirmation buttons as shown in examples),\n`;
+  prompt += `  "reply": string (your natural, conversational response - no structured sections or confirmation buttons),\n`;
   prompt += `  "tool": {\n`;
   prompt += `    "name": "send|balance|address|history|scan|schedule|subscription|faucet|bridge|null",\n`;
   prompt += `    "arguments": { "to": string?, "amount": string?, "address": string?, "date": string?, "time": string?, "frequency": string?, "merchant": string?, "chain": string? }\n`;
   prompt += `  }\n`;
   prompt += `}\n\n`;
-  prompt += `Remember: Your "reply" should be HIGHLY STRUCTURED with emojis, sections, cost comparisons, and confirmation buttons like the examples above!`;
+  prompt += `Remember: Your "reply" should be natural and conversational - like texting a friend. No structured sections, no confirmation buttons, just a friendly conversation!`;
   
   return prompt;
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { message, context, sessionId } = await req.json();
+    const { message, context, sessionId, userId } = await req.json();
     const groqApiKey = process.env.GROQ_API_KEY || process.env.NEXT_PUBLIC_GROQ_API_KEY;
 
     if (!groqApiKey) {
@@ -56,11 +56,11 @@ export async function POST(req: NextRequest) {
     // Get or create session ID
     const currentSessionId = sessionId || `session_${Date.now()}`;
     
-    // Get conversation history for context
-    const conversationHistory = getConversationSummary(currentSessionId, 5); // Last 5 messages
+    // Get conversation history for context (async now)
+    const conversationHistory = await getConversationSummary(currentSessionId, 5, userId); // Last 5 messages
     
-    // Add user message to history
-    addMessageToHistory(currentSessionId, "user", message);
+    // Add user message to history (async now)
+    await addMessageToHistory(currentSessionId, "user", message, userId);
 
     // Build agent context
     const agentContext: AgentContext = {
@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
 
     // Add AI response to conversation history
     if (parsed.reply) {
-      addMessageToHistory(currentSessionId, "assistant", parsed.reply);
+      await addMessageToHistory(currentSessionId, "assistant", parsed.reply, userId);
     }
 
     return NextResponse.json({ success: true, data: parsed });

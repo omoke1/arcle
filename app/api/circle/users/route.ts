@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserCircleClient } from "@/lib/circle-user-sdk";
 import { circleConfig } from "@/lib/circle";
+import { rateLimit } from "@/lib/api/rate-limit";
 
 export interface CreateUserRequest {
   userId?: string; // Optional: provide your own user ID
@@ -34,6 +35,22 @@ export interface CreateUserRequest {
  */
 export async function POST(request: NextRequest) {
   try {
+    // Basic IP-based rate limiting for user creation / email login
+    const ip =
+      request.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
+      request.headers.get("x-real-ip") ||
+      "unknown";
+    const rl = await rateLimit(`circle:users:${ip}`, 20, 60); // 20 user ops/min/IP
+    if (!rl.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Rate limit exceeded for user operations. Please wait a bit and try again.",
+        },
+        { status: 429 }
+      );
+    }
+
     // Enhanced validation and logging for Vercel debugging
     console.log("=== USER CREATION REQUEST ===");
     console.log("App ID configured:", !!circleConfig.appId);
@@ -236,7 +253,13 @@ export async function POST(request: NextRequest) {
       console.warn("⚠️ Encryption key not returned from createUserToken. PIN setup may fail.");
       console.warn("   This is sometimes normal - try creating wallet again to get a fresh encryption key.");
     }
-    
+
+    // Persist user metadata to Supabase (if configured)
+    await syncCircleUserToSupabase({
+      circleUserId: user.id,
+      email: body.email,
+    });
+
     return NextResponse.json(
       {
         success: true,
@@ -291,6 +314,27 @@ export async function POST(request: NextRequest) {
       },
       { status: error.response?.status || 500 }
     );
+  }
+}
+
+/**
+ * Persist Circle user metadata to Supabase so wallets/session keys can reference it.
+ */
+async function syncCircleUserToSupabase(params: { circleUserId: string; email?: string }) {
+  try {
+    const { isSupabaseConfigured } = await import("@/lib/db/supabase");
+    if (!isSupabaseConfigured()) {
+      return;
+    }
+
+    const { getOrCreateUser } = await import("@/lib/db/services/users");
+
+    await getOrCreateUser({
+      circle_user_id: params.circleUserId,
+      email: params.email,
+    });
+  } catch (error) {
+    console.error("[Supabase Sync] Failed to persist Circle user:", error);
   }
 }
 

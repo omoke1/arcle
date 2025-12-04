@@ -39,7 +39,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Add to scam database
-    addScamAddress(address);
+    // Note: In production, this should use a system-wide userId or get from auth
+    // For now, use reporter if provided, otherwise use a system identifier
+    const userId = reporter || "system";
+    await addScamAddress(userId, address);
 
     // In production, this would:
     // 1. Store in database with metadata (reporter, timestamp, reason)
@@ -82,8 +85,10 @@ export async function GET(request: NextRequest) {
 
     // Check if address is in scam database
     // In production, this would query a database
+    // Note: This is a simplified check - in production would check a shared database
     const { getAddressHistory } = await import("@/lib/security/risk-scoring");
-    const history = getAddressHistory(address);
+    // Use system userId for shared reputation checks
+    const history = await getAddressHistory("system", address);
 
     // For MVP, return basic info
     // In production, return aggregated reputation data

@@ -1,9 +1,11 @@
 /**
  * Contact Management System
  * 
- * Stores and manages user contacts (address book) in encrypted localStorage
+ * Stores and manages user contacts (address book) in Supabase
  * Allows users to send to "Jake" instead of "0x742d35Cc..."
  */
+
+import { loadPreference, savePreference } from "@/lib/supabase-data";
 
 export interface Contact {
   id: string;
@@ -15,21 +17,43 @@ export interface Contact {
   lastUsed?: number;
 }
 
-const CONTACTS_STORAGE_KEY = "arcle_contacts";
-const RECENT_ADDRESSES_KEY = "arcle_recent_addresses";
+const CONTACTS_STORAGE_KEY = "contacts";
+const RECENT_ADDRESSES_KEY = "recent_addresses";
 
 /**
  * Get all saved contacts
  */
-export function getContacts(): Contact[] {
+export async function getContacts(userId: string): Promise<Contact[]> {
   try {
     if (typeof window === "undefined") return [];
     
-    const stored = localStorage.getItem(CONTACTS_STORAGE_KEY);
-    if (!stored) return [];
+    // Try Supabase first
+    try {
+      const pref = await loadPreference({ userId, key: CONTACTS_STORAGE_KEY });
+      if (pref?.value && Array.isArray(pref.value)) {
+        return pref.value;
+      }
+    } catch (error) {
+      console.warn("[Contacts] Failed to load from Supabase, trying localStorage migration:", error);
+    }
     
-    const contacts = JSON.parse(stored);
-    return Array.isArray(contacts) ? contacts : [];
+    // Migration fallback: try localStorage
+    const stored = localStorage.getItem("arcle_contacts");
+    if (stored) {
+      const contacts = JSON.parse(stored);
+      if (Array.isArray(contacts)) {
+        // Migrate to Supabase
+        try {
+          await savePreference({ userId, key: CONTACTS_STORAGE_KEY, value: contacts });
+          localStorage.removeItem("arcle_contacts");
+        } catch (error) {
+          console.error("[Contacts] Failed to migrate contacts to Supabase:", error);
+        }
+        return contacts;
+      }
+    }
+    
+    return [];
   } catch (error) {
     console.error("[Contacts] Error loading contacts:", error);
     return [];
@@ -39,8 +63,8 @@ export function getContacts(): Contact[] {
 /**
  * Save a new contact
  */
-export function saveContact(name: string, address: string, nickname?: string, notes?: string): Contact {
-  const contacts = getContacts();
+export async function saveContact(userId: string, name: string, address: string, nickname?: string, notes?: string): Promise<Contact> {
+  const contacts = await getContacts(userId);
   
   // Check if contact already exists
   const existingIndex = contacts.findIndex(
@@ -71,9 +95,15 @@ export function saveContact(name: string, address: string, nickname?: string, no
     contacts.push(newContact);
   }
   
-  // Save to localStorage
-  if (typeof window !== "undefined") {
-    localStorage.setItem(CONTACTS_STORAGE_KEY, JSON.stringify(contacts));
+  // Save to Supabase
+  try {
+    await savePreference({ userId, key: CONTACTS_STORAGE_KEY, value: contacts });
+  } catch (error) {
+    console.error("[Contacts] Failed to save to Supabase:", error);
+    // Migration fallback
+    if (typeof window !== "undefined") {
+      localStorage.setItem("arcle_contacts", JSON.stringify(contacts));
+    }
   }
   
   return contacts[existingIndex] || contacts[contacts.length - 1];
@@ -82,8 +112,8 @@ export function saveContact(name: string, address: string, nickname?: string, no
 /**
  * Get a contact by name or nickname
  */
-export function getContact(nameOrNickname: string): Contact | null {
-  const contacts = getContacts();
+export async function getContact(userId: string, nameOrNickname: string): Promise<Contact | null> {
+  const contacts = await getContacts(userId);
   const searchTerm = nameOrNickname.toLowerCase().trim();
   
   return contacts.find(
@@ -95,8 +125,8 @@ export function getContact(nameOrNickname: string): Contact | null {
 /**
  * Get a contact by address
  */
-export function getContactByAddress(address: string): Contact | null {
-  const contacts = getContacts();
+export async function getContactByAddress(userId: string, address: string): Promise<Contact | null> {
+  const contacts = await getContacts(userId);
   return contacts.find(
     c => c.address.toLowerCase() === address.toLowerCase()
   ) || null;
@@ -105,8 +135,8 @@ export function getContactByAddress(address: string): Contact | null {
 /**
  * Delete a contact
  */
-export function deleteContact(nameOrAddress: string): boolean {
-  const contacts = getContacts();
+export async function deleteContact(userId: string, nameOrAddress: string): Promise<boolean> {
+  const contacts = await getContacts(userId);
   const searchTerm = nameOrAddress.toLowerCase().trim();
   
   const filteredContacts = contacts.filter(
@@ -119,8 +149,15 @@ export function deleteContact(nameOrAddress: string): boolean {
     return false; // Nothing deleted
   }
   
-  if (typeof window !== "undefined") {
-    localStorage.setItem(CONTACTS_STORAGE_KEY, JSON.stringify(filteredContacts));
+  // Save to Supabase
+  try {
+    await savePreference({ userId, key: CONTACTS_STORAGE_KEY, value: filteredContacts });
+  } catch (error) {
+    console.error("[Contacts] Failed to save to Supabase:", error);
+    // Migration fallback
+    if (typeof window !== "undefined") {
+      localStorage.setItem("arcle_contacts", JSON.stringify(filteredContacts));
+    }
   }
   
   return true;
@@ -129,14 +166,20 @@ export function deleteContact(nameOrAddress: string): boolean {
 /**
  * Update contact last used timestamp
  */
-export function updateContactLastUsed(address: string): void {
-  const contacts = getContacts();
+export async function updateContactLastUsed(userId: string, address: string): Promise<void> {
+  const contacts = await getContacts(userId);
   const contact = contacts.find(c => c.address.toLowerCase() === address.toLowerCase());
   
   if (contact) {
     contact.lastUsed = Date.now();
-    if (typeof window !== "undefined") {
-      localStorage.setItem(CONTACTS_STORAGE_KEY, JSON.stringify(contacts));
+    try {
+      await savePreference({ userId, key: CONTACTS_STORAGE_KEY, value: contacts });
+    } catch (error) {
+      console.error("[Contacts] Failed to save to Supabase:", error);
+      // Migration fallback
+      if (typeof window !== "undefined") {
+        localStorage.setItem("arcle_contacts", JSON.stringify(contacts));
+      }
     }
   }
 }
@@ -144,15 +187,37 @@ export function updateContactLastUsed(address: string): void {
 /**
  * Get recently used addresses (not in contacts)
  */
-export function getRecentAddresses(): string[] {
+export async function getRecentAddresses(userId: string): Promise<string[]> {
   try {
     if (typeof window === "undefined") return [];
     
-    const stored = localStorage.getItem(RECENT_ADDRESSES_KEY);
-    if (!stored) return [];
+    // Try Supabase first
+    try {
+      const pref = await loadPreference({ userId, key: RECENT_ADDRESSES_KEY });
+      if (pref?.value && Array.isArray(pref.value)) {
+        return pref.value;
+      }
+    } catch (error) {
+      console.warn("[Contacts] Failed to load recent addresses from Supabase, trying localStorage migration:", error);
+    }
     
-    const addresses = JSON.parse(stored);
-    return Array.isArray(addresses) ? addresses : [];
+    // Migration fallback: try localStorage
+    const stored = localStorage.getItem("arcle_recent_addresses");
+    if (stored) {
+      const addresses = JSON.parse(stored);
+      if (Array.isArray(addresses)) {
+        // Migrate to Supabase
+        try {
+          await savePreference({ userId, key: RECENT_ADDRESSES_KEY, value: addresses });
+          localStorage.removeItem("arcle_recent_addresses");
+        } catch (error) {
+          console.error("[Contacts] Failed to migrate recent addresses to Supabase:", error);
+        }
+        return addresses;
+      }
+    }
+    
+    return [];
   } catch (error) {
     console.error("[Contacts] Error loading recent addresses:", error);
     return [];
@@ -162,11 +227,12 @@ export function getRecentAddresses(): string[] {
 /**
  * Add an address to recent addresses
  */
-export function addRecentAddress(address: string): void {
+export async function addRecentAddress(userId: string, address: string): Promise<void> {
   // Don't add if it's already a contact
-  if (getContactByAddress(address)) return;
+  const existingContact = await getContactByAddress(userId, address);
+  if (existingContact) return;
   
-  let recent = getRecentAddresses();
+  let recent = await getRecentAddresses(userId);
   
   // Remove if already exists (to move to front)
   recent = recent.filter(a => a.toLowerCase() !== address.toLowerCase());
@@ -177,8 +243,15 @@ export function addRecentAddress(address: string): void {
   // Keep only last 10
   recent = recent.slice(0, 10);
   
-  if (typeof window !== "undefined") {
-    localStorage.setItem(RECENT_ADDRESSES_KEY, JSON.stringify(recent));
+  // Save to Supabase
+  try {
+    await savePreference({ userId, key: RECENT_ADDRESSES_KEY, value: recent });
+  } catch (error) {
+    console.error("[Contacts] Failed to save to Supabase:", error);
+    // Migration fallback
+    if (typeof window !== "undefined") {
+      localStorage.setItem("arcle_recent_addresses", JSON.stringify(recent));
+    }
   }
 }
 
@@ -210,6 +283,13 @@ export function formatContactsForAI(contacts: Contact[]): string {
   });
   
   return `Here are your contacts:\n\n${contactLines.join("\n")}\n\nWant to send to someone?`;
+}
+
+/**
+ * Get all contacts (async wrapper for backward compatibility)
+ */
+export async function getAllContacts(userId: string): Promise<Contact[]> {
+  return getContacts(userId);
 }
 
 

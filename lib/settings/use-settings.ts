@@ -10,7 +10,8 @@
  * - All other user preferences
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from "react";
+import { loadPreference, savePreference } from "@/lib/supabase-data";
 
 export interface UserSettings {
   // Profile
@@ -69,46 +70,52 @@ const DEFAULT_SETTINGS: UserSettings = {
   errorReportingEnabled: true,
 };
 
-const STORAGE_KEY = 'arcle_user_settings';
-
-export function useSettings() {
+export function useSettings(userId?: string) {
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load settings from localStorage on mount
+  // Load settings from Supabase (if userId provided)
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        setSettings({ ...DEFAULT_SETTINGS, ...parsed });
-      }
-      
-      // Try to load wallet address
-      const walletAddress = localStorage.getItem('arcle_wallet_address');
-      if (walletAddress && !settings.walletAddress) {
-        setSettings(prev => ({ ...prev, walletAddress }));
-      }
-      
-      setIsLoading(false);
-    } catch (error) {
-      console.error('[Settings] Error loading settings:', error);
-      setIsLoading(false);
-    }
-  }, [settings.walletAddress]);
+    const loadSettings = async () => {
+      try {
+        if (!userId) {
+          setSettings(DEFAULT_SETTINGS);
+              setIsLoading(false);
+              return;
+            }
 
-  // Save settings to localStorage whenever they change
-  const saveSettings = useCallback((newSettings: Partial<UserSettings>) => {
+        const preference = await loadPreference({ userId, key: "user_settings" });
+        if (preference?.value) {
+          setSettings({ ...DEFAULT_SETTINGS, ...preference.value });
+        } else {
+          await savePreference({ userId, key: "user_settings", value: DEFAULT_SETTINGS });
+          setSettings(DEFAULT_SETTINGS);
+        }
+        
+        setIsLoading(false);
+      } catch (error) {
+        console.error("[Settings] Error loading settings:", error);
+        setIsLoading(false);
+      }
+    };
+
+    loadSettings();
+  }, [userId]);
+
+  // Save settings to Supabase (if userId provided)
+  const saveSettings = useCallback(async (newSettings: Partial<UserSettings>) => {
     setSettings(prev => {
       const updated = { ...prev, ...newSettings };
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      } catch (error) {
-        console.error('[Settings] Error saving settings:', error);
+      
+      if (userId) {
+        savePreference({ userId, key: "user_settings", value: updated }).catch((error) => {
+          console.error("[Settings] Error saving to Supabase:", error);
+        });
       }
+      
       return updated;
     });
-  }, []);
+  }, [userId]);
 
   // Update email
   const updateEmail = useCallback((email: string) => {
@@ -199,8 +206,12 @@ export function useSettings() {
   // Reset to defaults
   const resetToDefaults = useCallback(() => {
     setSettings(DEFAULT_SETTINGS);
-    localStorage.removeItem(STORAGE_KEY);
-  }, []);
+    if (userId) {
+      savePreference({ userId, key: "user_settings", value: DEFAULT_SETTINGS }).catch((error) => {
+        console.error("[Settings] Error resetting settings:", error);
+      });
+    }
+  }, [userId]);
 
   return {
     settings,

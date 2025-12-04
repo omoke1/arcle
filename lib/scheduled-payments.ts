@@ -1,139 +1,157 @@
 /**
- * Scheduled Payments System
- * 
- * Handles one-time scheduled payments (different from subscriptions which are recurring)
+ * Scheduled Payments System (Supabase-backed)
  */
 
 export interface ScheduledPayment {
   id: string;
   amount: string;
   currency: "USDC" | "EURC";
-  to: string; // Recipient address
-  scheduledFor: number; // ms epoch timestamp
+  toAddress: string;
+  scheduledFor: number;
   status: "pending" | "executed" | "cancelled" | "failed";
   walletId?: string;
-  walletAddress?: string;
   createdAt: number;
   executedAt?: number;
   transactionHash?: string;
   failureReason?: string;
 }
 
-const STORAGE_KEY = "arcle_scheduled_payments";
+export const SCHEDULE_UPDATED_EVENT = "arcle:scheduled-payments-updated";
 
-function readAll(): ScheduledPayment[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
+interface ScheduledPaymentRecord {
+  id: string;
+  user_id: string;
+  wallet_id: string;
+  amount: string;
+  currency: string;
+  to_address: string;
+  scheduled_for: string;
+  status: string;
+  executed_at?: string;
+  transaction_hash?: string;
+  failure_reason?: string;
+  created_at: string;
+  updated_at: string;
 }
 
-function writeAll(items: ScheduledPayment[]) {
+function notifyScheduledPaymentsUpdated() {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  window.dispatchEvent(new CustomEvent(SCHEDULE_UPDATED_EVENT));
 }
 
-/**
- * List all scheduled payments
- */
-export function listScheduledPayments(): ScheduledPayment[] {
-  return readAll().filter(p => p.status === "pending");
-}
-
-/**
- * Get all scheduled payments (including executed/cancelled)
- */
-export function getAllScheduledPayments(): ScheduledPayment[] {
-  return readAll();
-}
-
-/**
- * Create a new scheduled payment
- */
-export function createScheduledPayment(
-  payment: Omit<ScheduledPayment, "id" | "status" | "createdAt">
-): ScheduledPayment {
-  const all = readAll();
-  const newPayment: ScheduledPayment = {
-    id: crypto.randomUUID(),
-    status: "pending",
-    createdAt: Date.now(),
-    ...payment,
+function mapScheduledPayment(record: ScheduledPaymentRecord): ScheduledPayment {
+  return {
+    id: record.id,
+    amount: record.amount,
+    currency: (record.currency as ScheduledPayment["currency"]) || "USDC",
+    toAddress: record.to_address,
+    scheduledFor: new Date(record.scheduled_for).getTime(),
+    status: record.status as ScheduledPayment["status"],
+    walletId: record.wallet_id,
+    createdAt: new Date(record.created_at).getTime(),
+    executedAt: record.executed_at ? new Date(record.executed_at).getTime() : undefined,
+    transactionHash: record.transaction_hash || undefined,
+    failureReason: record.failure_reason || undefined,
   };
-  all.push(newPayment);
-  writeAll(all);
-  return newPayment;
 }
 
-/**
- * Update a scheduled payment
- */
-export function updateScheduledPayment(
-  id: string,
-  patch: Partial<ScheduledPayment>
-): ScheduledPayment | null {
-  const all = readAll();
-  const idx = all.findIndex(p => p.id === id);
-  if (idx === -1) return null;
-  all[idx] = { ...all[idx], ...patch };
-  writeAll(all);
-  return all[idx];
+async function handleResponse(response: Response) {
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    throw new Error(errorBody.error || response.statusText);
+  }
+  return response.json();
 }
 
-/**
- * Cancel a scheduled payment
- */
-export function cancelScheduledPayment(id: string): boolean {
-  const payment = updateScheduledPayment(id, { status: "cancelled" });
-  return payment !== null;
+export async function listScheduledPayments(userId?: string): Promise<ScheduledPayment[]> {
+  if (!userId) return [];
+  const res = await fetch(`/api/schedules?userId=${encodeURIComponent(userId)}`, {
+    method: "GET",
+    cache: "no-store",
+  });
+  const data = await handleResponse(res);
+  return (data.payments || []).map(mapScheduledPayment);
 }
 
-/**
- * Delete a scheduled payment
- */
-export function deleteScheduledPayment(id: string) {
-  const all = readAll().filter(p => p.id !== id);
-  writeAll(all);
+export async function createScheduledPayment(params: {
+  userId: string;
+  walletId: string;
+  amount: string;
+  currency?: "USDC" | "EURC";
+  to: string;
+  scheduledFor: number;
+}): Promise<ScheduledPayment> {
+  const res = await fetch("/api/schedules", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      userId: params.userId,
+      walletId: params.walletId,
+      amount: params.amount,
+      currency: params.currency || "USDC",
+      toAddress: params.to,
+      scheduledFor: params.scheduledFor,
+    }),
+  });
+  const data = await handleResponse(res);
+  notifyScheduledPaymentsUpdated();
+  return mapScheduledPayment(data.payment);
 }
 
-/**
- * Find payments that are due for execution
- */
-export function findDuePayments(now: number = Date.now()): ScheduledPayment[] {
-  return readAll().filter(
-    p => p.status === "pending" && p.scheduledFor <= now
+export async function findDuePayments(
+  userId: string,
+  before: number = Date.now()
+): Promise<ScheduledPayment[]> {
+  if (!userId) return [];
+  const res = await fetch(
+    `/api/schedules/due?userId=${encodeURIComponent(userId)}&before=${before}`,
+    { method: "GET", cache: "no-store" }
   );
+  const data = await handleResponse(res);
+  return (data.payments || []).map(mapScheduledPayment);
 }
 
-/**
- * Mark a payment as executed
- */
-export function markAsExecuted(
+async function updateScheduledPaymentRequest(
+  scheduleId: string,
+  payload: Record<string, any>
+): Promise<ScheduledPayment> {
+  const res = await fetch(`/api/schedules/${scheduleId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await handleResponse(res);
+  notifyScheduledPaymentsUpdated();
+  return mapScheduledPayment(data.payment);
+}
+
+export async function markAsExecuted(
   id: string,
   transactionHash: string
-): ScheduledPayment | null {
-  return updateScheduledPayment(id, {
+): Promise<ScheduledPayment> {
+  return await updateScheduledPaymentRequest(id, {
     status: "executed",
-    executedAt: Date.now(),
     transactionHash,
   });
 }
 
-/**
- * Mark a payment as failed
- */
-export function markAsFailed(
+export async function markAsFailed(
   id: string,
   failureReason: string
-): ScheduledPayment | null {
-  return updateScheduledPayment(id, {
+): Promise<ScheduledPayment> {
+  return await updateScheduledPaymentRequest(id, {
     status: "failed",
     failureReason,
   });
+}
+
+export async function cancelScheduledPayment(id: string): Promise<ScheduledPayment> {
+  return await updateScheduledPaymentRequest(id, { status: "cancelled" });
+}
+
+export async function deleteScheduledPayment(id: string): Promise<void> {
+  await fetch(`/api/schedules/${id}`, { method: "DELETE" });
+  notifyScheduledPaymentsUpdated();
 }
 
 /**
@@ -152,7 +170,6 @@ export function parseScheduleTime(
     const now = new Date();
     let date = new Date(now);
     
-    // Parse date
     const lowerDate = dateStr.toLowerCase().trim();
     if (lowerDate === "today") {
       date = new Date(now);
@@ -160,7 +177,6 @@ export function parseScheduleTime(
       date = new Date(now);
       date.setDate(date.getDate() + 1);
     } else if (lowerDate.startsWith("next ")) {
-      // "next Monday", "next Friday", etc.
       const dayName = lowerDate.replace("next ", "").trim();
       const dayMap: Record<string, number> = {
         sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
@@ -171,31 +187,28 @@ export function parseScheduleTime(
         date = new Date(now);
         const currentDay = date.getDay();
         let daysAhead = targetDay - currentDay;
-        if (daysAhead <= 0) daysAhead += 7; // Next week
+        if (daysAhead <= 0) daysAhead += 7;
         date.setDate(date.getDate() + daysAhead);
       }
     } else if (lowerDate.startsWith("in ")) {
-      // "in 2 days", "in 1 week"
       const match = lowerDate.match(/in (\d+)\s*(day|days|week|weeks)/);
       if (match) {
         const num = parseInt(match[1]);
         const unit = match[2];
         date = new Date(now);
         if (unit.includes("week")) {
-          date.setDate(date.getDate() + (num * 7));
+          date.setDate(date.getDate() + num * 7);
         } else {
           date.setDate(date.getDate() + num);
         }
       }
     } else {
-      // Try to parse as ISO date or other format
       const parsed = new Date(dateStr);
       if (!isNaN(parsed.getTime())) {
         date = parsed;
       }
     }
     
-    // Parse time
     const lowerTime = timeStr.toLowerCase().trim();
     const timeMatch = lowerTime.match(/(\d{1,2}):?(\d{2})?\s*(am|pm)?/);
     if (timeMatch) {
@@ -211,11 +224,9 @@ export function parseScheduleTime(
       
       date.setHours(hours, minutes, 0, 0);
     } else {
-      // Default to current time if not specified
       date.setHours(now.getHours(), now.getMinutes(), 0, 0);
     }
     
-    // If the scheduled time is in the past, move to next day
     if (date.getTime() <= now.getTime()) {
       date.setDate(date.getDate() + 1);
     }

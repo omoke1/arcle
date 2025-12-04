@@ -12,6 +12,7 @@ export type CompoundStatus = "active" | "paused" | "stopped";
 
 export interface CompoundStrategy {
   id: string;
+  strategyId: string; // Legacy format uses strategyId
   walletId: string;
   name: string;
   frequency: CompoundFrequency;
@@ -43,36 +44,82 @@ export interface YieldHistory {
   currentValue: string;
 }
 
-// In-memory storage (in production, use database)
-let strategies: Map<string, CompoundStrategy> = new Map();
-let compoundHistory: Map<string, YieldHistory[]> = new Map();
+import {
+  createCompoundStrategy as createCompoundStrategyDb,
+  getCompoundStrategyByStrategyId,
+  getCompoundStrategiesByWallet as getCompoundStrategiesByWalletDb,
+  getActiveCompoundStrategies as getActiveCompoundStrategiesDb,
+  updateCompoundStrategyStatus,
+  updateCompoundStrategyAfterExecution,
+  addCompoundHistory as addCompoundHistoryDb,
+  getCompoundHistory as getCompoundHistoryDb,
+  type CompoundStrategy as CompoundStrategyDb,
+  type YieldHistory as YieldHistoryDb,
+} from "@/lib/db/services/compoundStrategies";
+
+/**
+ * Convert database CompoundStrategy to legacy format
+ */
+function dbToLegacyFormat(dbStrategy: CompoundStrategyDb): CompoundStrategy {
+  return {
+    id: dbStrategy.id,
+    strategyId: dbStrategy.strategy_id,
+    walletId: dbStrategy.wallet_id,
+    name: dbStrategy.name,
+    frequency: dbStrategy.frequency,
+    minimumYield: dbStrategy.minimum_yield,
+    reinvestPercentage: dbStrategy.reinvest_percentage,
+    targetPositions: dbStrategy.target_positions,
+    status: dbStrategy.status,
+    createdAt: new Date(dbStrategy.created_at).getTime(),
+    lastCompoundedAt: dbStrategy.last_compounded_at
+      ? new Date(dbStrategy.last_compounded_at).getTime()
+      : undefined,
+    nextCompoundAt: dbStrategy.next_compound_at
+      ? new Date(dbStrategy.next_compound_at).getTime()
+      : undefined,
+    totalCompounded: dbStrategy.total_compounded,
+    compoundCount: dbStrategy.compound_count,
+  };
+}
+
+/**
+ * Convert database YieldHistory to legacy format
+ */
+function dbHistoryToLegacyFormat(dbHistory: YieldHistoryDb): YieldHistory {
+  return {
+    date: new Date(dbHistory.date).getTime(),
+    yieldEarned: dbHistory.yield_earned,
+    reinvested: dbHistory.reinvested,
+    currentValue: dbHistory.current_value,
+  };
+}
 
 /**
  * Create a new auto-compound strategy
  */
-export function createCompoundStrategy(
+export async function createCompoundStrategy(
   walletId: string,
   name: string,
   frequency: CompoundFrequency,
   minimumYield: string = "10",
   reinvestPercentage: number = 100
-): CompoundStrategy {
-  const strategy: CompoundStrategy = {
-    id: crypto.randomUUID(),
+): Promise<CompoundStrategy> {
+  const strategyId = crypto.randomUUID();
+  const nextCompoundAt = calculateNextCompoundTime(frequency);
+
+  const dbStrategy = await createCompoundStrategyDb({
+    strategyId,
     walletId,
     name,
     frequency,
     minimumYield,
     reinvestPercentage,
-    targetPositions: [], // All USYC positions
-    status: "active",
-    createdAt: Date.now(),
-    nextCompoundAt: calculateNextCompoundTime(frequency),
-    totalCompounded: "0",
-    compoundCount: 0,
-  };
+    targetPositions: [],
+    nextCompoundAt,
+  });
 
-  strategies.set(strategy.id, strategy);
+  const strategy = dbToLegacyFormat(dbStrategy);
 
   console.log(`[Auto-Compound] Created strategy: ${strategy.id} - ${name} (${frequency})`);
 
@@ -82,32 +129,30 @@ export function createCompoundStrategy(
 /**
  * Get strategy by ID
  */
-export function getStrategy(strategyId: string): CompoundStrategy | undefined {
-  return strategies.get(strategyId);
+export async function getStrategy(strategyId: string): Promise<CompoundStrategy | undefined> {
+  const dbStrategy = await getCompoundStrategyByStrategyId(strategyId);
+  return dbStrategy ? dbToLegacyFormat(dbStrategy) : undefined;
 }
 
 /**
  * Get all strategies for a wallet
  */
-export function getStrategiesByWallet(walletId: string): CompoundStrategy[] {
-  return Array.from(strategies.values()).filter(s => s.walletId === walletId);
+export async function getStrategiesByWallet(walletId: string): Promise<CompoundStrategy[]> {
+  const dbStrategies = await getCompoundStrategiesByWalletDb(walletId);
+  return dbStrategies.map(dbToLegacyFormat);
 }
 
 /**
  * Update strategy status
  */
-export function updateStrategyStatus(strategyId: string, status: CompoundStatus): boolean {
-  const strategy = strategies.get(strategyId);
+export async function updateStrategyStatus(strategyId: string, status: CompoundStatus): Promise<boolean> {
+  const result = await updateCompoundStrategyStatus(strategyId, status);
   
-  if (!strategy) {
+  if (!result) {
     return false;
   }
 
-  strategy.status = status;
-  strategies.set(strategyId, strategy);
-
   console.log(`[Auto-Compound] Updated strategy ${strategyId} status to ${status}`);
-
   return true;
 }
 
@@ -190,23 +235,31 @@ export async function executeCompound(
     }
 
     // Update strategy
-    strategy.lastCompoundedAt = Date.now();
-    strategy.nextCompoundAt = calculateNextCompoundTime(strategy.frequency, Date.now());
-    strategy.totalCompounded = (parseFloat(strategy.totalCompounded) + parseFloat(reinvestedAmount)).toFixed(6);
-    strategy.compoundCount++;
-    strategies.set(strategy.id, strategy);
+    const lastCompoundedAt = Date.now();
+    const nextCompoundAt = calculateNextCompoundTime(strategy.frequency, Date.now());
+    const totalCompounded = (parseFloat(strategy.totalCompounded) + parseFloat(reinvestedAmount)).toFixed(6);
+    const compoundCount = strategy.compoundCount + 1;
+
+    await updateCompoundStrategyAfterExecution(strategy.strategyId, {
+      lastCompoundedAt,
+      nextCompoundAt,
+      totalCompounded,
+      compoundCount,
+    });
 
     // Record history
-    const history: YieldHistory = {
-      date: Date.now(),
+    await addCompoundHistoryDb(strategy.strategyId, {
       yieldEarned: yieldAmount,
       reinvested: reinvestedAmount,
       currentValue: "0", // Would calculate from position
-    };
+      date: lastCompoundedAt,
+    });
 
-    const existingHistory = compoundHistory.get(strategy.id) || [];
-    existingHistory.push(history);
-    compoundHistory.set(strategy.id, existingHistory);
+    // Update local strategy object for return value
+    strategy.lastCompoundedAt = lastCompoundedAt;
+    strategy.nextCompoundAt = nextCompoundAt;
+    strategy.totalCompounded = totalCompounded;
+    strategy.compoundCount = compoundCount;
 
     console.log(`[Auto-Compound] ✅ Compound successful: ${reinvestedAmount} reinvested`);
 
@@ -238,7 +291,8 @@ export async function executeCompound(
  */
 export async function monitorAndCompound(walletAddress: string): Promise<CompoundResult[]> {
   const results: CompoundResult[] = [];
-  const activeStrategies = Array.from(strategies.values()).filter(s => s.status === "active");
+  const dbStrategies = await getActiveCompoundStrategiesDb();
+  const activeStrategies = dbStrategies.map(dbToLegacyFormat);
 
   console.log(`[Auto-Compound Monitor] Checking ${activeStrategies.length} active strategies`);
 
@@ -304,8 +358,9 @@ export function stopCompoundMonitoring(intervalId: NodeJS.Timeout): void {
 /**
  * Get compound history for a strategy
  */
-export function getCompoundHistory(strategyId: string): YieldHistory[] {
-  return compoundHistory.get(strategyId) || [];
+export async function getCompoundHistory(strategyId: string): Promise<YieldHistory[]> {
+  const dbHistory = await getCompoundHistoryDb(strategyId);
+  return dbHistory.map(dbHistoryToLegacyFormat);
 }
 
 /**

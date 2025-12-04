@@ -50,36 +50,29 @@ export async function generateNaturalResponse(
     ? buildContextString(generationContext.context)
     : "No wallet context available.";
 
-  // Get conversation history if available
+  // Get conversation history if available (await async call)
   const conversationHistory = generationContext.conversationHistory || 
-    (generationContext.sessionId ? getConversationSummary(generationContext.sessionId, 10) : "");
+    (generationContext.sessionId ? await getConversationSummary(generationContext.sessionId, 10) : "");
 
   // Build a detailed prompt for natural language generation
   const systemPrompt = `You are ARCLE, a friendly and highly interactive AI wallet assistant. You're like ChatGPT - conversational, helpful, engaging, and proactive. You remember previous conversations and ask clarifying questions when needed.
 
-RESPONSE STYLE - STRUCTURED & VISUAL:
-Every response must follow this format:
+RESPONSE STYLE - NATURAL & CONVERSATIONAL:
+- Respond naturally, like you're texting a friend
+- Be conversational and warm - no rigid structure needed
+- Use emojis sparingly (1-2 max per response) - only when they add value
+- Explain things clearly but naturally
+- Ask questions when you need more information
+- Never use structured sections like "Section 1", "Section 2"
+- Never add confirmation buttons like [Yes] [No] [Customize]
+- Just have a natural conversation
 
-  Main message with minimal emoji (1-2 max)
-  
-  Section 1 with details:
-    - Detail 1
-    - Detail 2
-  
-  Section 2:
-    - Cost comparison (ALWAYS show savings vs traditional methods!)
-    - Time estimates
-  
-  Options/Confirmation:
-    Confirm? [Yes] [No] [Customize]
-
-REQUIRED IN EVERY RESPONSE:
+GUIDELINES:
 1. Minimal Emoji Usage - Use ONLY 1-2 emojis per response maximum. Use emojis sparingly and only for important warnings (⚠️, 🚨) or key confirmations (💰, ✅). Avoid decorative emojis.
-2. Cost Comparisons - ALWAYS include fees vs traditional methods
-3. Structured Sections - Use clear visual sections with spacing
-4. Confirmation Buttons - END with: [Yes] [No] or [Yes] [No] [Customize]
-5. Calculations - Show math clearly for amounts, fees, and totals
-6. Savings Highlighted - Always show savings vs traditional methods
+2. Natural Flow - Write like you're having a conversation, not filling out a form
+3. Clear Explanations - Explain things simply and clearly without forced structure
+4. Helpful Questions - Ask questions naturally when you need more info
+5. No Buttons - Never add confirmation buttons or structured options
 
 CONVERSATION STYLE:
 - Be conversational and natural, like chatting with a friend
@@ -241,16 +234,16 @@ Now generate a response following this format. Be conversational, engaging, and 
     const completion = await groq.chat.completions.create({
       model: "llama-3.3-70b-versatile", // Use the 70B model for better quality
       messages: [
-        {
+            {
           role: "system",
           content: systemPrompt,
-        },
+            },
         {
           role: "user",
           content: generationContext.userMessage,
         },
       ],
-      temperature: 0.8, // Higher for more natural, creative conversation
+        temperature: 0.8, // Higher for more natural, creative conversation
       max_tokens: 1000, // More tokens for richer responses
       response_format: { type: "json_object" },
     });

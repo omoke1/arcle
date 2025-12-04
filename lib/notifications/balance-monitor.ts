@@ -69,16 +69,16 @@ export function startBalanceMonitoring(
           // Only trigger notification if change is significant (>= 0.000001 USDC)
           // This filters out tiny rounding differences and only shows real transactions
           if (changeNum >= 0.000001) {
-            // Create notification
-            createBalanceChangeNotification(
-              lastBalance,
-              currentBalance,
-              change
-            );
+          // Create notification
+          createBalanceChangeNotification(
+            lastBalance,
+            currentBalance,
+            change
+          );
 
-            // Call callback if provided
-            if (onBalanceChange) {
-              onBalanceChange(lastBalance, currentBalance, change);
+          // Call callback if provided
+          if (onBalanceChange) {
+            onBalanceChange(lastBalance, currentBalance, change);
             }
           }
         }

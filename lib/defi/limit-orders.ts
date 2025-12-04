@@ -12,6 +12,7 @@ export type OrderStatus = "pending" | "executed" | "cancelled" | "expired";
 
 export interface LimitOrder {
   id: string;
+  orderId: string; // Legacy format uses orderId
   walletId: string;
   type: OrderType;
   fromToken: string;
@@ -48,15 +49,50 @@ export interface OrderExecutionResult {
   error?: string;
 }
 
-// In-memory storage (in production, use database)
-let orders: Map<string, LimitOrder> = new Map();
+import {
+  createLimitOrder as createLimitOrderDb,
+  getLimitOrderByOrderId,
+  getLimitOrdersByWallet as getLimitOrdersByWalletDb,
+  getPendingLimitOrders as getPendingLimitOrdersDb,
+  updateLimitOrderStatus as updateLimitOrderStatusDb,
+  type LimitOrder as LimitOrderDb,
+} from "@/lib/db/services/limitOrders";
+
+/**
+ * Convert database LimitOrder to legacy format
+ */
+function dbToLegacyFormat(dbOrder: LimitOrderDb): LimitOrder {
+  return {
+    id: dbOrder.id,
+    orderId: dbOrder.order_id,
+    walletId: dbOrder.wallet_id,
+    type: dbOrder.type,
+    fromToken: dbOrder.from_token,
+    toToken: dbOrder.to_token,
+    amount: dbOrder.amount,
+    targetPrice: dbOrder.target_price,
+    currentPrice: dbOrder.current_price || undefined,
+    blockchain: dbOrder.blockchain,
+    status: dbOrder.status,
+    createdAt: new Date(dbOrder.created_at).getTime(),
+    expiresAt: dbOrder.expires_at ? new Date(dbOrder.expires_at).getTime() : undefined,
+    executedAt: dbOrder.executed_at ? new Date(dbOrder.executed_at).getTime() : undefined,
+    transactionHash: dbOrder.transaction_hash || undefined,
+    slippageTolerance: dbOrder.slippage_tolerance,
+  };
+}
 
 /**
  * Create a new limit order
  */
-export function createLimitOrder(params: CreateOrderParams): LimitOrder {
-  const order: LimitOrder = {
-    id: crypto.randomUUID(),
+export async function createLimitOrder(params: CreateOrderParams): Promise<LimitOrder> {
+  const orderId = crypto.randomUUID();
+  const expiresAt = params.expiryHours
+    ? Date.now() + params.expiryHours * 60 * 60 * 1000
+    : undefined;
+
+  const dbOrder = await createLimitOrderDb({
+    orderId,
     walletId: params.walletId,
     type: params.type,
     fromToken: params.fromToken,
@@ -64,13 +100,11 @@ export function createLimitOrder(params: CreateOrderParams): LimitOrder {
     amount: params.amount,
     targetPrice: params.targetPrice,
     blockchain: params.blockchain,
-    status: "pending",
-    createdAt: Date.now(),
-    expiresAt: params.expiryHours ? Date.now() + (params.expiryHours * 60 * 60 * 1000) : undefined,
-    slippageTolerance: params.slippageTolerance || 0.5,
-  };
+    expiresAt,
+    slippageTolerance: params.slippageTolerance,
+  });
 
-  orders.set(order.id, order);
+  const order = dbToLegacyFormat(dbOrder);
 
   console.log(`[Limit Order] Created: ${order.id} - ${order.type} ${order.amount} ${order.fromToken} at $${order.targetPrice}`);
 
@@ -80,35 +114,32 @@ export function createLimitOrder(params: CreateOrderParams): LimitOrder {
 /**
  * Get order by ID
  */
-export function getOrder(orderId: string): LimitOrder | undefined {
-  return orders.get(orderId);
+export async function getOrder(orderId: string): Promise<LimitOrder | undefined> {
+  const dbOrder = await getLimitOrderByOrderId(orderId);
+  return dbOrder ? dbToLegacyFormat(dbOrder) : undefined;
 }
 
 /**
  * Get all orders for a wallet
  */
-export function getOrdersByWallet(walletId: string, status?: OrderStatus): LimitOrder[] {
-  const walletOrders = Array.from(orders.values()).filter(o => o.walletId === walletId);
-  
-  if (status) {
-    return walletOrders.filter(o => o.status === status);
-  }
-  
-  return walletOrders;
+export async function getOrdersByWallet(walletId: string, status?: OrderStatus): Promise<LimitOrder[]> {
+  const dbOrders = await getLimitOrdersByWalletDb(walletId, status);
+  return dbOrders.map(dbToLegacyFormat);
 }
 
 /**
  * Get all pending orders
  */
-export function getPendingOrders(): LimitOrder[] {
-  return Array.from(orders.values()).filter(o => o.status === "pending");
+export async function getPendingOrders(): Promise<LimitOrder[]> {
+  const dbOrders = await getPendingLimitOrdersDb();
+  return dbOrders.map(dbToLegacyFormat);
 }
 
 /**
  * Cancel an order
  */
-export function cancelOrder(orderId: string): boolean {
-  const order = orders.get(orderId);
+export async function cancelOrder(orderId: string): Promise<boolean> {
+  const order = await getOrder(orderId);
   
   if (!order) {
     return false;
@@ -119,8 +150,7 @@ export function cancelOrder(orderId: string): boolean {
     return false;
   }
 
-  order.status = "cancelled";
-  orders.set(orderId, order);
+  await updateLimitOrderStatusDb(orderId, "cancelled");
 
   console.log(`[Limit Order] Cancelled: ${orderId}`);
 
@@ -133,7 +163,7 @@ export function cancelOrder(orderId: string): boolean {
  */
 export async function monitorAndExecuteOrders(): Promise<OrderExecutionResult[]> {
   const results: OrderExecutionResult[] = [];
-  const pendingOrders = getPendingOrders();
+  const pendingOrders = await getPendingOrders();
 
   console.log(`[Limit Order Monitor] Checking ${pendingOrders.length} pending orders`);
 
@@ -141,8 +171,7 @@ export async function monitorAndExecuteOrders(): Promise<OrderExecutionResult[]>
     try {
       // Check if order has expired
       if (order.expiresAt && Date.now() > order.expiresAt) {
-        order.status = "expired";
-        orders.set(order.id, order);
+        await updateLimitOrderStatusDb(order.orderId, "expired");
         console.log(`[Limit Order] Expired: ${order.id}`);
         continue;
       }
@@ -216,16 +245,22 @@ async function executeOrder(order: LimitOrder): Promise<OrderExecutionResult> {
     );
 
     if (tradeResult.success) {
-      order.status = "executed";
-      order.executedAt = Date.now();
-      order.transactionHash = tradeResult.transactionHash;
-      orders.set(order.id, order);
+      const updatedOrder = await updateLimitOrderStatusDb(order.orderId, "executed", {
+        executedAt: Date.now(),
+        transactionHash: tradeResult.transactionHash,
+        currentPrice: order.currentPrice,
+      });
+
+      const finalOrder = updatedOrder ? dbToLegacyFormat(updatedOrder) : order;
+      finalOrder.status = "executed";
+      finalOrder.executedAt = Date.now();
+      finalOrder.transactionHash = tradeResult.transactionHash;
 
       console.log(`[Limit Order] ✅ Executed: ${order.id}`);
 
       return {
         success: true,
-        order,
+        order: finalOrder,
         transactionHash: tradeResult.transactionHash,
         executedPrice: order.currentPrice,
       };
@@ -345,17 +380,9 @@ export function formatOrdersList(orders: LimitOrder[]): string {
 /**
  * Clear old executed/cancelled orders (cleanup)
  */
-export function cleanupOldOrders(olderThanDays: number = 7): number {
-  const cutoffTime = Date.now() - (olderThanDays * 24 * 60 * 60 * 1000);
-  let removed = 0;
-
-  for (const [id, order] of orders.entries()) {
-    if ((order.status === "executed" || order.status === "cancelled" || order.status === "expired") && 
-        order.createdAt < cutoffTime) {
-      orders.delete(id);
-      removed++;
-    }
-  }
+export async function cleanupOldOrders(olderThanDays: number = 7): Promise<number> {
+  const { cleanupOldLimitOrders } = await import("@/lib/db/services/limitOrders");
+  const removed = await cleanupOldLimitOrders(olderThanDays);
 
   if (removed > 0) {
     console.log(`[Limit Order] Cleaned up ${removed} old orders`);

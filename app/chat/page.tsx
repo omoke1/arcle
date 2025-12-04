@@ -4,21 +4,41 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { ChatInterface } from "@/components/chat/ChatInterface";
 import { ChatInput } from "@/components/chat/ChatInput";
-import { CollapsibleHeader } from "@/components/layout/CollapsibleHeader";
+import { MainLayout } from "@/components/layout/MainLayout";
+import { WelcomeScreen } from "@/components/layout/WelcomeScreen";
+import { useSettings } from "@/lib/settings/use-settings";
 import { TransactionPreviewMessage } from "@/components/chat/TransactionPreviewMessage";
 import { CirclePinWidget } from "@/components/wallet/CirclePinWidget";
+import { SessionApprovalModal } from "@/components/wallet/SessionApprovalModal";
+import { SessionStatus } from "@/components/wallet/SessionStatus";
+import { AutoExecutionBadge } from "@/components/wallet/AutoExecutionBadge";
+import { SessionManagement } from "@/components/wallet/SessionManagement";
+import { isSessionKeysEnabled } from "@/lib/config/featureFlags";
+// Note: checkSessionKeyStatus is dynamically imported to avoid SSR issues with Circle SDK
 import { useCircle } from "@/hooks/useCircle";
 import { AIService } from "@/lib/ai/ai-service";
+import { processMessageWithAgents, shouldUseAgentRouter } from "@/lib/ai/agentIntegration";
+import { isAgentRouterEnabled } from "@/lib/config/featureFlags";
+import { AgentTier } from "@/components/ui/TierSelector";
 import { updateAddressHistory, calculateRiskScore } from "@/lib/security/risk-scoring";
 import { validateAddress } from "@/lib/security/address-validation";
 import type { ChatMessage, Transaction } from "@/types";
-import { findDueReminders, findDueCharges, scheduleNext, updateSubscription, listSubscriptions } from "@/lib/subscriptions";
+import { findDueReminders, findDueCharges, scheduleNext, updateSubscription } from "@/lib/subscriptions";
 import { monitorTransaction } from "@/lib/notifications/transaction-monitor";
 import { startBalanceMonitoring, stopBalanceMonitoring } from "@/lib/notifications/balance-monitor";
 import { startIncomingTransactionMonitoring, stopIncomingTransactionMonitoring } from "@/lib/notifications/incoming-transaction-monitor";
 import { getAllNotifications, markAsRead, getUnreadCount } from "@/lib/notifications/notification-service";
 import { hasValidAccess } from "@/lib/auth/invite-codes";
 import { refreshUserToken, checkTokenExpiry } from "@/lib/circle/token-refresh";
+import {
+  getOrCreateSessionId,
+  saveUserCredentials,
+  loadUserCredentials,
+  clearUserCredentials,
+  saveWalletData,
+  loadWalletData,
+  clearWalletData,
+} from "@/lib/supabase-data";
 
 export default function ChatPage() {
   const router = useRouter();
@@ -27,11 +47,14 @@ export default function ChatPage() {
   // Check invite code verification on mount
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const hasAccess = hasValidAccess();
-      if (!hasAccess) {
-        // User doesn't have valid access, redirect to landing page
-        router.push('/');
-      }
+      const checkAccess = async () => {
+        const hasAccess = await hasValidAccess();
+        if (!hasAccess) {
+          // User doesn't have valid access, redirect to landing page
+          router.push('/');
+        }
+      };
+      checkAccess();
     }
   }, [router]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -41,9 +64,19 @@ export default function ChatPage() {
   const [balance, setBalance] = useState<string>("0.00");
   const [userId, setUserId] = useState<string | null>(null);
   const [userToken, setUserToken] = useState<string | null>(null);
+  const [selectedTier, setSelectedTier] = useState<AgentTier>("basic");
+  
+  // Get user settings for display name
+  const { settings } = useSettings(userId || undefined);
   const [encryptionKey, setEncryptionKey] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showPinWidget, setShowPinWidget] = useState(false);
+  const [showSessionApproval, setShowSessionApproval] = useState(false);
+  const [sessionKeyStatus, setSessionKeyStatus] = useState<{
+    hasActiveSession: boolean;
+    canAutoExecute: boolean;
+    sessionKeyId?: string;
+  } | null>(null);
   const [challengeData, setChallengeData] = useState<{
     challengeId: string;
     userId: string;
@@ -56,24 +89,66 @@ export default function ChatPage() {
       amount: string;
       messageId: string;
     };
+    // Gateway deposit challenge details
+    gatewayDeposit?: {
+      walletId: string;
+      fromChain: string;
+      toChain: string;
+      amount: string;
+      destinationAddress: string;
+      messageId: string;
+    };
+    // Gateway transfer signing challenge details
+    gatewayTransfer?: {
+      walletId: string;
+      burnIntent: any;
+      fromChain: string;
+      toChain: string;
+      amount: string;
+      destinationAddress: string;
+      messageId: string;
+    };
   } | null>(null);
   const [pendingTransaction, setPendingTransaction] = useState<{
     messageId: string;
     amount: string;
     to: string;
   } | null>(null);
-  const [sessionId] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("arcle_session_id");
-      if (stored) return stored;
-      const newId = crypto.randomUUID();
-      localStorage.setItem("arcle_session_id", newId);
-      return newId;
-    }
-    return crypto.randomUUID();
-  });
+  const [pendingUSYC, setPendingUSYC] = useState<{
+    messageId: string;
+    action: 'subscribe' | 'redeem';
+    amount: string;
+    blockchain?: string;
+    step?: 'approve' | 'complete';
+  } | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [replyToMessageId, setReplyToMessageId] = useState<string | null>(null);
+  const hasHydratedMessagesRef = useRef(false);
+  
+  // Initialize session ID from Supabase
+  useEffect(() => {
+    const initSessionId = async () => {
+      if (typeof window !== "undefined" && userId) {
+        try {
+          const id = await getOrCreateSessionId(userId);
+          setSessionId(id);
+        } catch (error) {
+          console.error("[ChatPage] Failed to get/create session ID:", error);
+          // Fallback to local UUID if Supabase fails
+          const fallbackId = crypto.randomUUID();
+          setSessionId(fallbackId);
+        }
+      } else if (typeof window !== "undefined" && !userId) {
+        // Temporary session ID until userId is available
+        const tempId = crypto.randomUUID();
+        setSessionId(tempId);
+      }
+    };
+    initSessionId();
+  }, [userId]);
 
   const creatingRef = useRef(false);
+  const processingChallengeRef = useRef(false);
 
   const pushAssistant = (text: string) => {
     const msg: ChatMessage = {
@@ -87,60 +162,74 @@ export default function ChatPage() {
 
   // Wallets are now created ONLY when the user explicitly requests it
 
-  // Save user credentials to localStorage whenever they change
+  // Save user credentials to Supabase whenever they change
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      if (userId) {
-        localStorage.setItem('arcle_user_id', userId);
-      }
-      if (userToken) {
-        localStorage.setItem('arcle_user_token', userToken);
-      }
-      if (encryptionKey) {
-        localStorage.setItem('arcle_encryption_key', encryptionKey);
-      }
+    if (typeof window !== 'undefined' && userId && userToken) {
+      saveUserCredentials(userId, { userToken, encryptionKey: encryptionKey || undefined }, walletAddress || undefined)
+        .catch(error => console.error("[ChatPage] Failed to save credentials:", error));
     }
-  }, [userId, userToken, encryptionKey]);
+  }, [userId, userToken, encryptionKey, walletAddress]);
 
-  // Reload credentials from localStorage if they're missing in state but exist in storage
-  // This helps when token is refreshed externally (e.g., via refresh script)
+  // Load credentials from Supabase (with migration from localStorage)
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const storedUserId = localStorage.getItem('arcle_user_id');
-      const storedUserToken = localStorage.getItem('arcle_user_token');
-      const storedEncryptionKey = localStorage.getItem('arcle_encryption_key');
+    const loadCredentials = async () => {
+      if (typeof window === 'undefined') return;
       
-      // Update state if we have credentials in localStorage (even if state already has them)
-      // This ensures we always have the latest token from localStorage
-      if (storedUserId && storedUserToken) {
-        // Only log if we're actually updating (credentials were missing or changed)
-        if (!userId || !userToken || userToken !== storedUserToken) {
-          console.log("[ChatPage] Reloading credentials from localStorage", {
+      // Migration: Check localStorage first, then migrate to Supabase
+      const legacyUserId = localStorage.getItem('arcle_user_id');
+      const legacyUserToken = localStorage.getItem('arcle_user_token');
+      const legacyEncryptionKey = localStorage.getItem('arcle_encryption_key');
+      
+      if (legacyUserId && legacyUserToken) {
+        // Migrate from localStorage to Supabase
+        try {
+          // Try to get wallet address if available
+          const legacyWalletAddress = localStorage.getItem('arcle_wallet_address');
+          await saveUserCredentials(legacyUserId, { 
+            userToken: legacyUserToken, 
+            encryptionKey: legacyEncryptionKey || undefined 
+          }, legacyWalletAddress || undefined);
+          // Clear localStorage after successful migration
+          localStorage.removeItem('arcle_user_id');
+          localStorage.removeItem('arcle_user_token');
+          localStorage.removeItem('arcle_encryption_key');
+          console.log("[ChatPage] ✅ Migrated credentials from localStorage to Supabase");
+        } catch (error) {
+          console.error("[ChatPage] Failed to migrate credentials:", error);
+        }
+        
+        // Update state with migrated credentials
+        if (!userId || !userToken || userToken !== legacyUserToken) {
+          console.log("[ChatPage] Reloading credentials (migrated from localStorage)", {
             hadUserId: !!userId,
             hadUserToken: !!userToken,
-            tokenChanged: userToken !== storedUserToken,
+            tokenChanged: userToken !== legacyUserToken,
           });
         }
-        setUserId(storedUserId);
-        setUserToken(storedUserToken);
-        if (storedEncryptionKey) {
-          setEncryptionKey(storedEncryptionKey);
+        setUserId(legacyUserId);
+        setUserToken(legacyUserToken);
+        if (legacyEncryptionKey) {
+          setEncryptionKey(legacyEncryptionKey);
         }
-      } else {
-        // Log if credentials are missing in localStorage
-        if (!storedUserId || !storedUserToken) {
-          console.warn("[ChatPage] Missing credentials in localStorage:", {
-            hasUserId: !!storedUserId,
-            hasUserToken: !!storedUserToken,
-          });
-          
-          // If we have userId but no userToken, try to refresh/create token automatically
-          if (storedUserId && !storedUserToken) {
+        return;
+      }
+      
+      // If we have userId in state, try to load credentials from Supabase
+      if (userId && (!userToken || !encryptionKey)) {
+        try {
+          const credentials = await loadUserCredentials(userId);
+          if (credentials.userToken) {
+            setUserToken(credentials.userToken);
+            if (credentials.encryptionKey) {
+              setEncryptionKey(credentials.encryptionKey);
+            }
+            console.log("[ChatPage] ✅ Loaded credentials from Supabase");
+          } else if (userId && !credentials.userToken) {
+            // If we have userId but no token, try to refresh/create token
             console.log("[ChatPage] 🔄 userId found but userToken missing, attempting to refresh token...");
             refreshUserToken().then((newToken) => {
               if (newToken) {
                 console.log("[ChatPage] ✅ Token created/refreshed successfully");
-                setUserId(storedUserId);
                 setUserToken(newToken.userToken);
                 if (newToken.encryptionKey) {
                   setEncryptionKey(newToken.encryptionKey);
@@ -152,10 +241,14 @@ export default function ChatPage() {
               console.error("[ChatPage] Error refreshing token:", error);
             });
           }
+        } catch (error) {
+          console.error("[ChatPage] Failed to load credentials from Supabase:", error);
         }
       }
-    }
-  }, [userId, userToken]); // Re-check when state changes
+    };
+    
+    loadCredentials();
+  }, [userId, userToken, encryptionKey]); // Re-check when state changes
 
   // Proactive token refresh - refresh tokens before they expire
   useEffect(() => {
@@ -194,6 +287,63 @@ export default function ChatPage() {
     return () => clearInterval(interval);
   }, [userToken]);
 
+  // Hydrate chat history from Supabase once we have a stable userId and sessionId
+  useEffect(() => {
+    const hydrateHistory = async () => {
+      if (hasHydratedMessagesRef.current) return;
+      if (!userId || !sessionId) return;
+      if (typeof window === "undefined") return;
+
+      try {
+        const response = await fetch(
+          `/api/chat/history?sessionId=${encodeURIComponent(
+            sessionId
+          )}&userId=${encodeURIComponent(userId)}`
+        );
+
+        if (!response.ok) {
+          console.warn(
+            "[ChatPage] Failed to load chat history:",
+            await response.text()
+          );
+          return;
+        }
+
+        const data = await response.json();
+        const history = (data.messages || []) as ChatMessage[];
+
+        if (!Array.isArray(history) || history.length === 0) {
+          hasHydratedMessagesRef.current = true;
+          return;
+        }
+
+        // Only hydrate if we don't already have messages to avoid flicker/duplication.
+        setMessages((prev) => {
+          if (prev.length === 0) {
+            return history;
+          }
+
+          const existingIds = new Set(prev.map((m) => m.id));
+          const merged = [...prev];
+
+          for (const msg of history) {
+            if (!existingIds.has(msg.id)) {
+              merged.push(msg);
+            }
+          }
+
+          return merged;
+        });
+
+        hasHydratedMessagesRef.current = true;
+      } catch (error) {
+        console.warn("[ChatPage] Error hydrating chat history:", error);
+      }
+    };
+
+    hydrateHistory();
+  }, [userId, sessionId]);
+
   // Debug: Log PIN widget state changes
   useEffect(() => {
     console.log("[PIN Widget State] showPinWidget changed:", showPinWidget);
@@ -208,96 +358,116 @@ export default function ChatPage() {
     }
   }, [showPinWidget, challengeData]);
 
-  // Load wallet from localStorage on mount and fetch real balance
+  // Load wallet from Supabase on mount and fetch real balance
   useEffect(() => {
     const loadWallet = async () => {
-      if (typeof window !== 'undefined') {
-        const storedWalletId = localStorage.getItem('arcle_wallet_id');
-        const storedWalletAddress = localStorage.getItem('arcle_wallet_address');
+      if (typeof window === 'undefined' || !userId) return;
+      
+      // Migration: Check localStorage first, then migrate to Supabase
+      const legacyWalletId = localStorage.getItem('arcle_wallet_id');
+      const legacyWalletAddress = localStorage.getItem('arcle_wallet_address');
+      
+      if (legacyWalletId && legacyWalletAddress) {
+        // Migrate from localStorage to Supabase
+        try {
+          await saveWalletData(userId, { walletId: legacyWalletId, walletAddress: legacyWalletAddress });
+          // Clear localStorage after successful migration
+          localStorage.removeItem('arcle_wallet_id');
+          localStorage.removeItem('arcle_wallet_address');
+          console.log("[ChatPage] ✅ Migrated wallet data from localStorage to Supabase");
+        } catch (error) {
+          console.error("[ChatPage] Failed to migrate wallet data:", error);
+        }
         
-        const storedUserId = localStorage.getItem('arcle_user_id');
-        const storedUserToken = localStorage.getItem('arcle_user_token');
-        const storedEncryptionKey = localStorage.getItem('arcle_encryption_key');
-        
-        if (storedWalletId && storedWalletAddress) {
-          setWalletId(storedWalletId);
-          setWalletAddress(storedWalletAddress);
-          setHasWallet(true);
-          
-          // Store user info if available
-          if (storedUserId && storedUserToken) {
-            setUserId(storedUserId);
-            setUserToken(storedUserToken);
-            if (storedEncryptionKey) {
-              setEncryptionKey(storedEncryptionKey);
-            }
-          }
-          
-          // Always fetch real balance from API/blockchain (no mock data)
-          const balance = await getBalance(storedWalletId, storedWalletAddress, userId || undefined, userToken || undefined);
-          if (balance) {
-            setBalance(balance);
+        setWalletId(legacyWalletId);
+        setWalletAddress(legacyWalletAddress);
+        setHasWallet(true);
+      } else {
+        // Load from Supabase
+        try {
+          const walletData = await loadWalletData(userId);
+          if (walletData.walletId && walletData.walletAddress) {
+            setWalletId(walletData.walletId);
+            setWalletAddress(walletData.walletAddress);
+            setHasWallet(true);
           } else {
-            // If balance fetch fails, set to 0 (not a mock, just fallback)
+            setHasWallet(false);
             setBalance("0.00");
+            return;
           }
-
-          // Start balance monitoring for state updates (not notifications)
-          // Balance notifications are handled by transaction completion handlers
-          startBalanceMonitoring({
-            walletId: storedWalletId,
-            walletAddress: storedWalletAddress,
-            pollInterval: 15000, // Check every 15 seconds
-            enabled: true,
-            onBalanceChange: (oldBalance, newBalance, change) => {
-              // Only update balance state silently - don't show chat notifications
-              // Notifications are handled by transaction completion handlers
-              setBalance(newBalance);
-            },
-          });
-
-          // Start incoming transaction monitoring for scam token detection
-          startIncomingTransactionMonitoring({
-            walletId: storedWalletId,
-            walletAddress: storedWalletAddress,
-            pollInterval: 8000, // Check every 8 seconds (faster for better UX)
-            enabled: true,
-            onIncomingToken: async (transfer) => {
-              // Refresh balance when incoming transaction is detected
-              // Don't add chat messages - transactions appear in transaction history panel
-              if (storedWalletId && storedWalletAddress) {
-                const updatedBalance = await getBalance(
-                  storedWalletId,
-                  storedWalletAddress,
-                  userId || undefined,
-                  userToken || undefined
-                );
-                if (updatedBalance) {
-                  setBalance(updatedBalance);
-                }
-              }
-              
-              // Trigger transaction history refresh instead of adding chat message
-              if (typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
-              }
-            },
-            onSuspiciousToken: (transfer) => {
-              // Suspicious/scam token - requires approval (keep this as it's a security alert)
-              const analysis = transfer.analysis!;
-              const notificationMsg: ChatMessage = {
-                id: crypto.randomUUID(),
-                role: "assistant",
-                content: `🚨 SUSPICIOUS TOKEN DETECTED\n\nToken: ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\nAmount: ${transfer.amount}\nFrom: ${transfer.fromAddress.slice(0, 10)}...${transfer.fromAddress.slice(-8)}\nRisk Score: ${analysis.riskScore}/100 (${analysis.riskLevel.toUpperCase()})\n\nRisk Reasons:\n${analysis.riskReasons.map(r => `• ${r}`).join('\n')}\n\n⚠️ This token has been blocked for your safety.\n\nTo approve it, say: "Approve token" or "Accept token"\nTo reject it, say: "Reject token" or "Block token"`,
-                timestamp: new Date(),
-              };
-              setMessages((prev) => [...prev, notificationMsg]);
-            },
-          });
+        } catch (error) {
+          console.error("[ChatPage] Failed to load wallet data from Supabase:", error);
+          setHasWallet(false);
+          setBalance("0.00");
+          return;
+        }
+      }
+      
+      // Fetch real balance from API/blockchain (no mock data)
+      const currentWalletId = walletId || (legacyWalletId ?? null);
+      const currentWalletAddress = walletAddress || (legacyWalletAddress ?? null);
+      
+      if (currentWalletId && currentWalletAddress) {
+        const balance = await getBalance(currentWalletId, currentWalletAddress, userId, userToken || undefined);
+        if (balance) {
+          setBalance(balance);
         } else {
-          // No wallet yet - ensure balance is 0
+          // If balance fetch fails, set to 0 (not a mock, just fallback)
           setBalance("0.00");
         }
+
+        // Start balance monitoring for state updates (not notifications)
+        // Balance notifications are handled by transaction completion handlers
+        startBalanceMonitoring({
+          walletId: currentWalletId,
+          walletAddress: currentWalletAddress,
+          pollInterval: 15000, // Check every 15 seconds
+          enabled: true,
+          onBalanceChange: (oldBalance, newBalance, change) => {
+            // Only update balance state silently - don't show chat notifications
+            // Notifications are handled by transaction completion handlers
+            setBalance(newBalance);
+          },
+        });
+
+        // Start incoming transaction monitoring for scam token detection
+        startIncomingTransactionMonitoring({
+          walletId: currentWalletId,
+          walletAddress: currentWalletAddress,
+          pollInterval: 8000, // Check every 8 seconds (faster for better UX)
+          enabled: true,
+          onIncomingToken: async (transfer) => {
+            // Refresh balance when incoming transaction is detected
+            // Don't add chat messages - transactions appear in transaction history panel
+            if (currentWalletId && currentWalletAddress) {
+              const updatedBalance = await getBalance(
+                currentWalletId,
+                currentWalletAddress,
+                userId,
+                userToken || undefined
+              );
+              if (updatedBalance) {
+                setBalance(updatedBalance);
+              }
+            }
+            
+            // Trigger transaction history refresh instead of adding chat message
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
+            }
+          },
+          onSuspiciousToken: (transfer) => {
+            // Suspicious/scam token - requires approval (keep this as it's a security alert)
+            const analysis = transfer.analysis!;
+            const notificationMsg: ChatMessage = {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: `🚨 SUSPICIOUS TOKEN DETECTED\n\nToken: ${transfer.tokenSymbol || "Unknown"} (${transfer.tokenName || "Unknown"})\nAmount: ${transfer.amount}\nFrom: ${transfer.fromAddress.slice(0, 10)}...${transfer.fromAddress.slice(-8)}\nRisk Score: ${analysis.riskScore}/100 (${analysis.riskLevel.toUpperCase()})\n\nRisk Reasons:\n${analysis.riskReasons.map(r => `• ${r}`).join('\n')}\n\n⚠️ This token has been blocked for your safety.\n\nTo approve it, say: "Approve token" or "Accept token"\nTo reject it, say: "Reject token" or "Block token"`,
+              timestamp: new Date(),
+            };
+            setMessages((prev) => [...prev, notificationMsg]);
+          },
+        });
       }
     };
     
@@ -319,49 +489,48 @@ export default function ChatPage() {
   // Reminder loop: check subscriptions and scheduled payments every 60s
   useEffect(() => {
     const interval = setInterval(async () => {
-      if (typeof window === 'undefined') return;
+      if (typeof window === 'undefined' || !userId) return;
       const now = Date.now();
+
+      try {
+        const reminders = await findDueReminders(userId);
+        for (const s of reminders) {
+          await updateSubscription(s.id, { lastReminderShownAt: now });
+          
+          const msg: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `Reminder: your ${s.merchant} subscription (${s.amount} ${s.currency}) renews in 2 days (${new Date(s.nextChargeAt).toLocaleString()}). Would you like to renew?`,
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, msg]);
+        }
+
+        const charges = await findDueCharges(userId);
+        for (const s of charges) {
+          await scheduleNext(s);
+          const msg: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `Auto-renewed ${s.merchant} for ${s.amount} ${s.currency}. Next renewal scheduled.`,
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, msg]);
+        }
+      } catch (error) {
+        console.warn("[ChatPage] Subscription reminder loop error:", error);
+      }
       
-      // Reminders (show once, 2 days before due date)
-      const reminders = findDueReminders(now);
-      reminders.forEach((s) => {
-        // Mark reminder as shown
-        updateSubscription(s.id, { lastReminderShownAt: now });
-        
-        const msg: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: `Reminder: your ${s.merchant} subscription (${s.amount} ${s.currency}) renews in 2 days (${new Date(s.nextChargeAt).toLocaleString()}). Would you like to renew?`,
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, msg]);
-      });
-      
-      // Charges (MVP: auto-renew acknowledge + schedule next)
-      const charges = findDueCharges(now);
-      charges.forEach((s) => {
-        const next = scheduleNext(s);
-        updateSubscription(s.id, { nextChargeAt: next.nextChargeAt });
-        const msg: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: `Auto-renewed ${s.merchant} for ${s.amount} ${s.currency}. Next renewal scheduled.`,
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, msg]);
-      });
-      
-      // Execute scheduled payments
       if (hasWallet && walletId && walletAddress) {
         const { findDuePayments, markAsExecuted, markAsFailed } = await import("@/lib/scheduled-payments");
-        const duePayments = findDuePayments(now);
+        const duePayments = await findDuePayments(userId, now);
         
         for (const payment of duePayments) {
           try {
             // Execute the payment
             const response = await sendTransaction(
               walletId!,
-              payment.to,
+              payment.toAddress,
               payment.amount,
               walletAddress,
               userId || undefined,
@@ -369,20 +538,20 @@ export default function ChatPage() {
             );
             
             if (response && response.type === "transaction" && response.transaction?.id) {
-              markAsExecuted(payment.id, response.transaction.id);
+              await markAsExecuted(payment.id, response.transaction.id);
               const msg: ChatMessage = {
                 id: crypto.randomUUID(),
                 role: "assistant",
-                content: `✅ Scheduled payment executed! Sent $${payment.amount} USDC to ${payment.to.substring(0, 6)}...${payment.to.substring(38)}. Transaction ID: ${response.transaction.id}`,
+                content: `✅ Scheduled payment executed! Sent $${payment.amount} USDC to ${payment.toAddress.substring(0, 6)}...${payment.toAddress.substring(38)}. Transaction ID: ${response.transaction.id}`,
                 timestamp: new Date(),
               };
               setMessages((prev) => [...prev, msg]);
             } else if (response && response.type === "challenge") {
               // Challenge required - skip for scheduled payments (they'll need manual approval)
-              markAsFailed(payment.id, "PIN challenge required - manual approval needed");
+              await markAsFailed(payment.id, "PIN challenge required - manual approval needed");
               console.log("[Scheduled Payment] Challenge required, skipping automatic execution");
             } else {
-              markAsFailed(payment.id, "Transaction failed");
+              await markAsFailed(payment.id, "Transaction failed");
               const msg: ChatMessage = {
                 id: crypto.randomUUID(),
                 role: "assistant",
@@ -392,7 +561,7 @@ export default function ChatPage() {
               setMessages((prev) => [...prev, msg]);
             }
           } catch (error: any) {
-            markAsFailed(payment.id, error.message || "Execution error");
+            await markAsFailed(payment.id, error.message || "Execution error");
             const msg: ChatMessage = {
               id: crypto.randomUUID(),
               role: "assistant",
@@ -407,45 +576,109 @@ export default function ChatPage() {
     return () => clearInterval(interval);
   }, [hasWallet, walletId, walletAddress, userId, userToken, sendTransaction]);
 
-  const handleLogout = () => {
-    // Clear wallet data from localStorage
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('arcle_wallet_id');
-      localStorage.removeItem('arcle_wallet_address');
+  const handleLogout = async () => {
+    // Clear wallet data from Supabase
+    if (typeof window !== 'undefined' && userId) {
+      try {
+        await clearWalletData(userId);
+        await clearUserCredentials(userId);
+      } catch (error) {
+        console.error("[ChatPage] Failed to clear data from Supabase:", error);
+      }
     }
     
     // Reset state
     setWalletId(null);
     setWalletAddress(null);
     setHasWallet(false);
+    setUserId(null);
+    setUserToken(null);
+    setEncryptionKey(null);
     setMessages([]);
     
     // Redirect to home page
     router.push("/");
   };
 
-  const handleSendMessage = async (content: string) => {
+  const handleSendMessage = async (content: string, replyTo?: string) => {
     // Add user message
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
       content,
       timestamp: new Date(),
+      replyTo: replyTo || replyToMessageId || undefined,
     };
     setMessages((prev) => [...prev, userMessage]);
+    
+    // Clear reply after sending
+    if (replyToMessageId) {
+      setReplyToMessageId(null);
+    }
 
     setIsLoading(true);
 
     // Add 3-second delay to show typing indicator
     await new Promise(resolve => setTimeout(resolve, 3000));
 
-    // Use AI service for intent classification and response
-    const aiResponse = await AIService.processMessage(content, {
+    // Try agent router first if enabled and message matches agent keywords
+    let aiResponse;
+    
+    if (isAgentRouterEnabled() && shouldUseAgentRouter(content) && hasWallet && walletId && userId && userToken) {
+      try {
+        const agentResponse = await processMessageWithAgents(content, {
+          hasWallet,
+          balance,
+          walletAddress: walletAddress || undefined,
+          walletId: walletId || undefined,
+          userId,
+          userToken,
+        }, sessionId || undefined);
+        
+        if (agentResponse.useAgentRouter && agentResponse.agent) {
+          // Handle agent response
+          const agentMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: agentResponse.message,
+            timestamp: new Date(),
+          };
+          
+          // If agent requires confirmation, handle it
+          if (agentResponse.requiresConfirmation && agentResponse.data) {
+            // Store agent response data for confirmation
+            // This will be handled by the existing confirmation flow
+            setMessages((prev) => [...prev, agentMessage]);
+            setIsLoading(false);
+            return;
+          }
+          
+          // If agent executed successfully, show result
+          if (agentResponse.data?.success) {
+            setMessages((prev) => [...prev, agentMessage]);
+            setIsLoading(false);
+            return;
+          }
+          
+          // Otherwise, show agent message and continue
+          setMessages((prev) => [...prev, agentMessage]);
+          setIsLoading(false);
+          return;
+        }
+      } catch (error) {
+        console.error('[Chat] Agent router error, falling back to AI service:', error);
+        // Fall through to AI service
+      }
+    }
+
+    // Use AI service for intent classification and response (fallback or default)
+    aiResponse = await AIService.processMessage(content, {
       hasWallet,
       balance,
       walletAddress: walletAddress || undefined,
       walletId: walletId || undefined,
-    }, sessionId);
+      userId: userId || undefined,
+    }, sessionId || undefined);
     
     const lowerContent = content.toLowerCase();
 
@@ -487,10 +720,13 @@ export default function ChatPage() {
       try {
         // If user wants a new wallet, clear the old one first
         if (hasWallet && (lowerContent.includes("new wallet") || lowerContent.includes("another wallet"))) {
-          // Clear existing wallet from localStorage to allow new wallet creation
-          if (typeof window !== 'undefined') {
-            localStorage.removeItem('arcle_wallet_id');
-            localStorage.removeItem('arcle_wallet_address');
+          // Clear existing wallet from Supabase to allow new wallet creation
+          if (typeof window !== 'undefined' && userId) {
+            try {
+              await clearWalletData(userId);
+            } catch (error) {
+              console.error("[ChatPage] Failed to clear wallet data:", error);
+            }
           }
           setWalletId(null);
           setWalletAddress(null);
@@ -679,6 +915,143 @@ export default function ChatPage() {
       }
       
       setMessages((prev) => [...prev, aiMessage]);
+    } else if (aiResponse.intent.intent === "yield") {
+      // Handle yield/USYC operations
+      const { amount } = aiResponse.intent.entities;
+      const lowerCommand = content.toLowerCase();
+      const isWithdraw = lowerCommand.includes("withdraw") || lowerCommand.includes("redeem");
+      const isCheck = lowerCommand.includes("check") || lowerCommand.includes("balance") || lowerCommand.includes("status");
+      
+      if (isCheck) {
+        // Check USYC position
+        if (!walletId || !walletAddress) {
+          const errorMsg: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "You need a wallet to check your USYC position.",
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, errorMsg]);
+          setIsLoading(false);
+          return;
+        }
+        
+        try {
+          const response = await fetch('/api/circle/usyc', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'position',
+              walletAddress,
+              walletId,
+              blockchain: 'ETH',
+            }),
+          });
+          
+          const result = await response.json();
+          
+          if (result.success && result.data) {
+            const position = result.data;
+            const positionMsg: ChatMessage = {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: `💰 Your USYC Position\n\n` +
+                       `Balance: ${position.usycBalance} USYC\n` +
+                       `Value: ${position.usdcValue} USDC\n` +
+                       `Current Yield: ${position.currentYield} USDC (+${position.yieldPercentage}%)\n` +
+                       `APY: ${position.apy}%\n` +
+                       `Blockchain: ${position.blockchain}\n\n` +
+                       `Want to deposit more or withdraw?`,
+              timestamp: new Date(),
+            };
+            setMessages((prev) => [...prev, positionMsg]);
+          } else {
+            const errorMsg: ChatMessage = {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: "Couldn't fetch your USYC position. You may not have any USYC yet. Want to deposit some?",
+              timestamp: new Date(),
+            };
+            setMessages((prev) => [...prev, errorMsg]);
+          }
+        } catch (error: any) {
+          const errorMsg: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `Error checking USYC position: ${error.message}`,
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, errorMsg]);
+        }
+        setIsLoading(false);
+        return;
+      } else if (isWithdraw) {
+        // Handle withdraw/redeem
+        if (!amount) {
+          const aiMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: aiResponse.message,
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, aiMessage]);
+          setIsLoading(false);
+          return;
+        }
+        
+        // Check if user confirmed
+        const isConfirming = /^(yes|confirm|proceed|ok|okay|sure|go ahead|do it)$/i.test(content.trim());
+        if (aiResponse.requiresConfirmation && !isConfirming) {
+          const aiMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: aiResponse.message,
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, aiMessage]);
+          setIsLoading(false);
+          return;
+        }
+        
+        // Execute redeem
+        if (isConfirming || !aiResponse.requiresConfirmation) {
+          await handleUSYCOperation('redeem', amount, 'ETH');
+          return;
+        }
+      } else {
+        // Handle subscribe/deposit
+        if (!amount) {
+          const aiMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: aiResponse.message,
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, aiMessage]);
+          setIsLoading(false);
+          return;
+        }
+        
+        // Check if user confirmed
+        const isConfirming = /^(yes|confirm|proceed|ok|okay|sure|go ahead|do it)$/i.test(content.trim());
+        if (aiResponse.requiresConfirmation && !isConfirming) {
+          const aiMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: aiResponse.message,
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, aiMessage]);
+          setIsLoading(false);
+          return;
+        }
+        
+        // Execute subscribe
+        if (isConfirming || !aiResponse.requiresConfirmation) {
+          await handleUSYCOperation('subscribe', amount, 'ETH');
+          return;
+        }
+      }
     } else if (aiResponse.intent.intent === "receive" || aiResponse.intent.intent === "address") {
       // Handle receive/address - QR code will be shown by ChatInterface
       const aiMessage: ChatMessage = {
@@ -771,7 +1144,9 @@ export default function ChatPage() {
         setMessages((prev) => [...prev, aiMessage]);
         
         // Check if user is confirming
-        const isConfirming = /^(yes|confirm|proceed|ok|okay|sure|go ahead|do it|let's go|lets go)$/i.test(content.trim());
+        const isConfirming = /^(yes|yeah|yup|confirm|confirmed|proceed|ok|okay|sure|absolutely|definitely|go ahead|do it|let'?s go|lets go)(\b|[!.?\s].*)?$/i.test(
+          content.trim()
+        );
         
         if (isConfirming) {
               // Show initiating message with friendly status
@@ -786,6 +1161,18 @@ export default function ChatPage() {
               };
           setMessages((prev) => [...prev, initMessage]);
           
+          if (!userId || !userToken) {
+            const credentialMessage: ChatMessage = {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: "I need your wallet session to run the bridge. Please reconnect your wallet or sign in again, then try confirming once more.",
+              timestamp: new Date(),
+            };
+            setMessages((prev) => [...prev, credentialMessage]);
+            setIsLoading(false);
+            return;
+          }
+
           try {
             // Execute bridge with conversational status updates
             const response = await fetch("/api/circle/bridge", {
@@ -798,6 +1185,8 @@ export default function ChatPage() {
                 fromChain: aiResponse.bridgeData.fromChain,
                 toChain: aiResponse.bridgeData.toChain,
                 destinationAddress: aiResponse.bridgeData.destinationAddress,
+                userId,
+                userToken,
                 fastTransfer: aiResponse.bridgeData.fastTransfer ?? false, // Pass Fast Transfer preference
               }),
             });
@@ -805,13 +1194,76 @@ export default function ChatPage() {
             const bridgeResult = await response.json();
             
             if (bridgeResult.success) {
-              // Show success message with conversational tone
+              // Check if Gateway deposit is required (first-time bridge user)
+              if (bridgeResult.data?.requiresDeposit && bridgeResult.data?.challengeId) {
+                // Gateway deposit required - show PIN widget
+                const depositMessage: ChatMessage = {
+                  id: crypto.randomUUID(),
+                  role: "assistant",
+                  content: `🔧 Setting up instant bridging for you!\n\n` +
+                          `This is your first bridge, so I need to deposit ${bridgeResult.data.depositAmount || aiResponse.bridgeData.amount} USDC to Gateway.\n\n` +
+                          `Please complete the approval and deposit challenges (PIN) to continue.`,
+                  timestamp: new Date(),
+                };
+                setMessages((prev) => [...prev, depositMessage]);
+                
+                // Set up challenge data for Gateway deposit
+                setChallengeData({
+                  challengeId: bridgeResult.data.challengeId,
+                  userId: userId!,
+                  userToken: userToken!,
+                  encryptionKey: encryptionKey || undefined,
+                  gatewayDeposit: {
+                    walletId: aiResponse.bridgeData.walletId,
+                    fromChain: aiResponse.bridgeData.fromChain,
+                    toChain: aiResponse.bridgeData.toChain,
+                    amount: aiResponse.bridgeData.amount,
+                    destinationAddress: aiResponse.bridgeData.destinationAddress,
+                    messageId: depositMessage.id,
+                  },
+                });
+                setShowPinWidget(true);
+                return;
+              }
+              
+              // Check if Gateway transfer signing is required
+              if (bridgeResult.data?.requiresChallenge && bridgeResult.data?.challengeId) {
+                // Gateway transfer signing required - show PIN widget
+                const signingMessage: ChatMessage = {
+                  id: crypto.randomUUID(),
+                  role: "assistant",
+                  content: `✍️ Please sign the bridge transfer with your PIN.\n\n` +
+                          `This authorizes the cross-chain transfer to ${aiResponse.bridgeData.toChain}.`,
+                  timestamp: new Date(),
+                };
+                setMessages((prev) => [...prev, signingMessage]);
+                
+                // Set up challenge data for Gateway transfer signing
+                setChallengeData({
+                  challengeId: bridgeResult.data.challengeId,
+                  userId: userId!,
+                  userToken: userToken!,
+                  encryptionKey: encryptionKey || undefined,
+                  gatewayTransfer: {
+                    walletId: aiResponse.bridgeData.walletId,
+                    burnIntent: bridgeResult.data.burnIntent,
+                    fromChain: aiResponse.bridgeData.fromChain,
+                    toChain: aiResponse.bridgeData.toChain,
+                    amount: aiResponse.bridgeData.amount,
+                    destinationAddress: aiResponse.bridgeData.destinationAddress,
+                    messageId: signingMessage.id,
+                  },
+                });
+                setShowPinWidget(true);
+                return;
+              }
+              
+              // Bridge initiated successfully (no challenges required)
               const successMessage: ChatMessage = {
                 id: crypto.randomUUID(),
                 role: "assistant",
                 content: `🎉 Bridge initiated successfully!\n\n` +
-                        `Your ${aiResponse.bridgeData.amount} USDC is on its way to ${destinationChain}!\n\n` +
-                        `${bridgeResult.firstTimeUser ? "✨ First bridge complete! Next time it'll be even faster.\n\n" : ""}` +
+                        `Your ${aiResponse.bridgeData.amount} USDC is on its way to ${aiResponse.bridgeData.toChain}!\n\n` +
                         `I'm monitoring the bridge - I'll let you know when it arrives (usually 10-30 seconds).`,
                 timestamp: new Date(),
               };
@@ -831,7 +1283,7 @@ export default function ChatPage() {
                     const completeMessage: ChatMessage = {
                       id: crypto.randomUUID(),
                       role: "assistant",
-                      content: `✅ Bridge complete!\n\nYour ${aiResponse.bridgeData?.amount || amount} USDC has arrived on ${destinationChain}. All done! 🎊`,
+                      content: `✅ Bridge complete!\n\nYour ${aiResponse.bridgeData?.amount || amount} USDC has arrived on ${aiResponse.bridgeData?.toChain || 'the destination chain'}. All done! 🎊`,
                       timestamp: new Date(),
                     };
                     setMessages((prev) => [...prev, completeMessage]);
@@ -991,7 +1443,7 @@ export default function ChatPage() {
     // User has already confirmed, so we allow the transaction to proceed
     // Only block if risk score increases significantly or if it's a zero address
     try {
-      const currentRiskResult = await calculateRiskScore(normalizedAddress, previewAmount);
+      const currentRiskResult = await calculateRiskScore(normalizedAddress, previewAmount, undefined, undefined, userId || undefined);
       
       // Only block zero address (truly invalid)
       if (normalizedAddress === "0x0000000000000000000000000000000000000000") {
@@ -1120,13 +1572,28 @@ export default function ChatPage() {
         return;
       }
       
-      // Resolve the latest credentials from state or localStorage (in case state is stale)
-      let resolvedUserId = userId || (typeof window !== "undefined" ? localStorage.getItem("arcle_user_id") : null);
-      let resolvedUserToken = userToken || (typeof window !== "undefined" ? localStorage.getItem("arcle_user_token") : null);
-      let resolvedEncryptionKey = encryptionKey || (typeof window !== "undefined" ? localStorage.getItem("arcle_encryption_key") : null);
+      // Resolve the latest credentials from state or Supabase (in case state is stale)
+      let resolvedUserId = userId;
+      let resolvedUserToken = userToken;
+      let resolvedEncryptionKey = encryptionKey;
+      
+      // If credentials are missing in state, try to load from Supabase
+      if ((!resolvedUserId || !resolvedUserToken) && typeof window !== "undefined" && userId) {
+        try {
+          const credentials = await loadUserCredentials(userId);
+          if (credentials.userToken) {
+            resolvedUserToken = credentials.userToken;
+            if (credentials.encryptionKey) {
+              resolvedEncryptionKey = credentials.encryptionKey;
+            }
+          }
+        } catch (error) {
+          console.error("[Transaction] Failed to load credentials from Supabase:", error);
+        }
+      }
       
       if (!resolvedUserId || !resolvedUserToken) {
-        console.warn("[Transaction] Missing user credentials in state; falling back to localStorage values:", {
+        console.warn("[Transaction] Missing user credentials:", {
           hasUserId: !!resolvedUserId,
           hasUserToken: !!resolvedUserToken,
         });
@@ -1145,10 +1612,10 @@ export default function ChatPage() {
       try {
         console.log("[Transaction] About to call sendTransaction...");
         result = await sendTransaction(
-          walletId,
-          normalizedAddress, // Use checksummed address
-          previewAmount,
-          walletAddress, // CRITICAL: Always pass wallet address for SDK transaction creation
+        walletId,
+        normalizedAddress, // Use checksummed address
+        previewAmount,
+        walletAddress, // CRITICAL: Always pass wallet address for SDK transaction creation
           resolvedUserId || undefined,
           resolvedUserToken || undefined
         );
@@ -1210,6 +1677,41 @@ export default function ChatPage() {
             hasTransactionChallenge: !!challengeDataToSet.transactionChallenge,
           });
           
+          // Check if session keys can handle this transaction
+          if (isSessionKeysEnabled() && resolvedUserId && resolvedUserToken && result.walletId) {
+            // Dynamically import to avoid SSR issues with Circle SDK
+            const { checkSessionKeyStatus } = await import("@/lib/ai/sessionKeyHelper");
+            const status = await checkSessionKeyStatus(
+              result.walletId,
+              resolvedUserId,
+              resolvedUserToken,
+              'transfer',
+              result.amount
+            );
+
+            if (status.canAutoExecute && status.hasActiveSession) {
+              // Execute via session key - no PIN widget needed
+              console.log("[Transaction] Executing via session key, no PIN widget needed");
+              setSessionKeyStatus(status);
+              // The transaction will be executed via delegateExecution in the API
+              // Just show a message that it's processing
+              const processingMsg: ChatMessage = {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: "✅ Executing transaction automatically via your approved session...",
+                timestamp: new Date(),
+              };
+              setMessages((prev) => [...prev, processingMsg]);
+              return; // Don't show PIN widget
+            } else if (!status.hasActiveSession) {
+              // No active session - show session approval modal instead
+              setShowSessionApproval(true);
+              return; // Don't show PIN widget yet
+            }
+            // If session exists but can't auto-execute, fall through to PIN widget
+            setSessionKeyStatus(status);
+          }
+          
           setChallengeData(challengeDataToSet);
           setShowPinWidget(true);
           
@@ -1265,14 +1767,18 @@ export default function ChatPage() {
       if (transaction) {
         // 🔥 CRITICAL: Cache transaction immediately so it never "disappears" from history
         // This ensures the transaction shows up in history instantly, even if Circle API is slow to index
-        if (typeof window !== 'undefined') {
+        if (typeof window !== 'undefined' && userId && walletId) {
           const { cacheTransaction } = await import('@/lib/storage/transaction-cache');
-          cacheTransaction(walletId, transaction);
+          await cacheTransaction(userId, walletId, transaction);
           console.log(`[Transaction] 💾 Cached transaction immediately: ${transaction.id}`);
         }
         
         // Update address history for future risk scoring (using normalized address)
-        updateAddressHistory(normalizedAddress);
+        if (userId) {
+          updateAddressHistory(userId, normalizedAddress).catch(error => {
+            console.error("[Transaction] Failed to update address history:", error);
+          });
+        }
         
         // Optimistic balance update - immediately reflect the transaction
         if (walletAddress && balance && pendingTransaction) {
@@ -1367,11 +1873,24 @@ export default function ChatPage() {
               
               try {
                 // Try Circle API first
-                const userId = localStorage.getItem('arcle_user_id');
-                const userToken = localStorage.getItem('arcle_user_token');
+                // Use state credentials or load from Supabase
+                let pollUserId = userId;
+                let pollUserToken = userToken;
+                
+                if ((!pollUserId || !pollUserToken) && typeof window !== "undefined" && userId) {
+                  try {
+                    const credentials = await loadUserCredentials(userId);
+                    if (credentials.userToken) {
+                      pollUserToken = credentials.userToken;
+                    }
+                  } catch (error) {
+                    console.error("[Transaction] Failed to load credentials for polling:", error);
+                  }
+                }
+                
                 let queryString = `walletId=${walletId}&transactionId=${transaction.id}`;
-                if (userId && userToken) {
-                  queryString += `&userId=${encodeURIComponent(userId)}&userToken=${encodeURIComponent(userToken)}`;
+                if (pollUserId && pollUserToken) {
+                  queryString += `&userId=${encodeURIComponent(pollUserId)}&userToken=${encodeURIComponent(pollUserToken)}`;
                 }
                 
                 const response = await fetch(`/api/circle/transactions?${queryString}`);
@@ -1607,12 +2126,16 @@ export default function ChatPage() {
     } catch (err) {
       console.error("Transaction error:", err);
       if (err instanceof Error && err.message.startsWith("SESSION_EXPIRED")) {
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem('arcle_user_id');
-          localStorage.removeItem('arcle_user_token');
-          localStorage.removeItem('arcle_encryption_key');
-          localStorage.removeItem('arcle_wallet_id');
-          localStorage.removeItem('arcle_wallet_address');
+        // Clear data from Supabase
+        if (typeof window !== 'undefined' && userId) {
+          try {
+            await Promise.all([
+              clearWalletData(userId),
+              clearUserCredentials(userId),
+            ]);
+          } catch (error) {
+            console.error("[Transaction] Failed to clear data from Supabase:", error);
+          }
         }
         
         setUserId(null);
@@ -1662,6 +2185,163 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, cancelMessage]);
     
     setPendingTransaction(null);
+  };
+
+  const handleUSYCOperation = async (action: 'subscribe' | 'redeem', amount: string, blockchain: string = 'ETH') => {
+    if (!walletId || !userId || !userToken) {
+      const errorMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: "❌ Error: Wallet or user credentials missing. Please create a wallet first.",
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      // Check balance for subscribe action
+      if (action === 'subscribe') {
+        const currentBalance = await getBalance(walletId, walletAddress || '', userId, userToken);
+        const needed = parseFloat(amount);
+        const current = currentBalance ? parseFloat(currentBalance) : 0;
+        
+        if (current < needed) {
+          const insufficientMsg: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `⚠️ Insufficient balance (${currentBalance ?? "0"} USDC). You need ${needed} USDC to deposit into USYC.`,
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, insufficientMsg]);
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      // Call USYC API
+      const apiAction = action === 'subscribe' ? 'subscribe' : 'redeem';
+      const response = await fetch('/api/circle/usyc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: apiAction,
+          userId,
+          userToken,
+          walletId,
+          amount,
+          blockchain,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || 'USYC operation failed');
+      }
+
+      const data = result.data;
+      const messageId = crypto.randomUUID();
+
+      // Store pending USYC operation
+      setPendingUSYC({
+        messageId,
+        action,
+        amount,
+        blockchain,
+        step: data.step || 'approve',
+      });
+
+      // If this is the approval step, show PIN widget
+      if (data.step === 'approve' && data.challengeId) {
+        // Resolve credentials
+        let resolvedUserId = userId;
+        let resolvedUserToken = userToken;
+        let resolvedEncryptionKey = encryptionKey;
+
+        if ((!resolvedUserId || !resolvedUserToken) && typeof window !== "undefined" && userId) {
+          try {
+            const credentials = await loadUserCredentials(userId);
+            if (credentials.userToken) {
+              resolvedUserToken = credentials.userToken;
+              if (credentials.encryptionKey) {
+                resolvedEncryptionKey = credentials.encryptionKey;
+              }
+            }
+          } catch (error) {
+            console.error("[USYC] Failed to load credentials:", error);
+          }
+        }
+
+        // Check token expiry
+        if (resolvedUserToken) {
+          const tokenStatus = checkTokenExpiry(resolvedUserToken, 5);
+          if (tokenStatus.isExpired || tokenStatus.isExpiringSoon) {
+            try {
+              const newToken = await refreshUserToken();
+              if (newToken && newToken.userToken) {
+                resolvedUserToken = newToken.userToken;
+                if (newToken.encryptionKey) {
+                  resolvedEncryptionKey = newToken.encryptionKey;
+                }
+                setUserToken(newToken.userToken);
+                if (newToken.encryptionKey) {
+                  setEncryptionKey(newToken.encryptionKey);
+                }
+              }
+            } catch (refreshError) {
+              console.error("[USYC] Error refreshing token:", refreshError);
+            }
+          }
+        }
+
+        // Set challenge data for PIN widget
+        const challengeDataToSet = {
+          challengeId: data.challengeId,
+          userId: resolvedUserId || "",
+          userToken: resolvedUserToken || "",
+          encryptionKey: resolvedEncryptionKey || undefined,
+        };
+
+        setChallengeData(challengeDataToSet);
+        setShowPinWidget(true);
+
+        // Show message
+        const challengeMessage: ChatMessage = {
+          id: messageId,
+          role: "assistant",
+          content: `🔐 ${action === 'subscribe' ? 'USYC Deposit' : 'USYC Redemption'} requires PIN confirmation\n\nPlease enter your PIN to approve:\n• ${action === 'subscribe' ? 'Deposit' : 'Redeem'}: ${amount} ${action === 'subscribe' ? 'USDC' : 'USYC'}\n• Blockchain: ${blockchain}\n\nThe PIN widget will appear below.`,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, challengeMessage]);
+        setIsLoading(false);
+        return;
+      }
+
+      // If already completed (shouldn't happen in two-step flow, but handle it)
+      const successMessage: ChatMessage = {
+        id: messageId,
+        role: "assistant",
+        content: `✅ USYC ${action === 'subscribe' ? 'deposit' : 'redemption'} initiated successfully!`,
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, successMessage]);
+      setIsLoading(false);
+
+    } catch (error: any) {
+      console.error("[USYC] Operation error:", error);
+      const errorMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: `❌ USYC operation failed: ${error.message || 'Unknown error'}`,
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+      setIsLoading(false);
+    }
   };
   
       // Poll transaction status until confirmed
@@ -1722,7 +2402,7 @@ export default function ChatPage() {
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
             window.dispatchEvent(new CustomEvent('arcle:balance:refresh'));
-          }
+            }
         }
         return; // Stop polling once confirmed with hash
       } else if (status && status.status === "confirmed" && !hasValidHash) {
@@ -1755,6 +2435,360 @@ export default function ChatPage() {
 
   // Handler for PIN widget success
   const handlePinWidgetSuccess = async (result: any) => {
+    // Prevent multiple simultaneous challenge processing
+    if (processingChallengeRef.current) {
+      console.warn("[PIN Widget] Challenge already being processed, ignoring duplicate success callback");
+      return;
+    }
+    
+    processingChallengeRef.current = true;
+    
+      // Handle Gateway deposit challenge completion
+      if (challengeData?.gatewayDeposit) {
+      const deposit = challengeData.gatewayDeposit;
+      
+      try {
+      // Wait a moment for deposit to finalize
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      // Retry the bridge transfer now that deposit is complete
+      const retryMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: `✅ Gateway deposit complete!\n\nNow initiating the bridge transfer...`,
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, retryMessage]);
+      
+        const response = await fetch("/api/circle/bridge", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            walletId: deposit.walletId,
+            walletAddress: walletAddress!,
+            userId: userId!,
+            userToken: userToken!,
+            amount: deposit.amount,
+            fromChain: deposit.fromChain,
+            toChain: deposit.toChain,
+            destinationAddress: deposit.destinationAddress,
+          }),
+        });
+        
+        const bridgeResult = await response.json();
+        
+        if (bridgeResult.success && bridgeResult.data?.requiresChallenge) {
+          // Gateway transfer signing required - set up new challenge
+          setChallengeData({
+            challengeId: bridgeResult.data.challengeId,
+            userId: userId!,
+            userToken: userToken!,
+            encryptionKey: encryptionKey || undefined,
+            gatewayTransfer: {
+              walletId: deposit.walletId,
+              burnIntent: bridgeResult.data.burnIntent,
+              fromChain: deposit.fromChain,
+              toChain: deposit.toChain,
+              amount: deposit.amount,
+              destinationAddress: deposit.destinationAddress,
+              messageId: retryMessage.id,
+            },
+          });
+          setShowPinWidget(true);
+          // Reset flag to allow the new challenge to be processed
+          processingChallengeRef.current = false;
+          return;
+        }
+        
+        // If no new challenge needed, deposit completed successfully
+        setChallengeData(null);
+        setShowPinWidget(false);
+        processingChallengeRef.current = false;
+        setIsLoading(false);
+        return;
+      } catch (error: any) {
+        console.error("[Gateway Deposit] Error retrying bridge:", error);
+        const errorMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `Error retrying bridge: ${error.message}`,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, errorMessage]);
+        setChallengeData(null);
+        setShowPinWidget(false);
+        processingChallengeRef.current = false;
+        setIsLoading(false);
+        return;
+      }
+      }
+      
+      // Handle Gateway transfer signing challenge completion
+      if (challengeData?.gatewayTransfer) {
+      const transfer = challengeData.gatewayTransfer;
+      
+      // Get signature from challenge result
+      // The signature should be in result.signature or we need to fetch it
+      let signature: string | null = null;
+      
+      try {
+        // Log the result structure to understand what we're working with
+        console.log(`[Gateway Transfer] PIN widget result:`, {
+          hasResult: !!result,
+          resultType: result?.type,
+          resultStatus: result?.status,
+          hasSignature: !!result?.signature,
+          hasData: !!result?.data,
+          resultKeys: result ? Object.keys(result) : [],
+          dataKeys: result?.data ? Object.keys(result.data) : [],
+        });
+        
+        // Try to get signature from the challenge result (check multiple possible locations)
+        // For EIP-712 signing challenges, Circle might return signature in different places
+        if (result?.signature) {
+          signature = result.signature;
+          console.log(`[Gateway Transfer] ✅ Signature found in result.signature!`);
+        } else if (result?.data?.signature) {
+          signature = result.data.signature;
+          console.log(`[Gateway Transfer] ✅ Signature found in result.data.signature!`);
+        } else if (result?.data?.data?.signature) {
+          signature = result.data.data.signature;
+          console.log(`[Gateway Transfer] ✅ Signature found in result.data.data.signature!`);
+        } else if (result?.challenge?.signature) {
+          signature = result.challenge.signature;
+          console.log(`[Gateway Transfer] ✅ Signature found in result.challenge.signature!`);
+        } else if (typeof result?.data === 'string' && result.data.startsWith('0x') && result.data.length >= 130) {
+          // Sometimes the signature IS the data itself (as a string)
+          signature = result.data;
+          console.log(`[Gateway Transfer] ✅ Signature found as result.data (direct string)!`);
+        } else {
+          // Signature not found in callback result
+          // For EIP-712 signing challenges with User-Controlled Wallets, Circle's challenge API endpoint doesn't exist (404)
+          // The signature MUST be in the PIN widget callback result
+          // If it's not there, we need to check the result structure more thoroughly
+          console.log(`[Gateway Transfer] ⚠️ Signature not found in callback result. Checking result structure...`);
+          console.log(`[Gateway Transfer] Full result object:`, JSON.stringify(result, null, 2));
+          
+          // Try to extract signature from deeply nested structures
+          const deepSearch = (obj: any, depth = 0): string | null => {
+            if (depth > 5) return null; // Prevent infinite recursion
+            if (!obj || typeof obj !== 'object') return null;
+            
+            // Check if this is a signature (starts with 0x and is 130+ chars)
+            if (typeof obj === 'string' && obj.startsWith('0x') && obj.length >= 130) {
+              return obj;
+            }
+            
+            // Check all string values in the object
+            for (const key in obj) {
+              const value = obj[key];
+              if (typeof value === 'string' && value.startsWith('0x') && value.length >= 130) {
+                return value;
+              }
+              if (typeof value === 'object' && value !== null) {
+                const found = deepSearch(value, depth + 1);
+                if (found) return found;
+              }
+            }
+            
+            return null;
+          };
+          
+          const deepSignature = deepSearch(result);
+          if (deepSignature) {
+            signature = deepSignature;
+            console.log(`[Gateway Transfer] ✅ Signature found via deep search!`);
+          } else {
+            // Last resort: For EIP-712 signing challenges, Circle might not expose the signature
+            // through the challenge API. We need to inform the user that the signature wasn't found
+            console.error(`[Gateway Transfer] ❌ Signature not found in callback result or nested structures`);
+            console.error(`[Gateway Transfer] This is a known limitation with User-Controlled Wallets EIP-712 signing challenges`);
+            throw new Error(
+              "Could not retrieve signature from challenge. " +
+              "This may be a limitation with Circle's User-Controlled Wallets SDK. " +
+              "Please try using session keys to enable PIN-less signing, or contact support."
+            );
+          }
+        }
+        
+        if (!signature) {
+          throw new Error("Could not retrieve signature from challenge");
+        }
+        
+        // Submit signed burn intent to Gateway API
+        const submitResponse = await fetch("/api/circle/gateway-user", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "submit",
+            burnIntent: transfer.burnIntent,
+            signature: signature,
+          }),
+        });
+        
+        const submitResult = await submitResponse.json();
+        
+        if (submitResult.success) {
+          const successMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `🎉 Bridge transfer complete!\n\n` +
+                    `Your ${transfer.amount} USDC has been bridged from ${transfer.fromChain} to ${transfer.toChain}!\n\n` +
+                    `The transfer is instant - funds should arrive in seconds.`,
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, successMessage]);
+          
+          // Refresh balance
+          if (walletId) {
+            const newBalance = await getBalance(walletId, walletAddress || undefined, userId || undefined, userToken || undefined);
+            if (newBalance) {
+              setBalance(newBalance);
+            }
+          }
+        } else {
+          throw new Error(submitResult.error || "Failed to submit Gateway transfer");
+        }
+      } catch (error: any) {
+        console.error("[Gateway Transfer] Error completing bridge:", error);
+        const errorMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `Error completing bridge transfer: ${error.message}`,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, errorMessage]);
+        // Stop AI typing/loading
+        setIsLoading(false);
+      } finally {
+        // Always clear challenge data and reset processing flag, even on error
+        setChallengeData(null);
+        setShowPinWidget(false);
+        processingChallengeRef.current = false;
+        // Ensure loading is stopped
+        setIsLoading(false);
+      }
+      return;
+    }
+    
+    // Handle USYC approval challenge completion
+    if (pendingUSYC && pendingUSYC.step === 'approve') {
+      try {
+        setIsLoading(true);
+        
+        // Wait a moment for approval to finalize
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        const completeMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `✅ Approval complete!\n\nNow ${pendingUSYC.action === 'subscribe' ? 'depositing' : 'redeeming'} your ${pendingUSYC.action === 'subscribe' ? 'USDC' : 'USYC'}...`,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, completeMessage]);
+        
+        // Complete the second step
+        const completeAction = pendingUSYC.action === 'subscribe' ? 'complete-subscribe' : 'complete-redeem';
+        const response = await fetch('/api/circle/usyc', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: completeAction,
+            userId: userId!,
+            userToken: userToken!,
+            walletId: walletId!,
+            amount: pendingUSYC.amount,
+            blockchain: pendingUSYC.blockchain || 'ETH',
+          }),
+        });
+        
+        const completeResult = await response.json();
+        
+        if (completeResult.success && completeResult.data?.challengeId) {
+          // Second challenge required - show PIN widget again
+          const challengeDataToSet = {
+            challengeId: completeResult.data.challengeId,
+            userId: userId!,
+            userToken: userToken!,
+            encryptionKey: encryptionKey || undefined,
+          };
+          
+          setChallengeData(challengeDataToSet);
+          setPendingUSYC({
+            ...pendingUSYC,
+            step: 'complete',
+          });
+          setShowPinWidget(true);
+          processingChallengeRef.current = false; // Allow next challenge
+          setIsLoading(false);
+          return;
+        } else if (completeResult.success) {
+          // Operation completed successfully
+          const successMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `🎉 USYC ${pendingUSYC.action === 'subscribe' ? 'deposit' : 'redemption'} complete!\n\n${pendingUSYC.action === 'subscribe' ? `Deposited ${pendingUSYC.amount} USDC into USYC. You're now earning yield!` : `Redeemed ${pendingUSYC.amount} USYC. Your USDC (plus yield) is back in your wallet.`}`,
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, successMessage]);
+          
+          // Refresh balance
+          if (walletId && walletAddress) {
+            const newBalance = await getBalance(walletId, walletAddress, userId || undefined, userToken || undefined);
+            if (newBalance) {
+              setBalance(newBalance);
+            }
+          }
+        } else {
+          throw new Error(completeResult.error || 'Failed to complete USYC operation');
+        }
+      } catch (error: any) {
+        console.error("[USYC] Error completing operation:", error);
+        const errorMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `❌ Error completing USYC ${pendingUSYC.action}: ${error.message}`,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, errorMessage]);
+      } finally {
+        setChallengeData(null);
+        setShowPinWidget(false);
+        setPendingUSYC(null);
+        processingChallengeRef.current = false;
+        setIsLoading(false);
+      }
+      return;
+    }
+    
+    // Handle USYC complete step (subscribe/redeem challenge)
+    if (pendingUSYC && pendingUSYC.step === 'complete') {
+      // Operation is fully complete
+      const successMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: `🎉 USYC ${pendingUSYC.action === 'subscribe' ? 'deposit' : 'redemption'} complete!\n\n${pendingUSYC.action === 'subscribe' ? `Deposited ${pendingUSYC.amount} USDC into USYC. You're now earning yield!` : `Redeemed ${pendingUSYC.amount} USYC. Your USDC (plus yield) is back in your wallet.`}`,
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, successMessage]);
+      
+      // Refresh balance
+      if (walletId && walletAddress) {
+        const newBalance = await getBalance(walletId, walletAddress, userId || undefined, userToken || undefined);
+        if (newBalance) {
+          setBalance(newBalance);
+        }
+      }
+      
+      setChallengeData(null);
+      setShowPinWidget(false);
+      setPendingUSYC(null);
+      processingChallengeRef.current = false;
+      setIsLoading(false);
+      return;
+    }
+    
+    // Original transaction challenge handling
     console.log("PIN widget success:", result);
     setShowPinWidget(false);
     
@@ -1766,15 +2800,19 @@ export default function ChatPage() {
       const txChallenge = challengeData.transactionChallenge;
       console.log("[Transaction] PIN confirmed for transaction challenge:", txChallenge);
       
-      // Ensure we have the latest credentials (fallback to localStorage if challengeData is missing them)
-      let pollUserId: string | null = challengeData.userId || null;
-      let pollUserToken: string | null = challengeData.userToken || null;
-      if (typeof window !== "undefined") {
-        if (!pollUserId) {
-          pollUserId = localStorage.getItem("arcle_user_id") || null;
-        }
-        if (!pollUserToken) {
-          pollUserToken = localStorage.getItem("arcle_user_token") || null;
+      // Ensure we have the latest credentials (load from Supabase if challengeData is missing them)
+      let pollUserId: string | null = challengeData.userId || userId || null;
+      let pollUserToken: string | null = challengeData.userToken || userToken || null;
+      
+      // If credentials are missing, try to load from Supabase
+      if (typeof window !== "undefined" && pollUserId && !pollUserToken) {
+        try {
+          const credentials = await loadUserCredentials(pollUserId);
+          if (credentials.userToken) {
+            pollUserToken = credentials.userToken;
+          }
+        } catch (error) {
+          console.error("[Transaction] Failed to load credentials for polling:", error);
         }
       }
       if (!pollUserId || !pollUserToken) {
@@ -1965,6 +3003,7 @@ export default function ChatPage() {
       } finally {
         setChallengeData(null);
         setIsLoading(false);
+        processingChallengeRef.current = false;
       }
       
       return; // Exit early - transaction challenge handled
@@ -2009,10 +3048,13 @@ export default function ChatPage() {
           setWalletAddress(wallet.address);
           setHasWallet(true);
 
-          // Store wallet in localStorage
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('arcle_wallet_id', wallet.id);
-            localStorage.setItem('arcle_wallet_address', wallet.address);
+          // Store wallet in Supabase
+          if (typeof window !== 'undefined' && userId) {
+            try {
+              await saveWalletData(userId, { walletId: wallet.id, walletAddress: wallet.address });
+            } catch (error) {
+              console.error("[ChatPage] Failed to save wallet data to Supabase:", error);
+            }
           }
 
           // Check balance (don't auto-request faucet)
@@ -2054,6 +3096,8 @@ Your wallet is now set up and ready to use. Testnet tokens have been requested f
     } finally {
       setChallengeData(null);
       setIsLoading(false);
+      // Reset processing flag - this is the only place it should be reset for wallet creation
+      processingChallengeRef.current = false;
     }
   };
 
@@ -2117,7 +3161,7 @@ Your user token expired (they last for 1 hour). The system tried to refresh it a
 1. Refresh the page to get a new token
 2. Or try creating your wallet again - a fresh token will be generated
 
-If the issue persists, you may need to clear your browser's localStorage and start fresh.`;
+If the issue persists, you may need to refresh the page and start fresh.`;
     } else if (error.code === 155114 || error.message?.includes("app ID is not recognized")) {
       errorMessage = `⚠️ Configuration Issue: Your Circle App ID is not recognized.
 
@@ -2146,7 +3190,7 @@ This can happen if:
 - There's a mismatch between the user token and encryption key
 
 **To fix this:**
-1. Clear your browser's localStorage (or use incognito mode)
+1. Refresh the page (or use incognito mode)
 2. Try creating your wallet again
 3. A fresh encryption key will be generated automatically
 
@@ -2163,36 +3207,15 @@ If the issue persists, the encryption key might not be returned from Circle's AP
   };
 
   return (
-    <main className="min-h-screen bg-onyx flex flex-col">
-      {/* Collapsible Header with Balance - always shown */}
-      <CollapsibleHeader
+    <>
+      <MainLayout
         balance={balance}
-        isLoading={false}
         walletId={walletId}
         walletAddress={walletAddress}
-        onSend={() => {
-          handleSendMessage("Send");
-        }}
-        onReceive={() => {
-          handleSendMessage("Show my address");
-        }}
-        onBridge={() => {
-          handleSendMessage("Bridge");
-        }}
-        onPay={() => {
-          handleSendMessage("Pay");
-        }}
-        onYield={() => {
-          handleSendMessage("Show yield options");
-        }}
-        onWithdraw={() => {
-          handleSendMessage("Withdraw");
-        }}
-        onScan={() => {
-          handleSendMessage("Scan this address for security risks:");
-        }}
-        onSchedule={() => {
-          handleSendMessage("Schedule a payment");
+        userId={userId}
+        onNewChat={() => {
+          setMessages([]);
+          setReplyToMessageId(null);
         }}
         onLogout={handleLogout}
         onWalletCreated={async (newWalletId: string, newWalletAddress: string) => {
@@ -2205,37 +3228,167 @@ If the issue persists, the encryption key might not be returned from Circle's AP
             setBalance(newBalance);
           }
         }}
-      />
+        onSend={() => handleSendMessage("Send USDC")}
+        onReceive={() => handleSendMessage("Show my wallet address")}
+        onBridge={() => handleSendMessage("Bridge USDC")}
+        onPay={() => handleSendMessage("Pay with USDC")}
+        onYield={() => handleSendMessage("Earn yield on my USDC")}
+        onWithdraw={() => handleSendMessage("Withdraw USDC")}
+        onScan={() => handleSendMessage("Scan an address for safety")}
+        onSchedule={() => handleSendMessage("Schedule a payment")}
+        selectedTier={selectedTier}
+        onTierChange={setSelectedTier}
+      >
+        <div className="h-full flex flex-col bg-carbon relative">
+          {/* Show Welcome Screen when no messages */}
+          {messages.length === 0 ? (
+            <>
+              {/* Welcome Screen Content - Centered vertically */}
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <div className="w-full max-w-2xl px-4 pointer-events-auto">
+                  <WelcomeScreen userName={settings.displayName || undefined} />
+                  {/* Chat Input - Directly below greeting */}
+                  <div className="mt-6 sm:mt-8">
+                    <ChatInput
+                      onSendMessage={handleSendMessage}
+                      disabled={isLoading}
+                      placeholder="Ask anything"
+                      replyTo={null}
+                      onCancelReply={() => {}}
+                      isCentered={true}
+                      onQRCodeScanned={(data) => {
+                        // Store QR code data in context for AI agent
+                        console.log("[ChatPage] QR code scanned:", data);
+                        // The message will be auto-sent by ChatInput, but we can also store context here
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Chat Interface */}
+              <div className="flex-1 overflow-hidden min-h-0">
+                <ChatInterface
+                  messages={messages}
+                  onSendMessage={handleSendMessage}
+                  isLoading={isLoading}
+                  walletAddress={walletAddress}
+                  walletId={walletId}
+                  onConfirmTransaction={handleConfirmTransaction}
+                  onCancelTransaction={handleCancelTransaction}
+                  replyToMessageId={replyToMessageId}
+                  onReplyToMessage={setReplyToMessageId}
+                />
+              </div>
+              {/* Chat Input - Fixed at bottom when messages exist */}
+              <ChatInput
+                onSendMessage={handleSendMessage}
+                disabled={isLoading}
+                placeholder="Ask anything"
+                replyTo={
+                  replyToMessageId
+                    ? (() => {
+                        const repliedMsg = messages.find((m) => m.id === replyToMessageId);
+                        return repliedMsg
+                          ? {
+                              id: repliedMsg.id,
+                              content: repliedMsg.content,
+                              role: repliedMsg.role,
+                            }
+                          : null;
+                      })()
+                    : null
+                }
+                onCancelReply={() => setReplyToMessageId(null)}
+                onQRCodeScanned={(data) => {
+                  // Store QR code data in context for AI agent
+                  console.log("[ChatPage] QR code scanned:", data);
+                  // The message will be auto-sent by ChatInput, but we can also store context here
+                }}
+              />
+            </>
+          )}
+        </div>
+      </MainLayout>
 
-      {/* Chat Interface - Chat-first layout: 90% of screen per ui-plans.md */}
-      <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
-        <ChatInterface
-          messages={messages}
-          onSendMessage={handleSendMessage}
-          isLoading={isLoading}
-          walletAddress={walletAddress}
-          walletId={walletId}
-          onConfirmTransaction={handleConfirmTransaction}
-          onCancelTransaction={handleCancelTransaction}
+      {/* Session Status - Show if session keys enabled and wallet exists */}
+      {isSessionKeysEnabled() && hasWallet && walletId && userId && userToken && (
+        <div className="fixed bottom-4 right-4 z-40 max-w-sm">
+          <SessionStatus
+            walletId={walletId}
+            userId={userId}
+            userToken={userToken}
+            onRevoke={async () => {
+              setSessionKeyStatus(null);
+              // Reload session status
+              if (walletId && userId && userToken) {
+                const { checkSessionKeyStatus } = await import("@/lib/ai/sessionKeyHelper");
+                const status = await checkSessionKeyStatus(walletId, userId, userToken, 'transfer');
+                setSessionKeyStatus(status);
+              }
+            }}
+          />
+        </div>
+      )}
+
+      {/* Session Approval Modal */}
+      {showSessionApproval && walletId && userId && userToken && (
+        <SessionApprovalModal
+          isOpen={showSessionApproval}
+          onApprove={async (config) => {
+            try {
+              const response = await fetch("/api/circle/session", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  action: "create",
+                  walletId,
+                  userId,
+                  userToken,
+                  ...config,
+                }),
+              });
+
+              const result = await response.json();
+              if (result.success) {
+                setShowSessionApproval(false);
+                setSessionKeyStatus({
+                  hasActiveSession: true,
+                  canAutoExecute: true,
+                  sessionKeyId: result.sessionKey?.sessionKeyId,
+                });
+                const msg: ChatMessage = {
+                  id: crypto.randomUUID(),
+                  role: "assistant",
+                  content: "✅ Session approved! I can now execute actions automatically within your approved limits.",
+                  timestamp: new Date(),
+                };
+                setMessages((prev) => [...prev, msg]);
+              } else {
+                alert(`Failed to create session: ${result.error}`);
+              }
+            } catch (error: any) {
+              console.error("[Chat] Error creating session:", error);
+              alert(`Error creating session: ${error.message}`);
+            }
+          }}
+          onCancel={() => {
+            setShowSessionApproval(false);
+          }}
         />
-      </div>
-
-      {/* Chat Input - Fixed at bottom */}
-      <ChatInput
-        onSendMessage={handleSendMessage}
-        disabled={isLoading}
-        placeholder="Chat with ARCLE..."
-      />
+      )}
 
       {/* Circle PIN Widget Modal */}
       {showPinWidget && challengeData && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-carbon/90 backdrop-blur-sm">
+          <div className="bg-carbon rounded-2xl shadow-2xl max-w-md w-full mx-4 p-6 border border-graphite/30">
             <div className="mb-4">
-              <h2 className="text-2xl font-bold text-gray-900 mb-2">
+              <h2 className="text-2xl font-bold text-signal-white mb-2">
                 🔐 Secure Your Wallet
               </h2>
-              <p className="text-gray-600 text-sm">
+              <p className="text-soft-mist/70 text-sm">
                 Set up a 6-digit PIN to protect your wallet. This PIN will be required for all transactions.
               </p>
             </div>
@@ -2257,15 +3410,15 @@ If the issue persists, the encryption key might not be returned from Circle's AP
               }}
             />
 
-            <div className="mt-4 pt-4 border-t border-gray-200">
-              <p className="text-xs text-gray-500 text-center">
+            <div className="mt-4 pt-4 border-t border-graphite/30">
+              <p className="text-xs text-soft-mist/50 text-center">
                 Secured by Circle • Your PIN is encrypted and never stored
               </p>
             </div>
           </div>
         </div>
       )}
-    </main>
+    </>
   );
 }
 

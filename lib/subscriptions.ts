@@ -1,96 +1,199 @@
 export interface Subscription {
   id: string;
-  merchant: string; // e.g., Netflix
-  amount: string; // e.g., "15.00"
+  userId: string;
+  walletId: string;
+  merchant: string;
+  amount: string;
   currency: "USDC" | "EURC";
-  frequency: "daily" | "weekly" | "monthly"; // MVP
-  dayOfMonth?: number; // for monthly
-  weekday?: number; // 0-6 for weekly
-  nextChargeAt: number; // ms epoch
+  frequency: "daily" | "weekly" | "monthly";
+  dayOfMonth?: number;
+  weekday?: number;
+  nextChargeAt: number;
   autoRenew: boolean;
-  remindBeforeMs: number; // e.g., 48h (2 days)
+  remindBeforeMs?: number;
   paused: boolean;
   createdAt: number;
-  lastReminderShownAt?: number; // Track when reminder was last shown
+  lastReminderShownAt?: number;
 }
 
-const STORAGE_KEY = "arcle_subscriptions";
+export const SUBSCRIPTIONS_UPDATED_EVENT = "arcle:subscriptions-updated";
 
-function readAll(): Subscription[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
+interface SubscriptionRecord {
+  id: string;
+  user_id: string;
+  wallet_id: string;
+  merchant: string;
+  amount: string;
+  currency: string;
+  frequency: string;
+  day_of_month?: number;
+  weekday?: number;
+  next_charge_at: string;
+  auto_renew: boolean;
+  remind_before_ms?: number;
+  paused: boolean;
+  last_reminder_shown_at?: string;
+  created_at: string;
+  updated_at: string;
 }
 
-function writeAll(items: Subscription[]) {
+function notifySubscriptionsUpdated() {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  window.dispatchEvent(new CustomEvent(SUBSCRIPTIONS_UPDATED_EVENT));
 }
 
-export function listSubscriptions(): Subscription[] {
-  return readAll();
+function mapSubscription(record: SubscriptionRecord): Subscription {
+  return {
+    id: record.id,
+    userId: record.user_id,
+    walletId: record.wallet_id,
+    merchant: record.merchant,
+    amount: record.amount,
+    currency: (record.currency as Subscription["currency"]) || "USDC",
+    frequency: record.frequency as Subscription["frequency"],
+    dayOfMonth: record.day_of_month ?? undefined,
+    weekday: record.weekday ?? undefined,
+    nextChargeAt: new Date(record.next_charge_at).getTime(),
+    autoRenew: record.auto_renew,
+    remindBeforeMs: record.remind_before_ms ?? undefined,
+    paused: record.paused,
+    createdAt: new Date(record.created_at).getTime(),
+    lastReminderShownAt: record.last_reminder_shown_at
+      ? new Date(record.last_reminder_shown_at).getTime()
+      : undefined,
+  };
 }
 
-export function addSubscription(sub: Omit<Subscription, "id" | "createdAt">): Subscription {
-  const all = readAll();
-  const newSub: Subscription = { id: crypto.randomUUID(), createdAt: Date.now(), ...sub } as Subscription;
-  all.push(newSub);
-  writeAll(all);
-  return newSub;
+async function handleResponse(response: Response) {
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    throw new Error(errorBody.error || response.statusText);
+  }
+  return response.json();
 }
 
-export function updateSubscription(id: string, patch: Partial<Subscription>): Subscription | null {
-  const all = readAll();
-  const idx = all.findIndex(s => s.id === id);
-  if (idx === -1) return null;
-  all[idx] = { ...all[idx], ...patch };
-  writeAll(all);
-  return all[idx];
+export async function listSubscriptions(userId?: string): Promise<Subscription[]> {
+  if (!userId) return [];
+  const res = await fetch(`/api/subscriptions?userId=${encodeURIComponent(userId)}`, {
+    method: "GET",
+    cache: "no-store",
+  });
+  const data = await handleResponse(res);
+  return (data.subscriptions || []).map(mapSubscription);
 }
 
-export function removeSubscription(id: string) {
-  const all = readAll().filter(s => s.id !== id);
-  writeAll(all);
+export async function addSubscription(params: {
+  userId: string;
+  walletId: string;
+  merchant: string;
+  amount: string;
+  currency?: "USDC" | "EURC";
+  frequency: "daily" | "weekly" | "monthly";
+  dayOfMonth?: number;
+  weekday?: number;
+  nextChargeAt: number;
+  autoRenew?: boolean;
+  remindBeforeMs?: number;
+  paused?: boolean;
+}): Promise<Subscription> {
+  const res = await fetch("/api/subscriptions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      userId: params.userId,
+      walletId: params.walletId,
+      merchant: params.merchant,
+      amount: params.amount,
+      currency: params.currency || "USDC",
+      frequency: params.frequency,
+      dayOfMonth: params.dayOfMonth,
+      weekday: params.weekday,
+      nextChargeAt: params.nextChargeAt,
+      autoRenew: params.autoRenew,
+      remindBeforeMs: params.remindBeforeMs,
+      paused: params.paused,
+    }),
+  });
+  const data = await handleResponse(res);
+  notifySubscriptionsUpdated();
+  return mapSubscription(data.subscription);
 }
 
-export function findDueReminders(now = Date.now()): Subscription[] {
-  const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000; // 2 days in milliseconds
-  return readAll().filter(s => {
-    if (s.paused || !s.autoRenew) return false;
-    
-    const timeUntilDue = s.nextChargeAt - now;
-    // Must be within 2 days before due date, but not past due
-    if (timeUntilDue <= 0 || timeUntilDue > TWO_DAYS_MS) return false;
-    
-    // Only show reminder if we haven't shown one yet, or if the last reminder was shown before the 2-day window
-    const reminderWindowStart = s.nextChargeAt - TWO_DAYS_MS;
-    if (s.lastReminderShownAt && s.lastReminderShownAt >= reminderWindowStart) {
-      return false; // Already shown reminder for this cycle
-    }
-    
-    return true;
+export async function updateSubscription(
+  id: string,
+  updates: Partial<{
+    merchant: string;
+    amount: string;
+    currency: "USDC" | "EURC";
+    frequency: "daily" | "weekly" | "monthly";
+    dayOfMonth?: number;
+    weekday?: number;
+    nextChargeAt?: number;
+    autoRenew?: boolean;
+    remindBeforeMs?: number;
+    paused?: boolean;
+    lastReminderShownAt?: number;
+  }>
+): Promise<Subscription> {
+  const res = await fetch(`/api/subscriptions/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  const data = await handleResponse(res);
+  notifySubscriptionsUpdated();
+  return mapSubscription(data.subscription);
+}
+
+export async function removeSubscription(id: string): Promise<void> {
+  await fetch(`/api/subscriptions/${id}`, { method: "DELETE" });
+  notifySubscriptionsUpdated();
+}
+
+export async function findDueReminders(userId: string): Promise<Subscription[]> {
+  if (!userId) return [];
+  const res = await fetch(
+    `/api/subscriptions/due?userId=${encodeURIComponent(userId)}&type=reminder`,
+    { cache: "no-store" }
+  );
+  const data = await handleResponse(res);
+  return (data.subscriptions || []).map(mapSubscription);
+}
+
+export async function findDueCharges(userId: string): Promise<Subscription[]> {
+  if (!userId) return [];
+  const res = await fetch(
+    `/api/subscriptions/due?userId=${encodeURIComponent(userId)}&type=charge`,
+    { cache: "no-store" }
+  );
+  const data = await handleResponse(res);
+  return (data.subscriptions || []).map(mapSubscription);
+}
+
+function calculateNextChargeAt(sub: Subscription): number {
+  const current = new Date(sub.nextChargeAt);
+  if (sub.frequency === "monthly") {
+    current.setMonth(current.getMonth() + 1);
+  } else if (sub.frequency === "weekly") {
+    current.setDate(current.getDate() + 7);
+  } else {
+    current.setDate(current.getDate() + 1);
+  }
+  return current.getTime();
+}
+
+export async function scheduleNext(sub: Subscription): Promise<Subscription> {
+  const nextChargeAt = calculateNextChargeAt(sub);
+  return await updateSubscription(sub.id, {
+    nextChargeAt,
+    lastReminderShownAt: undefined,
   });
 }
 
-export function findDueCharges(now = Date.now()): Subscription[] {
-  return readAll().filter(s => !s.paused && now >= s.nextChargeAt);
+export async function pauseSubscription(id: string): Promise<Subscription> {
+  return await updateSubscription(id, { paused: true });
 }
 
-export function scheduleNext(sub: Subscription): Subscription {
-  let next = sub.nextChargeAt;
-  const d = new Date(next);
-  if (sub.frequency === "monthly") {
-    d.setMonth(d.getMonth() + 1);
-  } else if (sub.frequency === "weekly") {
-    d.setDate(d.getDate() + 7);
-  } else {
-    d.setDate(d.getDate() + 1);
-  }
-  // Reset reminder tracking when scheduling next charge
-  return { ...sub, nextChargeAt: d.getTime(), lastReminderShownAt: undefined };
+export async function resumeSubscription(id: string): Promise<Subscription> {
+  return await updateSubscription(id, { paused: false });
 }

@@ -12,6 +12,7 @@
  */
 
 import type { Transaction } from "@/types";
+import { savePreference, loadPreference } from "@/lib/supabase-data";
 
 const STORAGE_KEY = "arcle_transaction_cache";
 const MAX_CACHE_SIZE = 100; // Keep last 100 transactions
@@ -26,22 +27,17 @@ export interface CachedTransaction extends Transaction {
 /**
  * Get all cached transactions for a wallet
  */
-export function getCachedTransactions(walletId: string): Transaction[] {
-  if (typeof window === "undefined") return [];
-
+export async function getCachedTransactions(userId: string, walletId: string): Promise<Transaction[]> {
   try {
-    const cached = localStorage.getItem(STORAGE_KEY);
-    if (!cached) return [];
+    const pref = await loadPreference({ userId, key: STORAGE_KEY });
+    const allTransactions: CachedTransaction[] = (pref?.value as CachedTransaction[]) || [];
 
-    const allTransactions: CachedTransaction[] = JSON.parse(cached);
-    
-    // Filter by wallet and remove expired transactions
     const now = Date.now();
-    const expiryThreshold = now - (CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
-    
+    const expiryThreshold = now - CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+
     const walletTransactions = allTransactions
-      .filter(tx => tx.walletId === walletId && tx.cachedAt > expiryThreshold)
-      .map(tx => ({
+      .filter((tx) => tx.walletId === walletId && tx.cachedAt > expiryThreshold)
+      .map((tx) => ({
         id: tx.id,
         hash: tx.hash,
         from: tx.from,
@@ -62,15 +58,14 @@ export function getCachedTransactions(walletId: string): Transaction[] {
 /**
  * Cache a transaction immediately when sent
  */
-export function cacheTransaction(
+export async function cacheTransaction(
+  userId: string,
   walletId: string,
   transaction: Transaction
-): void {
-  if (typeof window === "undefined") return;
-
+): Promise<void> {
   try {
-    const cached = localStorage.getItem(STORAGE_KEY);
-    let allTransactions: CachedTransaction[] = cached ? JSON.parse(cached) : [];
+    const pref = await loadPreference({ userId, key: STORAGE_KEY });
+    let allTransactions: CachedTransaction[] = (pref?.value as CachedTransaction[]) || [];
 
     // Check if transaction already exists (avoid duplicates)
     const existingIndex = allTransactions.findIndex(
@@ -88,23 +83,20 @@ export function cacheTransaction(
     };
 
     if (existingIndex >= 0) {
-      // Update existing transaction
       allTransactions[existingIndex] = cachedTx;
       console.log(`[TransactionCache] ✏️ Updated transaction ${transaction.id}`);
     } else {
-      // Add new transaction
       allTransactions.push(cachedTx);
       console.log(`[TransactionCache] ✅ Cached new transaction ${transaction.id}`);
     }
 
-    // Keep only the most recent transactions
     if (allTransactions.length > MAX_CACHE_SIZE) {
       allTransactions = allTransactions
         .sort((a, b) => b.cachedAt - a.cachedAt)
         .slice(0, MAX_CACHE_SIZE);
     }
 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(allTransactions));
+    await savePreference({ userId, key: STORAGE_KEY, value: allTransactions });
   } catch (error) {
     console.error("[TransactionCache] Error caching transaction:", error);
   }
@@ -113,18 +105,17 @@ export function cacheTransaction(
 /**
  * Update cached transaction status when Circle API confirms it
  */
-export function updateTransactionStatus(
+export async function updateTransactionStatus(
+  userId: string,
   transactionId: string,
   status: "pending" | "confirmed" | "failed",
   confirmedByAPI: boolean = true
-): void {
-  if (typeof window === "undefined") return;
-
+): Promise<void> {
   try {
-    const cached = localStorage.getItem(STORAGE_KEY);
-    if (!cached) return;
+    const pref = await loadPreference({ userId, key: STORAGE_KEY });
+    if (!pref?.value) return;
 
-    const allTransactions: CachedTransaction[] = JSON.parse(cached);
+    const allTransactions: CachedTransaction[] = pref.value as CachedTransaction[];
     const txIndex = allTransactions.findIndex(
       tx => tx.id === transactionId || tx.hash === transactionId
     );
@@ -132,7 +123,7 @@ export function updateTransactionStatus(
     if (txIndex >= 0) {
       allTransactions[txIndex].status = status;
       allTransactions[txIndex].confirmedByAPI = confirmedByAPI;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(allTransactions));
+      await savePreference({ userId, key: STORAGE_KEY, value: allTransactions });
       console.log(`[TransactionCache] ✏️ Updated status for ${transactionId}: ${status}`);
     }
   } catch (error) {
@@ -149,11 +140,12 @@ export function updateTransactionStatus(
  * 3. Update cache with Circle API confirmation
  * 4. Return deduplicated list
  */
-export function mergeWithAPITransactions(
+export async function mergeWithAPITransactions(
+  userId: string,
   walletId: string,
   apiTransactions: Transaction[]
-): Transaction[] {
-  const cached = getCachedTransactions(walletId);
+): Promise<Transaction[]> {
+  const cached = await getCachedTransactions(userId, walletId);
   
   // Create a map of API transactions by ID and hash
   const apiMap = new Map<string, Transaction>();
@@ -163,11 +155,11 @@ export function mergeWithAPITransactions(
   });
 
   // Mark cached transactions as confirmed if they're in API response
-  cached.forEach(tx => {
+  for (const tx of cached) {
     if (apiMap.has(tx.id) || (tx.hash && apiMap.has(tx.hash))) {
-      updateTransactionStatus(tx.id, tx.status, true);
+      await updateTransactionStatus(userId, tx.id, tx.status, true);
     }
-  });
+  }
 
   // Merge: cached + API (deduplicated)
   const merged = [...cached];
@@ -197,14 +189,12 @@ export function mergeWithAPITransactions(
 /**
  * Clear expired transactions from cache
  */
-export function clearExpiredTransactions(): void {
-  if (typeof window === "undefined") return;
-
+export async function clearExpiredTransactions(userId: string): Promise<void> {
   try {
-    const cached = localStorage.getItem(STORAGE_KEY);
-    if (!cached) return;
+    const pref = await loadPreference({ userId, key: STORAGE_KEY });
+    if (!pref?.value) return;
 
-    const allTransactions: CachedTransaction[] = JSON.parse(cached);
+    const allTransactions: CachedTransaction[] = pref.value as CachedTransaction[];
     const now = Date.now();
     const expiryThreshold = now - (CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
 
@@ -213,7 +203,7 @@ export function clearExpiredTransactions(): void {
     );
 
     if (validTransactions.length < allTransactions.length) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(validTransactions));
+      await savePreference({ userId, key: STORAGE_KEY, value: validTransactions });
       console.log(`[TransactionCache] 🧹 Cleared ${allTransactions.length - validTransactions.length} expired transactions`);
     }
   } catch (error) {
@@ -224,9 +214,8 @@ export function clearExpiredTransactions(): void {
 /**
  * Clear all cached transactions (for testing/debugging)
  */
-export function clearAllCache(): void {
-  if (typeof window === "undefined") return;
-  localStorage.removeItem(STORAGE_KEY);
+export async function clearAllCache(userId: string): Promise<void> {
+  await savePreference({ userId, key: STORAGE_KEY, value: [] });
   console.log("[TransactionCache] 🗑️ Cleared all cached transactions");
 }
 

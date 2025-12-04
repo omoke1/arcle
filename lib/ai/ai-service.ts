@@ -9,9 +9,9 @@ import { IntentClassifier, ParsedIntent } from "./intent-classifier";
 import { validateAddress } from "@/lib/security/address-validation";
 import { calculateRiskScore } from "@/lib/security/risk-scoring";
 import { detectPhishingUrls } from "@/lib/security/phishing-detection";
-import { addSubscription, scheduleNext, listSubscriptions, updateSubscription, Subscription } from "@/lib/subscriptions";
+import { addSubscription } from "@/lib/subscriptions";
 import { generateNaturalResponse, enhanceMessageWithReasoning } from "./natural-language-generator";
-import { createScheduledPayment, listScheduledPayments, parseScheduleTime } from "@/lib/scheduled-payments";
+import { createScheduledPayment, parseScheduleTime } from "@/lib/scheduled-payments";
 import { 
   getConversationContext, 
   updateConversationContext, 
@@ -19,9 +19,19 @@ import {
   setPendingAction, 
   clearPendingAction,
   getConversationSummary,
-  type PendingAction 
+  type PendingAction,
+  type ConversationContext
 } from "./conversation-context";
 import { removeMarkdownFormatting } from "@/lib/utils/format-message";
+
+type AIContext = {
+  hasWallet?: boolean;
+  balance?: string;
+  walletAddress?: string;
+  walletId?: string;
+  userId?: string;
+  sessionId?: string;
+};
 
 export interface AIResponse {
   message: string;
@@ -56,186 +66,309 @@ export class AIService {
    */
   static async processMessage(
     message: string, 
-    context?: {
-      hasWallet?: boolean;
-      balance?: string;
-      walletAddress?: string;
-      walletId?: string;
-    },
+    context?: AIContext,
     sessionId?: string
   ): Promise<AIResponse> {
-    // Get or create session ID
-    const currentSessionId = sessionId || (typeof window !== "undefined" ? localStorage.getItem("arcle_session_id") || crypto.randomUUID() : crypto.randomUUID());
-    if (typeof window !== "undefined" && !sessionId) {
-      localStorage.setItem("arcle_session_id", currentSessionId);
+    // Get or create session ID (sessionId should be provided by caller, fallback to UUID)
+    const currentSessionId = sessionId || crypto.randomUUID();
+    
+    // Get userId from context first, then try localStorage (migration fallback)
+    // Note: In production, userId should always come from context
+    let userId = context?.userId;
+    if (!userId && typeof window !== "undefined") {
+      // Migration fallback: try localStorage (will be migrated to Supabase by chat page)
+      const legacyUserId = localStorage.getItem("arcle_user_id");
+      if (legacyUserId) {
+        userId = legacyUserId;
+      }
     }
+    const runtimeContext: AIContext = {
+      hasWallet: context?.hasWallet,
+      balance: context?.balance,
+      walletAddress: context?.walletAddress,
+      walletId: context?.walletId,
+      userId,
+      sessionId: currentSessionId,
+    };
     
-    // Get conversation context
-    const conversationContext = getConversationContext(currentSessionId);
+    // Get conversation context (async now)
+    const conversationContext = await getConversationContext(currentSessionId, userId);
     
-    // Add user message to history
-    addMessageToHistory(currentSessionId, "user", message);
+    // Add user message to history (async now)
+    await addMessageToHistory(currentSessionId, "user", message, userId);
     
     // Check for confirm/cancel intents first - these need context
-    const intent = IntentClassifier.classify(message);
+    const classifiedIntent = IntentClassifier.classify(message);
+    const intent = this.resolvePendingIntent(classifiedIntent, conversationContext);
     
     // Handle confirm intent - check if there's a pending action
     if (intent.intent === "confirm" && conversationContext.pendingAction) {
-      return await this.handleConfirmIntent(intent, context, conversationContext.pendingAction, currentSessionId);
+      const response = await this.handleConfirmIntent(intent, runtimeContext, conversationContext.pendingAction, currentSessionId);
+      return this.finalizeResponse(response, currentSessionId, userId);
     }
     
     // Handle cancel intent
     if (intent.intent === "cancel" && conversationContext.pendingAction) {
-      clearPendingAction(currentSessionId);
-      addMessageToHistory(currentSessionId, "assistant", "Action canceled.");
-      return {
+      await clearPendingAction(currentSessionId, userId);
+      const response = {
         message: "Action canceled. No changes were made.",
         intent,
       };
+      return this.finalizeResponse(response, currentSessionId, userId);
     }
     
+    let response: AIResponse | null = null;
     switch (intent.intent) {
       case "greeting":
-        return this.handleGreetingIntent(intent, context, currentSessionId);
+        response = await this.handleGreetingIntent(intent, runtimeContext, currentSessionId);
+        break;
       
       case "wallet_creation":
-        return this.handleWalletCreationIntent(intent, context, currentSessionId);
+        response = await this.handleWalletCreationIntent(intent, runtimeContext, currentSessionId);
+        break;
       
       case "send":
-        return await this.handleSendIntent(intent, context, currentSessionId);
+        response = await this.handleSendIntent(intent, runtimeContext, currentSessionId);
+        break;
       
       case "receive":
-        return this.handleReceiveIntent(intent, context);
+        response = this.handleReceiveIntent(intent, runtimeContext);
+        break;
       
       case "balance":
-        return this.handleBalanceIntent(intent, context);
+        response = await this.handleBalanceIntent(intent, runtimeContext);
+        break;
       
       case "tokens":
-        return await this.handleTokensIntent(intent, context);
+        response = await this.handleTokensIntent(intent, runtimeContext);
+        break;
       
       case "address":
-        return this.handleAddressIntent(intent, context);
+        response = this.handleAddressIntent(intent, runtimeContext);
+        break;
       
       case "transaction_history":
-        return this.handleHistoryIntent(intent, context);
+        response = await this.handleHistoryIntent(intent, runtimeContext);
+        break;
       
       case "bridge":
-        return await this.handleBridgeIntent(intent, context);
+        response = await this.handleBridgeIntent(intent, runtimeContext, currentSessionId);
+        break;
       
       case "pay":
-        return await this.handlePayIntent(intent, context, currentSessionId);
+        response = await this.handlePayIntent(intent, runtimeContext, currentSessionId);
+        break;
       
       case "yield":
-        return await this.handleYieldIntent(intent, context);
+        response = await this.handleYieldIntent(intent, runtimeContext);
+        break;
       
       case "arbitrage":
-        return await this.handleArbitrageIntent(intent, context);
+        response = await this.handleArbitrageIntent(intent, runtimeContext);
+        break;
       
       case "rebalance":
-        return await this.handleRebalanceIntent(intent, context);
+        response = await this.handleRebalanceIntent(intent, runtimeContext);
+        break;
       
       case "split_payment":
-        return await this.handleSplitPaymentIntent(intent, context);
+        response = await this.handleSplitPaymentIntent(intent, runtimeContext);
+        break;
       
       case "batch":
-        return await this.handleBatchIntent(intent, context);
+        response = await this.handleBatchIntent(intent, runtimeContext);
+        break;
       
       case "savings":
-        return await this.handleSavingsIntent(intent, context);
+        response = await this.handleSavingsIntent(intent, runtimeContext);
+        break;
       
       case "trade":
-        return await this.handleTradeIntent(intent, context, currentSessionId);
+        response = await this.handleTradeIntent(intent, runtimeContext, currentSessionId);
+        break;
       
       case "limit_order":
-        return await this.handleLimitOrderIntent(intent, context);
+        response = await this.handleLimitOrderIntent(intent, runtimeContext);
+        break;
       
       case "liquidity":
-        return await this.handleLiquidityIntent(intent, context);
+        response = await this.handleLiquidityIntent(intent, runtimeContext);
+        break;
       
       case "compound":
-        return await this.handleCompoundIntent(intent, context);
+        response = await this.handleCompoundIntent(intent, runtimeContext);
+        break;
       
       case "convert":
-        return await this.handleConvertIntent(intent, context, currentSessionId);
+        response = await this.handleConvertIntent(intent, runtimeContext, currentSessionId);
+        break;
       
       case "fx_rate":
-        return await this.handleFXRateIntent(intent, context);
+        response = await this.handleFXRateIntent(intent, runtimeContext);
+        break;
       
       case "multi_currency":
-        return await this.handleMultiCurrencyIntent(intent, context);
+        response = await this.handleMultiCurrencyIntent(intent, runtimeContext);
+        break;
       
       case "invoice":
-        return await this.handleInvoiceIntent(intent, context);
+        response = await this.handleInvoiceIntent(intent, runtimeContext);
+        break;
       
       case "payment_roll":
-        return await this.handlePaymentRollIntent(intent, context);
+        response = await this.handlePaymentRollIntent(intent, runtimeContext);
+        break;
       
       case "remittance":
-        return await this.handleRemittanceIntent(intent, context);
+        response = await this.handleRemittanceIntent(intent, runtimeContext);
+        break;
       
       case "fx_alert":
-        return await this.handleFXAlertIntent(intent, context);
+        response = await this.handleFXAlertIntent(intent, runtimeContext);
+        break;
       
       case "perpetual":
-        return await this.handlePerpetualIntent(intent, context);
+        response = await this.handlePerpetualIntent(intent, runtimeContext);
+        break;
       
       case "options":
-        return await this.handleOptionsIntent(intent, context);
+        response = await this.handleOptionsIntent(intent, runtimeContext);
+        break;
       
       case "agent":
-        return await this.handleAgentIntent(intent, context);
+        response = await this.handleAgentIntent(intent, runtimeContext);
+        break;
       
       case "withdraw":
-        return await this.handleWithdrawIntent(intent, context);
+        response = await this.handleWithdrawIntent(intent, runtimeContext);
+        break;
 
       case "scan":
-        return await this.handleScanIntent(intent, context);
+        response = await this.handleScanIntent(intent, runtimeContext);
+        break;
 
       case "schedule":
-        return this.handleScheduleIntent(intent, context, currentSessionId);
+        response = await this.handleScheduleIntent(intent, runtimeContext, currentSessionId, conversationContext);
+        break;
 
       case "subscription":
-        return this.handleSubscriptionIntent(intent, context);
+        response = await this.handleSubscriptionIntent(intent, runtimeContext, currentSessionId, conversationContext);
+        break;
 
       case "renew":
-        return this.handleRenewIntent(intent, context);
-      
-      case "confirm":
-        // If no pending action, treat as unknown
-        if (!conversationContext.pendingAction) {
-          return this.handleUnknownIntent(intent, context);
-        }
-        return await this.handleConfirmIntent(intent, context, conversationContext.pendingAction, currentSessionId);
-      
-      case "cancel":
-        // If no pending action, treat as unknown
-        if (!conversationContext.pendingAction) {
-          return this.handleUnknownIntent(intent, context);
-        }
-        clearPendingAction(currentSessionId);
-        addMessageToHistory(currentSessionId, "assistant", "Action canceled.");
-        return {
-          message: "Action canceled. No changes were made.",
-          intent,
-        };
+        response = await this.handleRenewIntent(intent, runtimeContext);
+        break;
       
       case "contact":
-        return await this.handleContactIntent(intent, context, currentSessionId);
+        response = await this.handleContactIntent(intent, runtimeContext, currentSessionId);
+        break;
       
       case "notification":
-        return await this.handleNotificationIntent(intent, context, currentSessionId);
+        response = await this.handleNotificationIntent(intent, runtimeContext, currentSessionId);
+        break;
       
       case "approve_token":
-        return await this.handleApproveTokenIntent(intent, context, currentSessionId);
+        response = await this.handleApproveTokenIntent(intent, runtimeContext, currentSessionId);
+        break;
       
       case "reject_token":
-        return await this.handleRejectTokenIntent(intent, context, currentSessionId);
+        response = await this.handleRejectTokenIntent(intent, runtimeContext, currentSessionId);
+        break;
+      
+      case "location":
+        response = await this.handleLocationIntent(intent, runtimeContext, currentSessionId);
+        break;
       
       case "help":
-        return this.handleHelpIntent(intent, context);
+        response = await this.handleHelpIntent(intent, runtimeContext);
+        break;
       
       default:
-        return this.handleUnknownIntent(intent, context);
+        response = await this.handleUnknownIntent(intent, runtimeContext);
+    }
+
+    return this.finalizeResponse(response, currentSessionId, userId);
+  }
+
+  private static resolvePendingIntent(
+    intent: ParsedIntent,
+    conversationContext?: ConversationContext
+  ): ParsedIntent {
+    if (intent.intent !== "unknown" || !conversationContext?.pendingAction) {
+      return intent;
+    }
+
+    switch (conversationContext.pendingAction.type) {
+      case "schedule":
+        return { ...intent, intent: "schedule" };
+      case "subscription":
+        return { ...intent, intent: "subscription" };
+      default:
+        return intent;
+    }
+  }
+
+  private static async finalizeResponse(
+    response: AIResponse,
+    sessionId?: string,
+    userId?: string
+  ): Promise<AIResponse> {
+    if (sessionId) {
+      if (response?.message) {
+        await addMessageToHistory(sessionId, "assistant", response.message, userId);
+      }
+      await updateConversationContext(sessionId, { lastIntent: response.intent?.intent }, userId);
+    }
+    return response;
+  }
+
+  private static async persistScheduleDraft(
+    sessionId?: string,
+    context?: AIContext,
+    draft?: { amount?: string; address?: string; date?: string; time?: string }
+  ) {
+    if (!sessionId) return;
+    await setPendingAction(
+      sessionId,
+      {
+        type: "schedule",
+        timestamp: Date.now(),
+        data: draft,
+      },
+      context?.userId
+    );
+  }
+
+  private static async clearScheduleDraft(sessionId?: string, context?: AIContext) {
+    if (!sessionId) return;
+    const ctx = await getConversationContext(sessionId, context?.userId);
+    if (ctx.pendingAction?.type === "schedule") {
+      await clearPendingAction(sessionId, context?.userId);
+    }
+  }
+
+  private static async persistSubscriptionDraft(
+    sessionId?: string,
+    context?: AIContext,
+    draft?: { amount?: string; merchant?: string; frequency?: string; date?: string; time?: string }
+  ) {
+    if (!sessionId) return;
+    await setPendingAction(
+      sessionId,
+      {
+        type: "subscription",
+        timestamp: Date.now(),
+        data: draft,
+      },
+      context?.userId
+    );
+  }
+
+  private static async clearSubscriptionDraft(sessionId?: string, context?: AIContext) {
+    if (!sessionId) return;
+    const ctx = await getConversationContext(sessionId, context?.userId);
+    if (ctx.pendingAction?.type === "subscription") {
+      await clearPendingAction(sessionId, context?.userId);
     }
   }
   
@@ -244,7 +377,7 @@ export class AIService {
    */
   private static async handleConfirmIntent(
     intent: ParsedIntent,
-    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string },
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string; userId?: string },
     pendingAction?: PendingAction,
     sessionId?: string
   ): Promise<AIResponse> {
@@ -257,7 +390,7 @@ export class AIService {
     
     // Clear pending action
     if (sessionId) {
-      clearPendingAction(sessionId);
+      await clearPendingAction(sessionId, context?.userId);
     }
     
     // Execute the pending action based on type
@@ -295,6 +428,28 @@ export class AIService {
           message: `Confirmed! Executing trade...`,
           intent,
         };
+
+      case "bridge": {
+        const bridgeData = pendingAction.data?.bridgeData;
+        if (!bridgeData) {
+          return {
+            message: "I couldn't find the bridge details. Could you please repeat the bridge request?",
+            intent,
+          };
+        }
+
+        return {
+          message: "Awesome! Launching your bridge now. I'll keep you updated as it progresses.",
+          intent: pendingAction.data?.sourceIntent || {
+            intent: "bridge",
+            confidence: 1,
+            entities: pendingAction.data?.sourceIntent?.entities ?? {},
+            rawCommand: pendingAction.data?.sourceIntent?.rawCommand || intent.rawCommand,
+          },
+          requiresConfirmation: true,
+          bridgeData,
+        };
+      }
       
       default:
         return {
@@ -311,7 +466,7 @@ export class AIService {
     baseMessage: string,
     intent: ParsedIntent,
     action: string,
-    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string },
+    context?: AIContext,
     data?: any,
     sessionId?: string,
     isMissingInfo?: boolean,
@@ -325,13 +480,14 @@ export class AIService {
         walletId: context?.walletId,
       };
 
+      const resolvedSessionId = sessionId ?? context?.sessionId;
       const enhanced = await generateNaturalResponse({
         intent: intent.intent,
         action,
         data: { message: baseMessage, ...data },
         context: agentContext,
         userMessage: intent.rawCommand,
-        sessionId,
+        sessionId: resolvedSessionId,
         isMissingInfo,
         missingFields,
       });
@@ -402,7 +558,7 @@ export class AIService {
   
   private static async handleSendIntent(
     intent: ParsedIntent,
-    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string },
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string; userId?: string },
     sessionId?: string
   ): Promise<AIResponse> {
     if (!context?.hasWallet) {
@@ -443,16 +599,16 @@ export class AIService {
     let resolvedAddress = address;
     let contactName: string | undefined;
     
-    if (!address && recipient) {
+    if (!address && recipient && context?.userId) {
       // Try to find contact by name
       if (typeof window !== "undefined") {
         const { getContact, updateContactLastUsed } = await import("@/lib/storage/contacts");
-        const contact = getContact(recipient);
+        const contact = await getContact(context.userId, recipient);
         if (contact) {
           resolvedAddress = contact.address;
           contactName = contact.name;
           // Update last used timestamp
-          updateContactLastUsed(contact.address);
+          await updateContactLastUsed(context.userId, contact.address);
         }
       }
     }
@@ -495,13 +651,13 @@ export class AIService {
     }
     
     // Check if this is a new wallet address (not in transaction history)
-    const isNewWallet = await this.checkIfNewWallet(normalizedAddress, context.walletId);
+    const isNewWallet = await this.checkIfNewWallet(normalizedAddress, context.walletId, context?.userId);
     
     // Calculate estimated fee (simplified)
     const estimatedFee = "0.01";
     
     // Calculate real risk score (include message for phishing detection)
-    const riskResult = await calculateRiskScore(normalizedAddress, amount, undefined, intent.rawCommand);
+    const riskResult = await calculateRiskScore(normalizedAddress, amount, undefined, intent.rawCommand, context?.userId);
     
     // Add phishing warning if detected but not blocked
     let phishingWarning = "";
@@ -587,11 +743,14 @@ export class AIService {
    */
   private static async checkIfNewWallet(
     address: string,
-    walletId?: string
+    walletId?: string,
+    userId?: string
   ): Promise<boolean> {
     // Check address history from risk scoring
+    if (!userId) return true; // Without userId, assume new wallet
+    
     const { getAddressHistory } = await import("@/lib/security/risk-scoring");
-    const addressHistory = getAddressHistory(address);
+    const addressHistory = await getAddressHistory(userId, address);
     
     // If address has no history, it's new
     if (!addressHistory || addressHistory.transactionCount === 0) {
@@ -798,7 +957,8 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
   
   private static async handleBridgeIntent(
     intent: ParsedIntent,
-    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string }
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string; userId?: string },
+    sessionId?: string
   ): Promise<AIResponse> {
     if (!context?.hasWallet) {
       return {
@@ -835,7 +995,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
         ? `Fast Transfer: Settles in seconds (~$0.25 fee)`
         : `Standard Transfer: 13-19 minutes (~$0.08 fee)`;
       
-      return {
+      const response: AIResponse = {
         message: `Perfect! Bridging $${amount} USDC from Arc to ${destinationChain}\n\n` +
                 `${speedInfo}\n\n` +
                 `Here's what's happening:\n` +
@@ -854,6 +1014,20 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
           fastTransfer: wantsFast, // Pass Fast Transfer preference
         },
       };
+
+      if (sessionId) {
+        await setPendingAction(sessionId, {
+          type: "bridge",
+          timestamp: Date.now(),
+          data: {
+            bridgeData: response.bridgeData,
+            promptMessage: response.message,
+            sourceIntent: intent,
+          },
+        }, context?.userId);
+      }
+
+      return response;
     }
     
     return {
@@ -867,7 +1041,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
   
   private static async handlePayIntent(
     intent: ParsedIntent,
-    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string },
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string; userId?: string },
     sessionId?: string
   ): Promise<AIResponse> {
     // Pay is similar to send but with different messaging
@@ -975,13 +1149,13 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
     }
     
     // Check if this is a new wallet address (not in transaction history)
-    const isNewWallet = await this.checkIfNewWallet(normalizedAddress, context.walletId);
+    const isNewWallet = await this.checkIfNewWallet(normalizedAddress, context.walletId, context?.userId);
     
     // Calculate estimated fee
     const estimatedFee = "0.01";
     
     // Calculate real risk score (include message for phishing detection)
-    const riskResult = await calculateRiskScore(normalizedAddress, amount, undefined, intent.rawCommand);
+    const riskResult = await calculateRiskScore(normalizedAddress, amount, undefined, intent.rawCommand, context?.userId);
     
     // Add phishing warning if detected but not blocked
     let phishingWarning = "";
@@ -1660,7 +1834,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
 
   private static async handleConvertIntent(
     intent: ParsedIntent,
-    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string },
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string; userId?: string },
     sessionId?: string
   ): Promise<AIResponse> {
     if (!context?.hasWallet || !context?.walletId) {
@@ -1710,7 +1884,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       
       // Store pending action for confirmation
       if (sessionId && context?.walletId) {
-        setPendingAction(sessionId, {
+        await setPendingAction(sessionId, {
           type: "convert",
           data: {
             fromCurrency,
@@ -1722,7 +1896,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
             recipient: toCurrency,
           },
           timestamp: Date.now(),
-        });
+        }, context?.userId);
       }
       
       const message = await this.enhanceResponse(
@@ -1758,7 +1932,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
    */
   private static async executeFXSwap(
     swapData: any,
-    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string },
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string; userId?: string },
     sessionId?: string
   ): Promise<AIResponse> {
     if (!context?.walletId || !context?.walletAddress) {
@@ -1825,11 +1999,6 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
         },
         sessionId
       );
-
-      // Add to conversation history
-      if (sessionId) {
-        addMessageToHistory(sessionId, "assistant", message);
-      }
 
       return {
         message,
@@ -2627,7 +2796,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
 
   private static async handleScanIntent(
     intent: ParsedIntent,
-    context?: { walletAddress?: string }
+    context?: { walletAddress?: string; userId?: string }
   ): Promise<AIResponse> {
     const address = intent.entities.address;
     if (!address) {
@@ -2642,7 +2811,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
         intent,
       };
     }
-    const { score, reasons, blocked } = await calculateRiskScore(address, "0.00");
+    const { score, reasons, blocked } = await calculateRiskScore(address, "0.00", undefined, undefined, context?.userId || undefined);
     if (blocked) {
       return {
         message: `High risk address detected (risk ${score}). Action blocked.\nReasons: ${reasons.join(", ")}`,
@@ -2658,8 +2827,9 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
 
   private static async handleScheduleIntent(
     intent: ParsedIntent,
-    context?: { hasWallet?: boolean; walletAddress?: string; walletId?: string },
-    sessionId?: string
+    context?: AIContext,
+    sessionId?: string,
+    conversationContext?: ConversationContext
   ): Promise<AIResponse> {
     if (!context?.hasWallet) {
       const message = await this.enhanceResponse(
@@ -2673,16 +2843,42 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       return { message, intent };
     }
 
-    const { amount, address, date, time } = intent.entities;
-
-    // Ask ONE clarifying question at a time (interactive approach)
-    if (!amount) {
+    if (!context.walletId || !context.userId) {
       const message = await this.enhanceResponse(
-        "I'd be happy to schedule a payment for you! How much would you like to send?",
+        "I couldn't find your wallet details. Please reconnect your wallet or create one so I can schedule the payment.",
+        intent,
+        "schedule_missing_wallet_context",
+        context,
+        undefined,
+        sessionId
+      );
+      return { message, intent };
+    }
+
+    const draft =
+      conversationContext?.pendingAction?.type === "schedule"
+        ? conversationContext.pendingAction.data || {}
+        : {};
+
+    let amount = intent.entities.amount ?? draft.amount;
+    let addressInput = intent.entities.address ?? draft.address;
+    let dateInput =
+      typeof intent.entities.date === "string" && intent.entities.date.trim().length
+        ? intent.entities.date.trim()
+        : draft.date;
+    let timeInput =
+      typeof intent.entities.time === "string" && intent.entities.time.trim().length
+        ? intent.entities.time.trim()
+        : draft.time;
+
+    if (!amount) {
+      await this.persistScheduleDraft(sessionId, context, { amount, address: addressInput, date: dateInput, time: timeInput });
+      const message = await this.enhanceResponse(
+        "I'd be happy to schedule that payment. How much would you like to send?",
         intent,
         "schedule_missing_amount",
         context,
-        undefined,
+        { address: addressInput },
         sessionId,
         true,
         ["amount"]
@@ -2690,7 +2886,8 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       return { message, intent };
     }
 
-    if (!address) {
+    if (!addressInput) {
+      await this.persistScheduleDraft(sessionId, context, { amount, address: addressInput, date: dateInput, time: timeInput });
       const message = await this.enhanceResponse(
         `Great! I'll schedule $${amount} USDC for you. What's the recipient's wallet address?`,
         intent,
@@ -2704,15 +2901,15 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       return { message, intent };
     }
 
-    // Validate address
-    const addressValidation = validateAddress(address);
+    const addressValidation = validateAddress(addressInput);
     if (!addressValidation.isValid) {
+      await this.persistScheduleDraft(sessionId, context, { amount, address: addressInput, date: dateInput, time: timeInput });
       const message = await this.enhanceResponse(
         `Hmm, that address doesn't look quite right. Could you double-check the wallet address? It should start with "0x" and be 42 characters long.`,
         intent,
         "schedule_invalid_address",
         context,
-        { amount, address },
+        { amount, address: addressInput },
         sessionId,
         true,
         ["address"]
@@ -2720,20 +2917,51 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       return { message, intent };
     }
 
-    const normalizedAddress = addressValidation.normalizedAddress || address;
+    const normalizedAddress = addressValidation.normalizedAddress || addressInput;
+    const shortAddress =
+      normalizedAddress.length > 10
+        ? `${normalizedAddress.slice(0, 6)}...${normalizedAddress.slice(-4)}`
+        : normalizedAddress;
 
-    // Parse schedule time
-    const dateStr = date || "tomorrow";
-    const timeStr = time || "12:00 pm";
-    const scheduledTimestamp = parseScheduleTime(dateStr, timeStr);
-
-    if (!scheduledTimestamp) {
+    if (!dateInput) {
+      await this.persistScheduleDraft(sessionId, context, { amount, address: normalizedAddress, date: dateInput, time: timeInput });
       const message = await this.enhanceResponse(
-        `I have the amount ($${amount}) and address, but I need to know when to schedule this. What date and time would you like? For example, "tomorrow at 3pm" or "next Monday at 9am".`,
+        `Almost there! What exact day should I send the $${amount} payment to ${shortAddress}? You can say something like "July 12" or "next Monday".`,
+        intent,
+        "schedule_missing_date",
+        context,
+        { amount, address: normalizedAddress },
+        sessionId,
+        true,
+        ["date"]
+      );
+      return { message, intent };
+    }
+
+    if (!timeInput) {
+      await this.persistScheduleDraft(sessionId, context, { amount, address: normalizedAddress, date: dateInput, time: timeInput });
+      const message = await this.enhanceResponse(
+        `Great. And what time on ${dateInput} should it run? For example: "3:00 pm" or "09:30".`,
+        intent,
+        "schedule_missing_time",
+        context,
+        { amount, address: normalizedAddress, date: dateInput },
+        sessionId,
+        true,
+        ["time"]
+      );
+      return { message, intent };
+    }
+
+    const scheduledTimestamp = parseScheduleTime(dateInput, timeInput);
+    if (!scheduledTimestamp) {
+      await this.persistScheduleDraft(sessionId, context, { amount, address: normalizedAddress, date: dateInput, time: timeInput });
+      const message = await this.enhanceResponse(
+        `I couldn't interpret "${dateInput} at ${timeInput}". Could you rephrase the date and time?`,
         intent,
         "schedule_invalid_time",
         context,
-        { amount, address },
+        { amount, address: normalizedAddress },
         sessionId,
         true,
         ["date", "time"]
@@ -2741,21 +2969,20 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       return { message, intent };
     }
 
-    // Create scheduled payment
+    await this.clearScheduleDraft(sessionId, context);
+
     if (typeof window !== "undefined") {
-      const scheduledPayment = createScheduledPayment({
+      const scheduledPayment = await createScheduledPayment({
+        userId: context.userId,
+        walletId: context.walletId,
         amount,
         currency: "USDC",
         to: normalizedAddress,
         scheduledFor: scheduledTimestamp,
-        walletId: context.walletId,
-        walletAddress: context.walletAddress,
       });
 
-      const scheduledDate = new Date(scheduledTimestamp);
-      const formattedDate = scheduledDate.toLocaleString();
-
-      const baseMessage = `✅ Payment Scheduled!\n\nI've scheduled a payment of $${amount} USDC to ${normalizedAddress.substring(0, 6)}...${normalizedAddress.substring(38)}.\n\nScheduled for: ${formattedDate}\n\nI'll automatically execute this payment at the scheduled time. You can cancel it anytime before then.`;
+      const formattedDate = new Date(scheduledTimestamp).toLocaleString();
+      const baseMessage = `✅ Payment Scheduled!\n\nI've scheduled a payment of $${amount} USDC to ${shortAddress}.\n\nScheduled for: ${formattedDate}\n\nI'll automatically execute this payment at ${formattedDate}. You can cancel it anytime before then.`;
 
       const message = await this.enhanceResponse(
         baseMessage,
@@ -2782,7 +3009,13 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       "I've scheduled your payment. It will be executed automatically at the specified time.",
       intent,
       "schedule_payment",
-      context
+      context,
+      {
+        amount,
+        address: normalizedAddress,
+        scheduledFor: new Date(scheduledTimestamp).toLocaleString(),
+      },
+      sessionId
     );
 
     return { message, intent };
@@ -2790,69 +3023,172 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
 
   private static async handleSubscriptionIntent(
     intent: ParsedIntent,
-    context?: { hasWallet?: boolean; walletAddress?: string; walletId?: string }
+    context?: AIContext,
+    sessionId?: string,
+    conversationContext?: ConversationContext
   ): Promise<AIResponse> {
     if (!context?.hasWallet) {
       const message = await this.enhanceResponse(
         "Please create a wallet first to set up subscriptions.",
         intent,
         "subscription_no_wallet",
-        context
+        context,
+        undefined,
+        sessionId
       );
       return { message, intent };
     }
 
-    const amount = intent.entities.amount || "";
-    const merchant = (intent.entities as any).merchant || "subscription";
-    const frequency = (intent.entities as any).frequency || "monthly";
-    const time = intent.entities.time || "8:00 am";
-
-    // Construct nextChargeAt based on frequency
-    const now = Date.now();
-    let nextChargeAt = now + 24 * 60 * 60 * 1000; // Default: tomorrow
-    
-    if (frequency === "weekly") {
-      nextChargeAt = now + 7 * 24 * 60 * 60 * 1000;
-    } else if (frequency === "monthly") {
-      nextChargeAt = now + 30 * 24 * 60 * 60 * 1000;
+    if (!context.walletId || !context.userId) {
+      const message = await this.enhanceResponse(
+        "I need your wallet connected before setting up a subscription. Please reconnect your wallet or create one first.",
+        intent,
+        "subscription_missing_wallet",
+        context,
+        undefined,
+        sessionId
+      );
+      return { message, intent };
     }
 
-    if (typeof window !== 'undefined') {
-      const subscription = addSubscription({
+    const draft =
+      conversationContext?.pendingAction?.type === "subscription"
+        ? conversationContext.pendingAction.data || {}
+        : {};
+
+    let amount = intent.entities.amount ?? draft.amount;
+    let merchant = (intent.entities as any).merchant ?? draft.merchant;
+    let frequency = (intent.entities as any).frequency ?? draft.frequency ?? "monthly";
+    let dateInput =
+      typeof intent.entities.date === "string" && intent.entities.date.trim().length
+        ? intent.entities.date.trim()
+        : draft.date;
+    let timeInput =
+      typeof intent.entities.time === "string" && intent.entities.time.trim().length
+        ? intent.entities.time.trim()
+        : draft.time;
+
+    if (!amount) {
+      await this.persistSubscriptionDraft(sessionId, context, { amount, merchant, frequency, date: dateInput, time: timeInput });
+      const message = await this.enhanceResponse(
+        "How much should I charge each cycle?",
+        intent,
+        "subscription_missing_amount",
+        context,
+        { merchant },
+        sessionId,
+        true,
+        ["amount"]
+      );
+      return { message, intent };
+    }
+
+    if (!merchant) {
+      await this.persistSubscriptionDraft(sessionId, context, { amount, merchant, frequency, date: dateInput, time: timeInput });
+      const message = await this.enhanceResponse(
+        "Who is this subscription for? (e.g., Netflix, rent, payroll)",
+        intent,
+        "subscription_missing_merchant",
+        context,
+        { amount },
+        sessionId,
+        true,
+        ["merchant"]
+      );
+      return { message, intent };
+    }
+
+    if (!dateInput) {
+      await this.persistSubscriptionDraft(sessionId, context, { amount, merchant, frequency, date: dateInput, time: timeInput });
+      const message = await this.enhanceResponse(
+        `When should the first ${frequency} charge run?`,
+        intent,
+        "subscription_missing_start_date",
+        context,
+        { amount, merchant, frequency },
+        sessionId,
+        true,
+        ["date"]
+      );
+      return { message, intent };
+    }
+
+    if (!timeInput) {
+      await this.persistSubscriptionDraft(sessionId, context, { amount, merchant, frequency, date: dateInput, time: timeInput });
+      const message = await this.enhanceResponse(
+        `And what time on ${dateInput} should it run?`,
+        intent,
+        "subscription_missing_time",
+        context,
+        { amount, merchant, frequency, date: dateInput },
+        sessionId,
+        true,
+        ["time"]
+      );
+      return { message, intent };
+    }
+
+    const nextChargeAt = parseScheduleTime(dateInput, timeInput);
+    if (!nextChargeAt) {
+      await this.persistSubscriptionDraft(sessionId, context, { amount, merchant, frequency, date: dateInput, time: timeInput });
+      const message = await this.enhanceResponse(
+        `I couldn't interpret "${dateInput} at ${timeInput}". Could you rephrase the start date and time?`,
+        intent,
+        "subscription_invalid_time",
+        context,
+        { amount, merchant, frequency },
+        sessionId,
+        true,
+        ["date", "time"]
+      );
+      return { message, intent };
+    }
+
+    await this.clearSubscriptionDraft(sessionId, context);
+
+    if (typeof window !== "undefined") {
+      const subscription = await addSubscription({
+        userId: context.userId,
+        walletId: context.walletId,
         merchant,
-        amount: amount || "0",
+        amount,
         currency: "USDC",
         frequency,
         nextChargeAt,
         autoRenew: true,
-        remindBeforeMs: 2 * 24 * 60 * 60 * 1000, // 2 days (48 hours)
+        remindBeforeMs: 2 * 24 * 60 * 60 * 1000,
         paused: false,
       });
 
-      const nextChargeDate = new Date(nextChargeAt).toLocaleString();
-      const baseMessage = `✅ Subscription Created!\n\nI've set up a recurring subscription for ${merchant}:\n• Amount: $${amount || "0"} USDC\n• Frequency: ${frequency}\n• Next charge: ${nextChargeDate}\n• Auto-renew: Enabled\n\nI'll remind you 2 days before each renewal, and the payment will be processed automatically.`;
+      const nextChargeDate = new Date(subscription.nextChargeAt).toLocaleString();
+
+      const baseMessage = `✅ Subscription Created!\n\n${merchant}\nAmount: $${amount} USDC\nFrequency: ${frequency}\nNext charge: ${nextChargeDate}\n\nI'll remind you 2 days before each charge and auto-pay it for you.`;
 
       const message = await this.enhanceResponse(
         baseMessage,
         intent,
-        "create_subscription",
+        "subscription_created",
         context,
         {
           merchant,
-          amount: amount || "0",
+          amount,
           frequency,
           nextChargeDate,
-        }
+          subscriptionId: subscription.id,
+        },
+        sessionId
       );
 
       return { message, intent };
     }
 
     const message = await this.enhanceResponse(
-      `Subscription created for ${merchant}: ${amount || "0"} USDC, ${frequency}. You'll be reminded 2 days before renewal.`,
+      `Subscription created for ${merchant}: $${amount} USDC, ${frequency}. You'll be reminded 2 days before renewal.`,
       intent,
-      "create_subscription",
-      context
+      "subscription_created",
+      context,
+      { merchant, amount, frequency },
+      sessionId
     );
 
     return { message, intent };
@@ -2869,6 +3205,47 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
     };
   }
   
+  /**
+   * Handle location sharing intent
+   */
+  private static async handleLocationIntent(
+    intent: ParsedIntent,
+    context?: AIContext,
+    sessionId?: string
+  ): Promise<AIResponse> {
+    const coordinates = intent.entities.address;
+    const isDelivery = intent.entities.recipient === "delivery";
+    
+    // Generate response based on context
+    let message = "";
+    
+    if (isDelivery || intent.rawCommand.toLowerCase().includes("delivery") || intent.rawCommand.toLowerCase().includes("order")) {
+      // Delivery context
+      message = "Got it, I've saved your location for delivery tracking. What's your order number?";
+    } else if (intent.rawCommand.toLowerCase().includes("dispatcher") || intent.rawCommand.toLowerCase().includes("driver")) {
+      // Dispatcher context
+      message = "Location updated. I'll share this with the delivery team.";
+    } else {
+      // No clear context - ask what they need
+      message = "I see you've shared your location. Is this for a delivery, or something else?";
+    }
+    
+    // Enhance with AI if coordinates are present
+    if (coordinates) {
+      const enhanced = await this.enhanceResponse(
+        message,
+        intent,
+        "location_shared",
+        context,
+        { coordinates, isDelivery },
+        sessionId
+      );
+      return { message: enhanced, intent };
+    }
+    
+    return { message, intent };
+  }
+
   private static async handleHelpIntent(
     intent: ParsedIntent,
     context?: { hasWallet?: boolean; balance?: string; walletAddress?: string }
@@ -2967,7 +3344,7 @@ Just ask me naturally, like "Send $50 to Jake" or "What's my balance?" or "Sched
   
   private static async handleContactIntent(
     intent: ParsedIntent,
-    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string },
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string; userId?: string },
     sessionId?: string
   ): Promise<AIResponse> {
     if (typeof window === "undefined") {
@@ -2983,9 +3360,17 @@ Just ask me naturally, like "Send $50 to Jake" or "What's my balance?" or "Sched
     const lowerCommand = intent.rawCommand.toLowerCase();
     const { recipient: name, address, date: notes, time: tags } = intent.entities;
 
+    // Require userId for contact operations
+    if (!context?.userId) {
+      return {
+        message: "Please create a wallet first to manage contacts.",
+        intent,
+      };
+    }
+
     // List contacts
     if (lowerCommand.includes("list") || lowerCommand.includes("show") || lowerCommand.includes("my contacts")) {
-      const contacts = getContacts();
+      const contacts = await getContacts(context.userId);
       const message = formatContactsForAI(contacts);
       return { message, intent };
     }
@@ -2999,7 +3384,7 @@ Just ask me naturally, like "Send $50 to Jake" or "What's my balance?" or "Sched
         };
       }
 
-      const success = deleteContact(name);
+      const success = await deleteContact(context.userId, name);
       if (!success) {
         return {
           message: `I couldn't find a contact named "${name}". Want to see your contacts?`,
@@ -3040,7 +3425,7 @@ Just ask me naturally, like "Send $50 to Jake" or "What's my balance?" or "Sched
 
       try {
         const normalizedAddress = addressValidation.normalizedAddress || address;
-        const contact = saveContact(name, normalizedAddress, undefined, notes);
+        const contact = await saveContact(context.userId, name, normalizedAddress, undefined, notes);
         
         const shortAddr = `${normalizedAddress.substring(0, 6)}...${normalizedAddress.substring(38)}`;
         return {
@@ -3057,7 +3442,7 @@ Just ask me naturally, like "Send $50 to Jake" or "What's my balance?" or "Sched
 
     // Search contacts by name
     if (name) {
-      const contact = getContact(name);
+      const contact = await getContact(context.userId, name);
       if (!contact) {
         return {
           message: `I couldn't find a contact named "${name}". Want to see all your contacts?`,
@@ -3220,7 +3605,7 @@ Just ask me naturally, like "Send $50 to Jake" or "What's my balance?" or "Sched
    */
   private static async handleApproveTokenIntent(
     intent: ParsedIntent,
-    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string },
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string; userId?: string },
     sessionId?: string
   ): Promise<AIResponse> {
     if (typeof window === "undefined") {
@@ -3262,7 +3647,9 @@ Just ask me naturally, like "Send $50 to Jake" or "What's my balance?" or "Sched
 
     // Approve the token
     approveSuspiciousToken(transfer);
-    addSafeToken(transfer.tokenAddress);
+    if (context?.userId) {
+      await addSafeToken(context.userId, transfer.tokenAddress);
+    }
 
     const message = await this.enhanceResponse(
       `✅ Token Approved\n\n` +
@@ -3288,7 +3675,7 @@ Just ask me naturally, like "Send $50 to Jake" or "What's my balance?" or "Sched
    */
   private static async handleRejectTokenIntent(
     intent: ParsedIntent,
-    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string },
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string; userId?: string },
     sessionId?: string
   ): Promise<AIResponse> {
     if (typeof window === "undefined") {
@@ -3330,7 +3717,9 @@ Just ask me naturally, like "Send $50 to Jake" or "What's my balance?" or "Sched
 
     // Reject the token
     rejectSuspiciousToken(transfer);
-    addScamToken(transfer.tokenAddress);
+    if (context?.userId) {
+      await addScamToken(context.userId, transfer.tokenAddress);
+    }
 
     const message = await this.enhanceResponse(
       `❌ Token Rejected\n\n` +

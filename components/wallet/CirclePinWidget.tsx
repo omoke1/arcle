@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 
 interface CirclePinWidgetProps {
   appId: string;
@@ -36,7 +37,13 @@ export function CirclePinWidget({
     const initializeSDK = async () => {
       try {
         // Dynamically import the SDK (only on client side)
-        const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
+        // Note: This must be a dynamic import to avoid SSR issues
+        const sdkModule = await import("@circle-fin/w3s-pw-web-sdk");
+        const { W3SSdk } = sdkModule;
+        
+        if (!W3SSdk) {
+          throw new Error("W3SSdk not found in @circle-fin/w3s-pw-web-sdk module");
+        }
 
         if (!mounted) return;
 
@@ -169,21 +176,21 @@ Or get it from Circle Console:
 
   if (error) {
     return (
-      <div className="p-6 bg-red-50 border border-red-200 rounded-lg">
-        <h3 className="text-lg font-semibold text-red-800 mb-2">
+      <div className="p-6 bg-graphite/20 border border-graphite/50 rounded-lg">
+        <h3 className="text-lg font-semibold text-aurora mb-2">
           ❌ Error Setting Up Wallet
         </h3>
-        <p className="text-red-600">{error}</p>
+        <p className="text-soft-mist/70">{error}</p>
       </div>
     );
   }
 
   if (isLoading) {
     return (
-      <div className="p-6 bg-blue-50 border border-blue-200 rounded-lg">
+      <div className="p-6 bg-graphite/20 border border-graphite/50 rounded-lg">
         <div className="flex items-center space-x-3">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
-          <p className="text-blue-800">Loading Circle Security Widget...</p>
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-aurora"></div>
+          <p className="text-soft-mist/70">Loading Circle Security Widget...</p>
         </div>
       </div>
     );
@@ -192,12 +199,13 @@ Or get it from Circle Console:
   return (
     <div 
       ref={containerRef}
-      className="circle-pin-widget-container"
+      className="circle-pin-widget-container bg-carbon rounded-lg"
       style={{ minHeight: "400px", width: "100%" }}
     >
       {/* Circle SDK will inject the widget here */}
       <div 
         id="w3s-widget-container" 
+        className="w3s-widget-container"
         style={{ width: "100%", minHeight: "400px" }}
       />
     </div>
