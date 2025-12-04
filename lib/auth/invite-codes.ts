@@ -13,7 +13,7 @@ import { loadPreference, savePreference } from "@/lib/supabase-data";
 // Invite code batch metadata
 // When you generate a new batch of codes, update INVITE_BATCH_CREATED_AT
 // so that codes automatically expire 24 hours after creation if not used.
-const INVITE_BATCH_CREATED_AT = "2025-11-29T00:00:00.000Z";
+const INVITE_BATCH_CREATED_AT = "2025-12-04T16:14:55.978Z";
 const INVITE_CODE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function isInviteBatchExpired(): boolean {
@@ -42,16 +42,16 @@ function generateCode(): string {
 // - Each code can be used once
 // - Codes expire 24 hours after INVITE_BATCH_CREATED_AT if not used
 export const DAILY_INVITE_CODES: string[] = [
-  "K7ZP3N8Q", // Code 1
-  "H4G9XT27", // Code 2
-  "M8Q2VR5X", // Code 3
-  "S7C6DW3P", // Code 4
-  "B9Y4KU8T", // Code 5
-  "N3F7XZ5G", // Code 6
-  "Q2V8HM7C", // Code 7
-  "R6P3WY8D", // Code 8
-  "T5X8GN2K", // Code 9
-  "W7C2ZP9S", // Code 10
+  "22ZXUGBP", // Code 1
+  "ZMFLLHWX", // Code 2
+  "A8MT8TUS", // Code 3
+  "BM55C5SR", // Code 4
+  "VYQBGB8N", // Code 5
+  "5ZDCLQCH", // Code 6
+  "YJ6JXXFU", // Code 7
+  "RQ95BB9W", // Code 8
+  "MBS4XSCX", // Code 9
+  "9QCR9Y3H", // Code 10
 ];
 
 // Get all invite codes from environment or fallback to default
