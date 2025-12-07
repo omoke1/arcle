@@ -1,6 +1,6 @@
 "use client";
 
-import { Sun, Moon, Bell, User, ChevronDown, Settings, LogOut } from "lucide-react";
+import { Sun, Moon, Bell, User, ChevronDown, Settings, LogOut, Menu } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Layers2 } from "@/components/animate-ui/icons/layers-2";
@@ -58,8 +58,18 @@ export function TopBar({
 
   return (
     <div className="h-14 md:h-16 bg-carbon border-b border-carbon flex items-center justify-between px-3 md:px-6">
-      {/* Left: Tier Selector (ChatGPT-style position) */}
+      {/* Left: Mobile Menu Button + Tier Selector */}
       <div className="flex items-center gap-2 md:gap-3 h-full">
+        {/* Mobile Menu Button - Only show on mobile */}
+        {onToggleSidebar && (
+          <button
+            onClick={onToggleSidebar}
+            className="md:hidden p-2 rounded-lg text-soft-mist/70 hover:text-signal-white hover:bg-graphite/50 transition-colors flex items-center"
+            aria-label="Toggle sidebar"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        )}
         {/* Tier Selector - Positioned like ChatGPT dropdown */}
         {onTierChange && (
           <div className="flex items-center h-full">

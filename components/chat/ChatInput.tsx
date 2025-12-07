@@ -44,6 +44,7 @@ export function ChatInput({
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [isGettingLocation, setIsGettingLocation] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const plusButtonRef = useRef<HTMLButtonElement>(null);
   const stopRecognitionRef = useRef<(() => void) | null>(null);
@@ -58,6 +59,16 @@ export function ChatInput({
   // Determine voice support on client only to avoid SSR/CSR mismatch
   useEffect(() => {
     setVoiceSupported(isVoiceRecognitionSupported());
+  }, []);
+
+  // Detect mobile for BorderBeam size
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 640);
+    };
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -187,18 +198,16 @@ export function ChatInput({
         <div className="max-w-2xl mx-auto">
           <div className="relative rounded-full overflow-hidden">
             <div className="flex items-center gap-1.5 sm:gap-2 bg-graphite rounded-full px-2 sm:px-3 py-2 sm:py-2.5 relative">
-              {/* BorderBeam - Hidden on mobile to prevent layout issues */}
-              <div className="hidden sm:block">
-                <BorderBeam 
-                  size={250} 
-                  duration={12} 
-                  delay={0}
-                  borderWidth={1.5}
-                  colorFrom="#E9F28E"
-                  colorTo="rgba(233, 242, 142, 0.3)"
-                  className="rounded-full"
-                />
-              </div>
+              {/* BorderBeam - Smaller size on mobile, larger on desktop */}
+              <BorderBeam 
+                size={isMobile ? 150 : 250}
+                duration={12} 
+                delay={0}
+                borderWidth={1.5}
+                colorFrom="#E9F28E"
+                colorTo="rgba(233, 242, 142, 0.3)"
+                className="rounded-full"
+              />
             {/* Plus Icon */}
             <button
               ref={plusButtonRef}

@@ -87,11 +87,11 @@ export function AppSidebar({
           "bg-carbon border-r border-graphite/30 flex flex-col h-full transition-all duration-300 ease-in-out group",
           // Mobile: Fixed overlay, Desktop: Inline
           isMobile
-            ? "fixed left-0 top-0 z-50 h-full"
+            ? "fixed left-0 top-0 z-[60] h-screen"
             : "relative",
           // Width based on open state
           isOpen 
-            ? isMobile ? "w-64" : "w-64" 
+            ? isMobile ? "w-64 translate-x-0" : "w-64" 
             : isMobile ? "-translate-x-full w-64" : "w-16"
         )}
       >
