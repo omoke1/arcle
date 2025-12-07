@@ -3,7 +3,6 @@
 import { Sun, Moon, Bell, User, ChevronDown, Settings, LogOut } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { PanelLeft } from "@/components/animate-ui/icons/panel-left";
 import { Layers2 } from "@/components/animate-ui/icons/layers-2";
 import FloatingActionMenu from "@/components/ui/floating-action-menu";
 import { QuickActionsSheet } from "./QuickActionsSheet";
@@ -50,11 +49,8 @@ export function TopBar({
   onProfile,
 }: TopBarProps) {
   const [isDark, setIsDark] = useState(true);
-  const [activeTab, setActiveTab] = useState("Freelancer");
   const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
-
-  const tabs = ["Businesses", "Freelancer", "Trader", "Help"];
   
   const handleTemplateClick = () => {
     setIsQuickActionsOpen(true);
@@ -62,46 +58,14 @@ export function TopBar({
 
   return (
     <div className="h-14 md:h-16 bg-carbon border-b border-carbon flex items-center justify-between px-3 md:px-6">
-      {/* Left: Sidebar Toggle + Tier Selector */}
+      {/* Left: Tier Selector (ChatGPT-style position) */}
       <div className="flex items-center gap-2 md:gap-3 h-full">
-        {onToggleSidebar && (
-          <button
-            onClick={onToggleSidebar}
-            className="p-1.5 md:p-2 rounded-lg text-soft-mist/70 hover:text-signal-white hover:bg-graphite/50 transition-colors flex items-center"
-            aria-label="Toggle sidebar"
-          >
-            <PanelLeft 
-              className={cn(
-                "w-4 h-4 md:w-5 md:h-5 transition-transform duration-200",
-                !isSidebarOpen && "rotate-180"
-              )}
-            />
-          </button>
-        )}
-        {/* Tier Selector */}
+        {/* Tier Selector - Positioned like ChatGPT dropdown */}
         {onTierChange && (
           <div className="flex items-center h-full">
             <TierSelector selectedTier={selectedTier} onTierChange={onTierChange} />
           </div>
         )}
-      </div>
-
-      {/* Center: Navigation Tabs - Hidden on mobile */}
-      <div className="hidden md:flex items-center gap-1 bg-carbon rounded-lg p-1 border border-carbon h-full">
-        {tabs.map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={cn(
-              "px-3 md:px-4 py-1 md:py-1.5 rounded-md text-xs md:text-sm font-medium transition-all flex items-center",
-              activeTab === tab
-                ? "bg-aurora text-carbon shadow-sm"
-                : "text-soft-mist/70 hover:text-signal-white"
-            )}
-          >
-            {tab}
-          </button>
-        ))}
       </div>
 
       {/* Right: User Controls */}

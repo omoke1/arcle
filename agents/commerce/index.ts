@@ -7,19 +7,12 @@
  */
 
 import type { AgentRequest, AgentResponse } from '@/core/routing/types';
+import { getActiveVendors, createVendorOrder, type Vendor } from '@/lib/db/services/vendors';
 
 type CommerceCategory = "food" | "shopping" | "services";
 
-interface PartnerVendor {
-  id: string;
-  name: string;
-  category: CommerceCategory;
-  description: string;
-}
-
-// Temporary in-memory catalog of partner vendors/businesses.
-// In a later phase this can be backed by Supabase.
-const PARTNER_VENDORS: PartnerVendor[] = [
+// Fallback in-memory catalog (used if Supabase is not available)
+const FALLBACK_VENDORS = [
   {
     id: "food-urban-bites",
     name: "Urban Bites Kitchen",
@@ -82,55 +75,113 @@ class CommerceAgent {
     const amount = entities.amount;
     const currency = entities.currency || "USDC";
     const merchant = (entities as any).merchant || (entities as any).vendor;
+    const context = request.context || {};
 
     if (isOrder) {
+      // Try to get vendors from Supabase, fallback to in-memory list
+      let vendors: Vendor[] = [];
+      try {
+        vendors = await getActiveVendors();
+      } catch (error) {
+        console.warn('[CommerceAgent] Failed to fetch vendors from Supabase, using fallback');
+      }
+
       const lines: string[] = [];
 
       lines.push(
         "Got it – you want to place an order. I can help you pay one of our partner vendors or any other business using your ARCLE wallet."
       );
 
-      if (PARTNER_VENDORS.length) {
-        const byCategory: Record<CommerceCategory, PartnerVendor[]> = {
+      if (vendors.length > 0 || FALLBACK_VENDORS.length > 0) {
+        const vendorList = vendors.length > 0 ? vendors : FALLBACK_VENDORS;
+        const byCategory: Record<string, any[]> = {
           food: [],
           shopping: [],
           services: [],
+          other: [],
         };
-        for (const v of PARTNER_VENDORS) {
-          byCategory[v.category].push(v);
+        
+        for (const v of vendorList) {
+          const cat = (v.category || 'other').toLowerCase();
+          const category = cat === 'food' || cat === 'shopping' || cat === 'services' ? cat : 'other';
+          byCategory[category].push(v);
         }
 
-        const categoryOrder: CommerceCategory[] = ["food", "shopping", "services"];
+        const categoryOrder: string[] = ["food", "shopping", "services", "other"];
         lines.push("Here are some of our current partner vendors:");
         categoryOrder.forEach((cat) => {
           if (!byCategory[cat].length) return;
           const label =
-            cat === "food" ? "Food" : cat === "shopping" ? "Shopping" : "Services";
+            cat === "food" ? "Food" : cat === "shopping" ? "Shopping" : cat === "services" ? "Services" : "Other";
           lines.push(`**${label}**`);
-          byCategory[cat].forEach((v, idx) => {
-            lines.push(`- ${v.name} – ${v.description}`);
+          byCategory[cat].forEach((v) => {
+            const name = v.name || 'Unknown';
+            const desc = v.description || '';
+            lines.push(`- ${name}${desc ? ` – ${desc}` : ''}`);
           });
         });
 
         lines.push(
-          "Tell me **what you want to order** (for example: a meal, groceries, a subscription, or a service), **which vendor** you’d like to pay, and the **amount**.\n\nExamples:\n" +
+          "Tell me **what you want to order** (for example: a meal, groceries, a subscription, or a service), **which vendor** you'd like to pay, and the **amount**.\n\nExamples:\n" +
             "- \"Order from Night Owl Pizza for $25\"\n" +
             "- \"Buy tools from Arc Market for $40\"\n" +
             "- \"Pay a service provider $100\""
         );
       } else {
         lines.push(
-          "I don’t have specific partner vendors configured yet, but I can still help you pay any business. Just tell me who you’re paying and for what."
+          "I don't have specific partner vendors configured yet, but I can still help you pay any business. Just tell me who you're paying and for what."
         );
+      }
+
+      // Check if we have enough info to create an order
+      const hasVendor = merchant || (entities as any).vendorId || (entities as any).vendor_id;
+      const hasItems = (entities as any).items || (entities as any).orderItems;
+      const hasDeliveryLocation = (entities as any).deliveryAddress || (entities as any).delivery_location;
+      const userId = (context as any)?.userId;
+
+      if (amount && hasVendor && userId) {
+        // We have enough info - offer to create the order
+        lines.push(
+          `\n✅ I have all the details! I can create this order now:\n` +
+          `- Vendor: ${merchant || 'Selected vendor'}\n` +
+          `- Amount: ${amount} ${currency}\n` +
+          (hasDeliveryLocation ? `- Delivery location: Provided\n` : '') +
+          `\nSay "confirm" or "yes" to create the order and process payment.`
+        );
+
+        return {
+          success: true,
+          message: lines.join("\n\n"),
+          agent: "commerce",
+          action: "place-order",
+          requiresConfirmation: true,
+          data: {
+            type: "order",
+            amount,
+            currency,
+            merchant: merchant || hasVendor,
+            vendorId: (entities as any).vendorId || (entities as any).vendor_id,
+            items: hasItems || [{ name: 'Order', quantity: 1, price: amount }],
+            deliveryAddress: hasDeliveryLocation,
+            userId: userId,
+            rawEntities: entities,
+          },
+        };
       }
 
       if (!amount) {
         lines.push(
           "To get started, tell me the **amount** for this order and who you are paying (name or business)."
         );
+      } else if (!hasVendor) {
+        lines.push(
+          `I see an order amount of **${amount} ${currency}**. Which vendor would you like to order from?`
+        );
       } else {
         lines.push(
-          `I see an order amount of **${amount} ${currency}**. Confirm who you want to pay and what the order is for, and I’ll prepare the payment or suggest a payment link/invoice if that fits better.`
+          `I see an order amount of **${amount} ${currency}** for **${merchant}**. ` +
+          (hasDeliveryLocation ? 'Delivery location provided. ' : 'Please share your delivery location. ') +
+          `Say "confirm" to proceed.`
         );
       }
 
@@ -145,7 +196,7 @@ class CommerceAgent {
           amount: amount || null,
           currency,
           merchant: merchant || null,
-          vendors: PARTNER_VENDORS,
+          vendors: vendors.length > 0 ? vendors : FALLBACK_VENDORS,
           rawEntities: entities,
         },
       };

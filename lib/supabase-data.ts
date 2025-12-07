@@ -151,11 +151,27 @@ export async function createSession(input: {
   agentState?: Record<string, any> | null;
 }): Promise<SupabaseSession> {
   const supabase = typeof window === "undefined" ? getSupabaseAdmin() : getSupabaseClient();
+  
+  // Convert Circle user ID to Supabase UUID if needed
+  // UUID format: 8-4-4-4-12 hex characters
+  const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.userId);
+  let supabaseUserId = input.userId;
+  
+  if (!isUUID) {
+    // This is a Circle user ID, convert it to Supabase UUID
+    try {
+      supabaseUserId = await getOrCreateSupabaseUser(input.userId);
+    } catch (error) {
+      console.error('[Supabase] Failed to get/create Supabase user:', error);
+      throw new Error(`[Supabase] Failed to resolve user ID: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+  
   const { data, error } = await supabase
     .from("sessions")
     .insert({
       id: input.id,
-      user_id: input.userId,
+      user_id: supabaseUserId,
       agent_state: input.agentState ?? null,
     })
     .select()
@@ -241,7 +257,7 @@ export async function loadMessages(sessionId: string, options: { limit?: number 
  * 
  * Note: User creation must go through an API route to bypass RLS, or we use admin client
  */
-async function getOrCreateSupabaseUser(circleUserId: string, walletAddress?: string): Promise<string> {
+export async function getOrCreateSupabaseUser(circleUserId: string, walletAddress?: string): Promise<string> {
   // Always use API route for user creation to bypass RLS (secure)
   if (typeof window !== "undefined") {
     // Client-side: use API route to create user (bypasses RLS)

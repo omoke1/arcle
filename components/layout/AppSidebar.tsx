@@ -11,7 +11,8 @@ import {
   HelpCircle,
   LogOut,
   X,
-  Columns2
+  Columns2,
+  PanelLeft
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Sidebar } from "./Sidebar";
@@ -94,30 +95,40 @@ export function AppSidebar({
             : isMobile ? "-translate-x-full w-64" : "w-16"
         )}
       >
-        {/* Logo - Only show on main view, left aligned, shows split icon on hover when collapsed, clickable to toggle */}
+        {/* Logo - Only show on main view, left aligned, shows split icon on hover when collapsed */}
         {currentView === "main" && (
-          <button
-            onClick={onToggle}
-            className={cn(
-              "p-4 border-b border-carbon flex-shrink-0 flex items-center transition-all duration-300 relative w-full cursor-pointer hover:bg-graphite/20",
-              isOpen ? "justify-start" : "justify-center"
+          <div className="p-4 border-b border-carbon flex-shrink-0 flex items-center justify-between transition-all duration-300 relative w-full">
+            {/* When collapsed: Show toggle icon button */}
+            {!isOpen ? (
+              <button
+                onClick={onToggle}
+                className="w-full flex items-center justify-center transition-all duration-300 relative cursor-pointer hover:bg-graphite/50 rounded-lg p-2 group"
+                aria-label="Open sidebar"
+              >
+                {/* Toggle icon - Always visible when collapsed */}
+                <PanelLeft className="w-5 h-5 text-signal-white transition-transform duration-200 rotate-180" />
+              </button>
+            ) : (
+              <>
+                {/* When expanded: Show logo */}
+                <div className={cn(
+                  "transition-opacity duration-300 flex items-center justify-start"
+                )}>
+                  <ArcleLogoIcon size={96} />
+                </div>
+                {/* Collapse Button - Top right of sidebar when expanded */}
+                {onToggle && (
+                  <button
+                    onClick={onToggle}
+                    className="p-1.5 rounded-lg text-soft-mist/70 hover:text-signal-white hover:bg-graphite/50 transition-colors flex items-center"
+                    aria-label="Collapse sidebar"
+                  >
+                    <PanelLeft className="w-4 h-4 transition-transform duration-200" />
+                  </button>
+                )}
+              </>
             )}
-            aria-label={isOpen ? "Collapse sidebar" : "Expand sidebar"}
-          >
-            {/* Logo - Hidden on hover when collapsed */}
-            <div className={cn(
-              "transition-opacity duration-300",
-              !isOpen && "group-hover:opacity-0 group-hover:pointer-events-none"
-            )}>
-              <ArcleLogoIcon size={isOpen ? 48 : 36} />
-            </div>
-            {/* Split View Icon - Shows on hover when collapsed */}
-            {!isOpen && (
-              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none group-hover:pointer-events-auto">
-                <SplitViewIcon size={36} />
-              </div>
-            )}
-          </button>
+          </div>
         )}
 
         {/* Navigation Sections */}

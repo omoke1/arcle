@@ -7,6 +7,7 @@ import { startVoiceRecognition, isVoiceRecognitionSupported } from "@/lib/voice/
 import { SoundWaveIcon } from "@/components/ui/SoundWaveIcon";
 import { AttachmentMenu } from "./AttachmentMenu";
 import { QRCodeScanner } from "./QRCodeScanner";
+import { BorderBeam } from "@/components/ui/border-beam";
 
 interface ChatInputProps {
   onSendMessage: (message: string, replyTo?: string) => void;
@@ -150,7 +151,8 @@ export function ChatInput({
       onSubmit={handleSubmit}
       className={cn(
         "bg-carbon/95 backdrop-blur-sm relative",
-        !isCentered && "border-t border-graphite/50"
+        !isCentered && "border-t border-graphite/50",
+        "w-full"
       )}
     >
       {/* Reply Preview */}
@@ -181,9 +183,22 @@ export function ChatInput({
       )}
       
       {/* Main Input Bar - Centered and Compact */}
-      <div className="px-2 sm:px-4 py-3 sm:py-4">
+      <div className="px-2 sm:px-4 py-3 sm:py-4 pb-safe">
         <div className="max-w-2xl mx-auto">
-          <div className="flex items-center gap-1.5 sm:gap-2 bg-graphite rounded-full px-2 sm:px-3 py-2 sm:py-2.5">
+          <div className="relative rounded-full overflow-hidden">
+            <div className="flex items-center gap-1.5 sm:gap-2 bg-graphite rounded-full px-2 sm:px-3 py-2 sm:py-2.5 relative">
+              {/* BorderBeam - Hidden on mobile to prevent layout issues */}
+              <div className="hidden sm:block">
+                <BorderBeam 
+                  size={250} 
+                  duration={12} 
+                  delay={0}
+                  borderWidth={1.5}
+                  colorFrom="#E9F28E"
+                  colorTo="rgba(233, 242, 142, 0.3)"
+                  className="rounded-full"
+                />
+              </div>
             {/* Plus Icon */}
             <button
               ref={plusButtonRef}
@@ -224,8 +239,10 @@ export function ChatInput({
                 "flex-1 bg-transparent border-none outline-none",
                 "text-signal-white placeholder:text-soft-mist/50",
                 "text-sm sm:text-[15px] leading-6",
-                "disabled:opacity-50 disabled:cursor-not-allowed"
+                "disabled:opacity-50 disabled:cursor-not-allowed",
+                "touch-manipulation" // Prevent double-tap zoom on mobile
               )}
+            style={{ fontSize: '16px' }} // Prevent iOS zoom on focus
             />
 
             {/* Camera Icon (when empty) or Send Icon (when user has typed) */}
@@ -323,6 +340,7 @@ export function ChatInput({
                 <SoundWaveIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-carbon" />
               </button>
             )}
+            </div>
           </div>
         </div>
       </div>

@@ -60,15 +60,15 @@ export function TierSelector({ selectedTier, onTierChange }: TierSelectorProps) 
 
   return (
     <div className="relative flex items-center h-full" ref={dropdownRef}>
-      {/* Header Button */}
+      {/* Header Button - ChatGPT-style */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-sm font-medium text-signal-white hover:bg-graphite/50 transition-colors h-full"
+        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm md:text-base font-medium text-signal-white hover:bg-graphite/50 transition-colors h-full"
       >
         <span>{selectedOption.name}</span>
         <ChevronDown
           className={cn(
-            "w-3.5 h-3.5 transition-transform duration-200",
+            "w-4 h-4 transition-transform duration-200",
             isOpen && "rotate-180"
           )}
         />

@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import { ArcleLogoIcon } from "@/components/ui/ArcleLogoIcon";
 
 interface WelcomeScreenProps {
   userName?: string;
@@ -10,26 +10,10 @@ interface WelcomeScreenProps {
 export function WelcomeScreen({ userName, onStartChat }: WelcomeScreenProps) {
   return (
     <div className="flex flex-col items-center px-4 sm:px-6 bg-carbon">
-      {/* Logo Image - Centered at top */}
+      {/* Logo Icon - Centered at top */}
       <div className="mb-6 sm:mb-8">
-        <div className="relative w-[84px] h-[84px] mx-auto">
-          <Image
-            src="/logo.png"
-            alt="ARCLE Logo"
-            width={84}
-            height={84}
-            className="object-contain w-full h-full"
-            priority
-            unoptimized
-            style={{
-              maxWidth: "100%",
-              height: "auto",
-            }}
-            onError={(e) => {
-              // Fallback if image doesn't exist - hide the broken image
-              (e.target as HTMLImageElement).style.display = "none";
-            }}
-          />
+        <div className="flex justify-center">
+          <ArcleLogoIcon size={160} />
         </div>
       </div>
 

@@ -277,6 +277,87 @@ export async function updateVendorOrderStatus(params: {
 }
 
 /**
+ * Get vendor order by ID.
+ */
+export async function getVendorOrderById(id: string): Promise<VendorOrder | null> {
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from('vendor_orders')
+    .select('*')
+    .eq('id', id)
+    .single();
+
+  if (error) {
+    if (error.code === 'PGRST116') {
+      return null;
+    }
+    console.error('[Vendors Service] Error fetching vendor order by id:', error);
+    return null;
+  }
+
+  return data as VendorOrder;
+}
+
+/**
+ * Get vendor order by order number.
+ */
+export async function getVendorOrderByNumber(order_number: string): Promise<VendorOrder | null> {
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from('vendor_orders')
+    .select('*')
+    .eq('order_number', order_number)
+    .single();
+
+  if (error) {
+    if (error.code === 'PGRST116') {
+      return null;
+    }
+    console.error('[Vendors Service] Error fetching vendor order by number:', error);
+    return null;
+  }
+
+  return data as VendorOrder;
+}
+
+/**
+ * Get orders for a vendor.
+ */
+export async function getVendorOrders(
+  vendor_id: string,
+  options?: { status?: VendorOrderStatus; limit?: number }
+): Promise<VendorOrder[]> {
+  const supabase = getSupabaseClient();
+
+  let query = supabase
+    .from('vendor_orders')
+    .select('*')
+    .eq('vendor_id', vendor_id)
+    .order('created_at', { ascending: false });
+
+  if (options?.status) {
+    query = query.eq('status', options.status);
+  }
+
+  if (options?.limit) {
+    query = query.limit(options.limit);
+  } else {
+    query = query.limit(50); // Default limit
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error('[Vendors Service] Error fetching vendor orders:', error);
+    return [];
+  }
+
+  return (data as VendorOrder[]) || [];
+}
+
+/**
  * Get recent orders for a user.
  */
 export async function getUserVendorOrders(

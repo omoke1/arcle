@@ -38,6 +38,14 @@ const AGENT_ROUTES: AgentRoute[] = [
   { intent: ['order', 'purchase', 'buy'], agent: 'commerce', priority: 1 },
   { intent: ['delivery', 'shipment'], agent: 'commerce', priority: 2 },
   
+  // Dispatch
+  { intent: ['dispatch', 'assign rider', 'track delivery'], agent: 'dispatch', priority: 1 },
+  { intent: ['rider', 'courier', 'delivery status'], agent: 'dispatch', priority: 2 },
+  
+  // Vendor
+  { intent: ['vendor inventory', 'vendor menu', 'accept order', 'mark ready'], agent: 'vendor', priority: 1 },
+  { intent: ['order status', 'vendor order'], agent: 'vendor', priority: 2 },
+  
   // Insights
   { intent: ['balance', 'analytics', 'report'], agent: 'insights', priority: 1 },
   { intent: ['spending', 'transactions', 'history'], agent: 'insights', priority: 1 },
@@ -159,6 +167,8 @@ export async function getAvailableAgents(): Promise<string[]> {
     'defi',
     'fx',
     'commerce',
+    'dispatch',
+    'vendor',
     'insights',
     'merchant',
     'compliance',

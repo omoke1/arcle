@@ -35,6 +35,23 @@ CREATE TABLE IF NOT EXISTS public.vendor_items (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now())
 );
 
+-- Dispatchers/Riders Table (created before vendor_orders to satisfy FK constraint)
+CREATE TABLE IF NOT EXISTS public.dispatchers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  phone TEXT,
+  email TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  is_available BOOLEAN NOT NULL DEFAULT true,
+  current_latitude DECIMAL(10, 8), -- Current location
+  current_longitude DECIMAL(11, 8),
+  current_location_updated_at TIMESTAMPTZ,
+  region TEXT, -- Preferred service region
+  metadata JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now())
+);
+
 -- Vendor Orders Table
 CREATE TABLE IF NOT EXISTS public.vendor_orders (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -56,23 +73,6 @@ CREATE TABLE IF NOT EXISTS public.vendor_orders (
   estimated_delivery_time TIMESTAMPTZ,
   delivered_at TIMESTAMPTZ,
   metadata JSONB, -- Store special instructions, customer notes, etc.
-  created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now())
-);
-
--- Dispatchers/Riders Table
-CREATE TABLE IF NOT EXISTS public.dispatchers (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name TEXT NOT NULL,
-  phone TEXT,
-  email TEXT,
-  is_active BOOLEAN NOT NULL DEFAULT true,
-  is_available BOOLEAN NOT NULL DEFAULT true,
-  current_latitude DECIMAL(10, 8), -- Current location
-  current_longitude DECIMAL(11, 8),
-  current_location_updated_at TIMESTAMPTZ,
-  region TEXT, -- Preferred service region
-  metadata JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now())
 );
