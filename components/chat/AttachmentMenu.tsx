@@ -34,6 +34,16 @@ export function AttachmentMenu({
   const [highlightedItem, setHighlightedItem] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 640);
+    };
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -197,9 +207,9 @@ export function AttachmentMenu({
     let top = rect.bottom + 8;
     let left = inputBar ? inputBar.left : rect.left;
     
-    // Ensure menu doesn't go off-screen
-    const menuWidth = 220; // min-w-[220px]
-    const menuHeight = 300; // Approximate max height
+    // Responsive bounds
+    const menuWidth = isMobile ? Math.min(320, window.innerWidth - 32) : 240;
+    const menuHeight = isMobile ? 360 : 320;
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     
@@ -225,9 +235,16 @@ export function AttachmentMenu({
   const getMoreMenuPosition = () => {
     if (!menuRef.current) return { top: 0, left: 0 };
     const rect = menuRef.current.getBoundingClientRect();
+    // On mobile, stack below the main menu; on desktop, align to the right.
+    if (isMobile) {
+      return {
+        top: rect.bottom + 8,
+        left: rect.left,
+      };
+    }
     return {
       top: rect.top,
-      left: rect.right - 8, // Slight overlap as shown in image
+      left: rect.right - 8,
     };
   };
 
@@ -239,10 +256,11 @@ export function AttachmentMenu({
       {/* Main Menu */}
       <div
         ref={menuRef}
-        className="fixed z-[9999] bg-graphite border border-graphite/60 rounded-xl shadow-lg py-1.5 min-w-[220px] pointer-events-auto"
+        className="fixed z-[9999] bg-graphite border border-graphite/60 rounded-xl shadow-lg py-1.5 min-w-[220px] max-w-[90vw] max-h-[70vh] overflow-y-auto pointer-events-auto"
         style={{
           top: `${menuPosition.top}px`,
           left: `${menuPosition.left}px`,
+          width: isMobile ? "min(320px, 90vw)" : "240px",
         }}
         onMouseDown={(e) => {
           e.preventDefault();
@@ -290,10 +308,11 @@ export function AttachmentMenu({
       {showMoreMenu && (
         <div
           ref={moreMenuRef}
-          className="fixed z-[9999] bg-graphite border border-graphite/60 rounded-xl shadow-lg py-1.5 min-w-[220px]"
+          className="fixed z-[9999] bg-graphite border border-graphite/60 rounded-xl shadow-lg py-1.5 min-w-[220px] max-w-[90vw] max-h-[70vh] overflow-y-auto"
           style={{
             top: `${moreMenuPosition.top}px`,
             left: `${moreMenuPosition.left}px`,
+            width: isMobile ? "min(320px, 90vw)" : "240px",
           }}
           onMouseEnter={() => setShowMoreMenu(true)}
           onMouseLeave={() => setShowMoreMenu(false)}

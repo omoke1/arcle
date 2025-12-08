@@ -197,7 +197,7 @@ export function ChatInput({
       <div className="px-2 sm:px-4 py-3 sm:py-4 pb-safe">
         <div className="max-w-2xl mx-auto">
           <div className="relative rounded-full overflow-hidden">
-            <div className="flex items-center gap-1.5 sm:gap-2 bg-graphite rounded-full px-2 sm:px-3 py-2 sm:py-2.5 relative">
+            <div className="flex items-center gap-2 sm:gap-3 bg-graphite rounded-full px-2.5 sm:px-3.5 py-2 sm:py-2.5 relative">
               {/* BorderBeam - Smaller size on mobile, larger on desktop */}
               <BorderBeam 
                 size={isMobile ? 150 : 250}
@@ -256,7 +256,7 @@ export function ChatInput({
 
             {/* Camera Icon (when empty) or Send Icon (when user has typed) */}
             {!isListening && (
-              <>
+              <div className="flex items-center gap-2 sm:gap-3">
                 {hasText ? (
                   <button
                     type="button"
@@ -329,7 +329,7 @@ export function ChatInput({
                     </button>
                   </>
                 )}
-              </>
+              </div>
             )}
 
             {/* Sound Wave Button (when listening) */}

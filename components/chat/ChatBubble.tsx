@@ -70,6 +70,15 @@ export function ChatBubble({
   const startYRef = useRef<number>(0);
   const SWIPE_THRESHOLD = 50; // Minimum pixels to trigger reply
   const MAX_SWIPE = 80; // Maximum swipe distance
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () =>
+      setIsMobile(typeof window !== "undefined" && window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
 
   // Reset swipe on message change
   useEffect(() => {
@@ -78,6 +87,7 @@ export function ChatBubble({
   }, [messageId]);
 
   const handleStart = (clientX: number, clientY: number) => {
+    if (isMobile) return; // disable swipe on mobile to allow normal scroll
     if (isPending || !onReply || !messageId) return;
     startXRef.current = clientX;
     startYRef.current = clientY;
@@ -122,11 +132,13 @@ export function ChatBubble({
 
   // Touch handlers
   const handleTouchStart = (e: React.TouchEvent) => {
+    if (isMobile) return;
     const touch = e.touches[0];
     handleStart(touch.clientX, touch.clientY);
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
+    if (isMobile) return;
     if (!isDragging) return;
     e.preventDefault(); // Prevent scrolling while swiping
     const touch = e.touches[0];
@@ -134,6 +146,7 @@ export function ChatBubble({
   };
 
   const handleTouchEnd = () => {
+    if (isMobile) return;
     handleEnd();
   };
 
@@ -251,7 +264,7 @@ export function ChatBubble({
         className={cn(
           "max-w-[80%] sm:max-w-[70%] md:max-w-[60%] flex flex-col relative",
           isUser ? "items-end" : "items-start",
-          "touch-none select-none", // Prevent text selection during swipe
+          !isMobile && "touch-none select-none", // allow vertical scroll on mobile
           isDragging && "transition-none" // Disable transitions during drag
         )}
         style={{
@@ -265,6 +278,13 @@ export function ChatBubble({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp} // Cancel drag if mouse leaves
+        onClick={() => {
+          // On mobile, tap to reply instead of swipe
+          if (isMobile && onReply && messageId) {
+            onReply(messageId);
+            return;
+          }
+        }}
       >
         <div
           className={cn(
