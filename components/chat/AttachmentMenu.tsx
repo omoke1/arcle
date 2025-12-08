@@ -208,11 +208,10 @@ export function AttachmentMenu({
     let left = inputBar ? inputBar.left : rect.left;
     
     // Responsive bounds
-    const menuWidth = isMobile ? Math.min(320, window.innerWidth - 32) : 240;
-    const menuHeight = isMobile ? 360 : 320;
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
-    
+    const menuWidth = isMobile ? Math.min(320, viewportWidth - 32) : 240;
+    const menuHeight = Math.min(isMobile ? 320 : 320, Math.floor(viewportHeight * 0.5));
     // Adjust if menu would go off right edge
     if (left + menuWidth > viewportWidth) {
       left = viewportWidth - menuWidth - 16; // 16px padding from edge
