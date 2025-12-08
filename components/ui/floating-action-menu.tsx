@@ -86,11 +86,13 @@ const FloatingActionMenu = ({
                 delay: 0.1,
               }}
               className={cn(
-                "absolute z-50",
-                showToggleButton ? "bottom-10 right-0 mb-2" : "top-full right-0 mt-2"
+                "absolute z-50 w-[min(90vw,340px)] max-h-[70vh] overflow-y-auto max-w-[90vw]",
+                showToggleButton ? "bottom-10 right-0 mb-2" : "top-full right-0 mt-2",
+                // Nudge inside viewport on very small screens
+                "sm:right-0 sm:left-auto right-2"
               )}
             >
-              <div className="flex flex-col items-end gap-2">
+              <div className="flex flex-col items-end gap-2 max-w-[90vw]">
                 {options.map((option, index) => (
                   <motion.div
                     key={index}
@@ -101,7 +103,7 @@ const FloatingActionMenu = ({
                       duration: 0.3,
                       delay: index * 0.05,
                     }}
-                  >
+                    >
                     <Button
                       onClick={() => {
                         option.onClick();
@@ -112,7 +114,7 @@ const FloatingActionMenu = ({
                         }
                       }}
                       size="sm"
-                      className="flex items-center gap-2 bg-[#11111198] hover:bg-[#111111d1] shadow-[0_0_20px_rgba(0,0,0,0.2)] border-none rounded-xl backdrop-blur-sm text-white justify-start w-full"
+                      className="flex items-center gap-2 bg-[#11111198] hover:bg-[#111111d1] shadow-[0_0_20px_rgba(0,0,0,0.2)] border-none rounded-xl backdrop-blur-sm text-white justify-start w-full max-w-[320px]"
                     >
                       {option.Icon}
                       <span>{option.label}</span>

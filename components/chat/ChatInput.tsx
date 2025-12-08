@@ -213,7 +213,7 @@ export function ChatInput({
               ref={plusButtonRef}
               type="button"
               disabled={disabled}
-              className="flex-shrink-0 text-signal-white hover:text-aurora transition-colors disabled:opacity-50 cursor-pointer p-1"
+              className="flex-shrink-0 text-signal-white hover:text-aurora transition-colors disabled:opacity-50 cursor-pointer w-10 h-10 rounded-full bg-graphite/80 border border-graphite/50 flex items-center justify-center"
               onClick={handlePlusClick}
               onMouseDown={(e) => {
                 // Prevent form submission when clicking plus

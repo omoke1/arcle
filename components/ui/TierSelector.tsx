@@ -63,7 +63,7 @@ export function TierSelector({ selectedTier, onTierChange }: TierSelectorProps) 
       {/* Header Button - ChatGPT-style */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm md:text-base font-medium text-signal-white hover:bg-graphite/50 transition-colors h-full"
+        className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm md:text-base font-medium text-signal-white hover:bg-graphite/50 transition-colors h-full min-w-[84px]"
       >
         <span>{selectedOption.name}</span>
         <ChevronDown
@@ -76,7 +76,7 @@ export function TierSelector({ selectedTier, onTierChange }: TierSelectorProps) 
 
       {/* Dropdown Panel */}
       {isOpen && (
-        <div className="absolute top-full left-0 mt-2 w-64 bg-graphite border border-graphite/60 rounded-xl shadow-lg overflow-hidden z-50">
+        <div className="absolute top-full left-0 mt-2 w-[90vw] max-w-xs sm:w-64 bg-graphite border border-graphite/60 rounded-xl shadow-lg overflow-hidden z-50 max-h-[60vh] overflow-y-auto">
           {tierOptions.map((option) => {
             const isSelected = option.id === selectedTier;
 
@@ -88,20 +88,20 @@ export function TierSelector({ selectedTier, onTierChange }: TierSelectorProps) 
                   setIsOpen(false);
                 }}
                 className={cn(
-                  "w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-graphite/70 transition-colors",
+                  "w-full flex items-start gap-3 px-3 sm:px-4 py-3 text-left hover:bg-graphite/70 transition-colors",
                   isSelected && "bg-graphite/50"
                 )}
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2 mb-1">
-                    <span className="text-sm font-medium text-signal-white">
+                    <span className="text-sm sm:text-base font-medium text-signal-white">
                       {option.name}
                     </span>
                     {isSelected && (
                       <Check className="w-4 h-4 text-signal-white flex-shrink-0" />
                     )}
                   </div>
-                  <p className="text-xs text-soft-mist/70 leading-relaxed">
+                  <p className="text-xs sm:text-sm text-soft-mist/70 leading-relaxed">
                     {option.description}
                   </p>
                 </div>
