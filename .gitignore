@@ -49,8 +49,6 @@ next-env.d.ts
 # Cursor folder - exclude completely
 .cursor/
 
-# Markdown files - exclude all .md files
-*.md
 
 # Sensitive files - NEVER commit these
 wallet-info.json
@@ -60,3 +58,5 @@ entity-secret-recovery.dat
 # Invite code usage data - NEVER commit used codes
 /data/
 data/used-invite-codes.json
+
+.kiro
