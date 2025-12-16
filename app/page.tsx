@@ -103,7 +103,7 @@ export default function Home() {
 
   const handleEmailOTPSuccess = (result: any) => {
     console.log("Email OTP verified successfully:", result);
-    
+
     // Extract user credentials from the W3S SDK result
     // The SDK should return userId, userToken, and encryptionKey after successful OTP verification
     if (result && result.userId) {
@@ -172,7 +172,7 @@ export default function Home() {
       const response = await fetch('/api/auth/verify-invite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           code: inviteCode.trim(),
           circleUserId: circleAuthData?.userId,
           circleUserToken: circleAuthData?.userToken,
@@ -185,7 +185,7 @@ export default function Home() {
       if (data.valid) {
         setVerificationStatus('success');
         await grantAccess(inviteCode.trim());
-        
+
         // Save Circle credentials to Supabase if we have them
         if (circleAuthData) {
           try {
@@ -198,7 +198,7 @@ export default function Home() {
             console.error("Failed to save Circle credentials:", error);
           }
         }
-        
+
         // Redirect after short delay
         setTimeout(() => {
           setShowInviteModal(false);
@@ -227,20 +227,20 @@ export default function Home() {
     if (typeof window !== 'undefined') {
       const checkAutoLogin = async () => {
         const hasAccess = await hasValidAccess();
-        
+
         // Try to load wallet data from Supabase
         try {
           // Try to get userId from credentials first
           const credentials = await loadUserCredentials("current").catch(() => null);
           let userId: string | null = null;
-          
+
           if (credentials) {
             // Try to get current user ID from a preference
             const { loadPreference } = await import("@/lib/supabase-data");
             const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
             userId = currentUserPref?.value || null;
           }
-          
+
           // Migration fallback: try localStorage
           if (!userId) {
             const legacyUserId = localStorage.getItem('arcle_user_id');
@@ -248,7 +248,7 @@ export default function Home() {
               userId = legacyUserId;
             }
           }
-          
+
           if (userId) {
             const walletData = await loadWalletData(userId);
             if (walletData && walletData.walletId && walletData.walletAddress) {
@@ -259,11 +259,11 @@ export default function Home() {
               }
             }
           }
-          
+
           // Migration fallback: check localStorage
           const storedWalletId = localStorage.getItem('arcle_wallet_id');
           const storedWalletAddress = localStorage.getItem('arcle_wallet_address');
-          
+
           // If user has access and wallet exists, auto-login
           if (hasAccess && storedWalletId && storedWalletAddress) {
             router.push("/chat");
@@ -274,13 +274,13 @@ export default function Home() {
           const storedWalletId = localStorage.getItem('arcle_wallet_id');
           const storedWalletAddress = localStorage.getItem('arcle_wallet_address');
           const hasAccess = await hasValidAccess();
-          
+
           if (hasAccess && storedWalletId && storedWalletAddress) {
             router.push("/chat");
           }
         }
       };
-      
+
       checkAutoLogin();
     }
   }, [router]);
@@ -301,17 +301,15 @@ export default function Home() {
       style={{ backgroundColor: designTokens.carbon }}
     >
       <div
-        className={`w-full max-w-5xl mb-10 transition-all duration-1500 ease-out ${
-          showContent ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-        }`}
+        className={`w-full max-w-5xl mb-10 transition-all duration-1500 ease-out ${showContent ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+          }`}
       >
         <BorderBeamDemo />
       </div>
 
       <div
-        className={`transition-all duration-1500 ease-out ${
-          startVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-        }`}
+        className={`transition-all duration-1500 ease-out ${startVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+          }`}
       >
         <button
           onClick={handleGetAccess}
@@ -345,17 +343,17 @@ export default function Home() {
       </div>
 
       {showGoogleAuth && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 px-4"
           onClick={() => setShowGoogleAuth(false)}
         >
-          <div 
+          <div
             className="bg-onyx border border-white/20 rounded-2xl p-8 max-w-md w-full relative overflow-hidden animate-in fade-in zoom-in duration-300"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Animated Border Beam */}
             <BorderBeam size={200} duration={10} delay={0} />
-            
+
             {/* Close Button */}
             <button
               onClick={() => setShowGoogleAuth(false)}
@@ -412,7 +410,7 @@ export default function Home() {
                     disabled={isSendingOTP}
                   />
                   <p className="text-xs text-white/50 mt-2">
-                    We'll send an email with a verification code.
+                    We&apos;ll send an email with a verification code.
                   </p>
                   <button
                     onClick={handleEmailSignUp}
@@ -462,7 +460,7 @@ export default function Home() {
                   <p className="text-sm text-white/60 mb-4">
                     Enter the 6-digit code sent to <span className="text-white/90">{emailAuthData.email}</span>
                   </p>
-                  
+
                   <CircleEmailWidget
                     appId={circleConfig.appId}
                     email={emailAuthData.email}
@@ -506,18 +504,18 @@ export default function Home() {
             <div className="text-center mt-6">
               <p className="text-xs text-white/50">
                 By continuing, you agree to our{" "}
-                <a 
-                  href="https://x.com/ArcleAI" 
-                  target="_blank" 
+                <a
+                  href="https://x.com/ArcleAI"
+                  target="_blank"
                   rel="noopener noreferrer"
                   className="text-aurora hover:text-aurora/80 transition-colors"
                 >
                   Terms of Use
                 </a>
                 {" & "}
-                <a 
-                  href="https://x.com/ArcleAI" 
-                  target="_blank" 
+                <a
+                  href="https://x.com/ArcleAI"
+                  target="_blank"
                   rel="noopener noreferrer"
                   className="text-aurora hover:text-aurora/80 transition-colors"
                 >
@@ -531,17 +529,17 @@ export default function Home() {
       )}
 
       {showInviteModal && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 px-4"
           onClick={() => !isVerifying && setShowInviteModal(false)}
         >
-          <div 
+          <div
             className="bg-onyx border border-white/20 rounded-2xl p-8 max-w-md w-full relative overflow-hidden animate-in fade-in zoom-in duration-300"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Animated Border Beam */}
             <BorderBeam size={200} duration={10} delay={0} />
-            
+
             {/* Close Button */}
             <button
               onClick={() => setShowInviteModal(false)}
@@ -640,9 +638,9 @@ export default function Home() {
             <div className="text-center">
               <p className="text-xs text-white/40 tracking-wide">
                 Don&apos;t have a code?{" "}
-                <a 
-                  href="https://x.com/ArcleAI" 
-                  target="_blank" 
+                <a
+                  href="https://x.com/ArcleAI"
+                  target="_blank"
                   rel="noopener noreferrer"
                   className="text-white/60 hover:text-white/80 transition-colors underline"
                 >
