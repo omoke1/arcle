@@ -257,11 +257,11 @@
     - **Impact**: FX operations not functional
 
 ### Other Features
-13. ⚠️ **Notification Service** (`lib/notifications/notification-service.ts`)
-    - **Status**: Logic implemented, but database commented out
-    - **Issue**: Uses localStorage fallback
-    - **Impact**: Notifications not persistent
-    - **Note**: Production-ready code exists but not activated
+13. ✅ **Notification Service** (`lib/db/services/notifications.ts`)
+    - **Status**: Active (Supabase)
+    - **Issue**: Legacy service (`lib/notifications/notification-service.ts`) removed.
+    - **Impact**: Notifications now stable.
+    - **Note**: Migration complete.
 
 14. ⚠️ **Phone/Email Payments** (`agents/payments/phoneEmailPayments.ts`)
     - **Status**: Placeholder

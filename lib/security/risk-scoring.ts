@@ -40,7 +40,7 @@ async function loadAddressHistory(userId?: string): Promise<Map<string, AddressH
   if (typeof window === "undefined" || !userId) {
     return new Map();
   }
-  
+
   try {
     // Try Supabase first
     const pref = await loadPreference({ userId, key: STORAGE_KEY });
@@ -51,7 +51,7 @@ async function loadAddressHistory(userId?: string): Promise<Map<string, AddressH
   } catch (error) {
     console.warn("[RiskScoring] Failed to load from Supabase, trying localStorage migration:", error);
   }
-  
+
   // Migration fallback: try localStorage
   try {
     const stored = localStorage.getItem("arcle_address_history");
@@ -70,13 +70,13 @@ async function loadAddressHistory(userId?: string): Promise<Map<string, AddressH
   } catch (error) {
     console.error("[RiskScoring] Error loading address history:", error);
   }
-  
+
   return new Map();
 }
 
 async function saveAddressHistory(userId: string, cache: Map<string, AddressHistory>): Promise<void> {
   if (typeof window === "undefined") return;
-  
+
   try {
     const obj = Object.fromEntries(cache);
     await savePreference({ userId, key: STORAGE_KEY, value: obj });
@@ -165,7 +165,7 @@ export async function calculateRiskScore(
     if (phishingResult.isPhishing) {
       score += phishingResult.confidence;
       reasons.push(...phishingResult.reasons.map(r => `Phishing: ${r}`));
-      
+
       // If blocked by phishing detection, return immediately
       if (phishingResult.blocked) {
         return {
@@ -209,9 +209,9 @@ export async function calculateRiskScore(
       cache = await loadAddressHistory(userId);
       addressHistoryCaches.set(userId, cache);
     }
-    
+
     addressHistory = cache.get(normalizedAddress) || null;
-    
+
     if (!addressHistory) {
       score += 20;
       reasons.push("New address (never seen before)");
@@ -250,7 +250,7 @@ export async function calculateRiskScore(
         cache = await loadAddressHistory(userId);
         addressHistoryCaches.set(userId, cache);
       }
-      
+
       const currentHistory = cache.get(normalizedAddress);
       if (transactionCount === 0 && !currentHistory) {
         score += 30;
@@ -292,7 +292,7 @@ export async function calculateRiskScore(
       // Use enhanced contract analysis
       const { analyzeContract } = await import("./contract-analysis");
       const contractAnalysis = await analyzeContract(normalizedAddress);
-      
+
       // Add contract-specific risk factors
       if (contractAnalysis.age !== undefined) {
         if (contractAnalysis.age < 7) {
@@ -357,12 +357,15 @@ export async function calculateRiskScore(
 async function getTransactionCount(address: string): Promise<number> {
   try {
     const client = getArcClient();
-    // Note: Viem doesn't have a direct transaction count method
-    // In production, you'd query the blockchain or use an indexer
-    // For now, return 0 as a placeholder
-    return 0;
+    // Use viem's getTransactionCount to get the nonce
+    // This tells us if the address has ever sent a transaction
+    const count = await client.getTransactionCount({
+      address: address as `0x${string}`,
+    });
+    return count;
   } catch (error) {
-    console.error("Error getting transaction count:", error);
+    console.error("Error getting transaction count from chain:", error);
+    // If we fail to check, we can't be sure, so return 0 to trigger "new address" risk factor safely
     return 0;
   }
 }
@@ -374,7 +377,7 @@ async function getTransactionCount(address: string): Promise<number> {
 export async function addScamAddress(userId: string, address: string): Promise<void> {
   const normalizedAddress = address.toLowerCase();
   KNOWN_SCAM_ADDRESSES.add(normalizedAddress);
-  
+
   // Persist to Supabase
   if (typeof window !== "undefined") {
     try {
@@ -406,7 +409,7 @@ export async function addScamAddress(userId: string, address: string): Promise<v
  */
 async function loadScamAddresses(userId?: string): Promise<void> {
   if (typeof window === "undefined") return;
-  
+
   try {
     if (userId) {
       // Try Supabase first
@@ -416,13 +419,13 @@ async function loadScamAddresses(userId?: string): Promise<void> {
         return;
       }
     }
-    
+
     // Migration fallback: try localStorage
     const stored = localStorage.getItem("arcle_scam_addresses");
     if (stored) {
       const scamList = JSON.parse(stored) as string[];
       scamList.forEach(addr => KNOWN_SCAM_ADDRESSES.add(addr.toLowerCase()));
-      
+
       // Migrate to Supabase if userId is available
       if (userId) {
         try {
@@ -447,19 +450,19 @@ async function loadScamAddresses(userId?: string): Promise<void> {
  */
 export async function updateAddressHistory(userId: string, address: string): Promise<void> {
   if (typeof window === "undefined" || !userId) return;
-  
+
   // Load or get cache for this user
   let cache = addressHistoryCaches.get(userId);
   if (!cache) {
     cache = await loadAddressHistory(userId);
     addressHistoryCaches.set(userId, cache);
   }
-  
+
   // Normalize address (should already be checksummed, but ensure lowercase for cache)
   const normalizedAddress = address.toLowerCase();
   const history = cache.get(normalizedAddress);
   const now = new Date().toISOString();
-  
+
   if (history) {
     history.transactionCount += 1;
     history.lastSeen = now;
@@ -470,7 +473,7 @@ export async function updateAddressHistory(userId: string, address: string): Pro
       lastSeen: now,
     });
   }
-  
+
   // Persist to Supabase
   await saveAddressHistory(userId, cache);
 }
@@ -480,19 +483,19 @@ export async function updateAddressHistory(userId: string, address: string): Pro
  */
 export async function getAddressHistory(userId: string, address: string) {
   if (typeof window === "undefined" || !userId) return null;
-  
+
   // Load or get cache for this user
   let cache = addressHistoryCaches.get(userId);
   if (!cache) {
     cache = await loadAddressHistory(userId);
     addressHistoryCaches.set(userId, cache);
   }
-  
+
   const normalizedAddress = address.toLowerCase();
   const history = cache.get(normalizedAddress);
-  
+
   if (!history) return null;
-  
+
   return {
     firstSeen: new Date(history.firstSeen),
     transactionCount: history.transactionCount,
