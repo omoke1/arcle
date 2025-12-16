@@ -27,7 +27,7 @@ import { findDueReminders, findDueCharges, scheduleNext, updateSubscription } fr
 import { monitorTransaction } from "@/lib/notifications/transaction-monitor";
 import { startBalanceMonitoring, stopBalanceMonitoring } from "@/lib/notifications/balance-monitor";
 import { startIncomingTransactionMonitoring, stopIncomingTransactionMonitoring } from "@/lib/notifications/incoming-transaction-monitor";
-import { getAllNotifications, markAsRead, getUnreadCount } from "@/lib/notifications/notification-service";
+// notifications imports removed as they were unused
 import { hasValidAccess } from "@/lib/auth/invite-codes";
 import { refreshUserToken, checkTokenExpiry } from "@/lib/circle/token-refresh";
 import {
@@ -43,7 +43,7 @@ import {
 export default function ChatPage() {
   const router = useRouter();
   const { createUser, createWallet, listWallets, sendTransaction, getBalance, getTransactionStatus, requestTestnetTokens, bridgeTransaction, getBridgeStatus } = useCircle();
-  
+
   // Check invite code verification on mount
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -65,7 +65,7 @@ export default function ChatPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [userToken, setUserToken] = useState<string | null>(null);
   const [selectedTier, setSelectedTier] = useState<AgentTier>("basic");
-  
+
   // Get user settings for display name
   const { settings } = useSettings(userId || undefined);
   const [encryptionKey, setEncryptionKey] = useState<string | null>(null);
@@ -124,7 +124,7 @@ export default function ChatPage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [replyToMessageId, setReplyToMessageId] = useState<string | null>(null);
   const hasHydratedMessagesRef = useRef(false);
-  
+
   // Initialize session ID from Supabase
   useEffect(() => {
     const initSessionId = async () => {
@@ -174,20 +174,20 @@ export default function ChatPage() {
   useEffect(() => {
     const loadCredentials = async () => {
       if (typeof window === 'undefined') return;
-      
+
       // Migration: Check localStorage first, then migrate to Supabase
       const legacyUserId = localStorage.getItem('arcle_user_id');
       const legacyUserToken = localStorage.getItem('arcle_user_token');
       const legacyEncryptionKey = localStorage.getItem('arcle_encryption_key');
-      
+
       if (legacyUserId && legacyUserToken) {
         // Migrate from localStorage to Supabase
         try {
           // Try to get wallet address if available
           const legacyWalletAddress = localStorage.getItem('arcle_wallet_address');
-          await saveUserCredentials(legacyUserId, { 
-            userToken: legacyUserToken, 
-            encryptionKey: legacyEncryptionKey || undefined 
+          await saveUserCredentials(legacyUserId, {
+            userToken: legacyUserToken,
+            encryptionKey: legacyEncryptionKey || undefined
           }, legacyWalletAddress || undefined);
           // Clear localStorage after successful migration
           localStorage.removeItem('arcle_user_id');
@@ -197,7 +197,7 @@ export default function ChatPage() {
         } catch (error) {
           console.error("[ChatPage] Failed to migrate credentials:", error);
         }
-        
+
         // Update state with migrated credentials
         if (!userId || !userToken || userToken !== legacyUserToken) {
           console.log("[ChatPage] Reloading credentials (migrated from localStorage)", {
@@ -213,7 +213,7 @@ export default function ChatPage() {
         }
         return;
       }
-      
+
       // If we have userId in state, try to load credentials from Supabase
       if (userId && (!userToken || !encryptionKey)) {
         try {
@@ -246,7 +246,7 @@ export default function ChatPage() {
         }
       }
     };
-    
+
     loadCredentials();
   }, [userId, userToken, encryptionKey]); // Re-check when state changes
 
@@ -257,11 +257,11 @@ export default function ChatPage() {
 
       try {
         const expiry = checkTokenExpiry(userToken, 5); // Check if expiring in < 5 minutes
-        
+
         if (expiry.isExpiringSoon && !expiry.isExpired) {
           console.log('[ChatPage] 🔄 Token expiring soon, refreshing proactively...');
           const newToken = await refreshUserToken();
-          
+
           if (newToken) {
             console.log('[ChatPage] ✅ Token refreshed proactively');
             // Update state with new token
@@ -362,11 +362,11 @@ export default function ChatPage() {
   useEffect(() => {
     const loadWallet = async () => {
       if (typeof window === 'undefined' || !userId) return;
-      
+
       // Migration: Check localStorage first, then migrate to Supabase
       const legacyWalletId = localStorage.getItem('arcle_wallet_id');
       const legacyWalletAddress = localStorage.getItem('arcle_wallet_address');
-      
+
       if (legacyWalletId && legacyWalletAddress) {
         // Migrate from localStorage to Supabase
         try {
@@ -378,7 +378,7 @@ export default function ChatPage() {
         } catch (error) {
           console.error("[ChatPage] Failed to migrate wallet data:", error);
         }
-        
+
         setWalletId(legacyWalletId);
         setWalletAddress(legacyWalletAddress);
         setHasWallet(true);
@@ -402,11 +402,11 @@ export default function ChatPage() {
           return;
         }
       }
-      
+
       // Fetch real balance from API/blockchain (no mock data)
       const currentWalletId = walletId || (legacyWalletId ?? null);
       const currentWalletAddress = walletAddress || (legacyWalletAddress ?? null);
-      
+
       if (currentWalletId && currentWalletAddress) {
         const balance = await getBalance(currentWalletId, currentWalletAddress, userId, userToken || undefined);
         if (balance) {
@@ -450,7 +450,7 @@ export default function ChatPage() {
                 setBalance(updatedBalance);
               }
             }
-            
+
             // Trigger transaction history refresh instead of adding chat message
             if (typeof window !== 'undefined') {
               window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
@@ -470,7 +470,7 @@ export default function ChatPage() {
         });
       }
     };
-    
+
     loadWallet();
 
     // Cleanup: stop balance monitoring on unmount
@@ -483,7 +483,7 @@ export default function ChatPage() {
       }
     };
   }, [router, getBalance, walletId, walletAddress, userId, userToken]);
-  
+
   // Removed periodic background polling for balances to honor on-demand fetching
 
   // Reminder loop: check subscriptions and scheduled payments every 60s
@@ -496,7 +496,7 @@ export default function ChatPage() {
         const reminders = await findDueReminders(userId);
         for (const s of reminders) {
           await updateSubscription(s.id, { lastReminderShownAt: now });
-          
+
           const msg: ChatMessage = {
             id: crypto.randomUUID(),
             role: "assistant",
@@ -520,11 +520,11 @@ export default function ChatPage() {
       } catch (error) {
         console.warn("[ChatPage] Subscription reminder loop error:", error);
       }
-      
+
       if (hasWallet && walletId && walletAddress) {
         const { findDuePayments, markAsExecuted, markAsFailed } = await import("@/lib/scheduled-payments");
         const duePayments = await findDuePayments(userId, now);
-        
+
         for (const payment of duePayments) {
           try {
             // Execute the payment
@@ -536,7 +536,7 @@ export default function ChatPage() {
               userId || undefined,
               userToken || undefined
             );
-            
+
             if (response && response.type === "transaction" && response.transaction?.id) {
               await markAsExecuted(payment.id, response.transaction.id);
               const msg: ChatMessage = {
@@ -586,7 +586,7 @@ export default function ChatPage() {
         console.error("[ChatPage] Failed to clear data from Supabase:", error);
       }
     }
-    
+
     // Reset state
     setWalletId(null);
     setWalletAddress(null);
@@ -595,7 +595,7 @@ export default function ChatPage() {
     setUserToken(null);
     setEncryptionKey(null);
     setMessages([]);
-    
+
     // Redirect to home page
     router.push("/");
   };
@@ -610,7 +610,7 @@ export default function ChatPage() {
       replyTo: replyTo || replyToMessageId || undefined,
     };
     setMessages((prev) => [...prev, userMessage]);
-    
+
     // Clear reply after sending
     if (replyToMessageId) {
       setReplyToMessageId(null);
@@ -623,7 +623,7 @@ export default function ChatPage() {
 
     // Try agent router first if enabled and message matches agent keywords
     let aiResponse;
-    
+
     if (isAgentRouterEnabled() && shouldUseAgentRouter(content) && hasWallet && walletId && userId && userToken) {
       try {
         const agentResponse = await processMessageWithAgents(content, {
@@ -634,7 +634,7 @@ export default function ChatPage() {
           userId,
           userToken,
         }, sessionId || undefined);
-        
+
         if (agentResponse.useAgentRouter && agentResponse.agent) {
           // Handle agent response
           const agentMessage: ChatMessage = {
@@ -643,7 +643,7 @@ export default function ChatPage() {
             content: agentResponse.message,
             timestamp: new Date(),
           };
-          
+
           // If agent requires confirmation, handle it
           if (agentResponse.requiresConfirmation && agentResponse.data) {
             // Store agent response data for confirmation
@@ -652,14 +652,14 @@ export default function ChatPage() {
             setIsLoading(false);
             return;
           }
-          
+
           // If agent executed successfully, show result
           if (agentResponse.data?.success) {
             setMessages((prev) => [...prev, agentMessage]);
             setIsLoading(false);
             return;
           }
-          
+
           // Otherwise, show agent message and continue
           setMessages((prev) => [...prev, agentMessage]);
           setIsLoading(false);
@@ -679,7 +679,7 @@ export default function ChatPage() {
       walletId: walletId || undefined,
       userId: userId || undefined,
     }, sessionId || undefined);
-    
+
     const lowerContent = content.toLowerCase();
 
     // Handle wallet creation intent - show guidance first
@@ -696,7 +696,7 @@ export default function ChatPage() {
       setIsLoading(false);
       return; // Wait for user confirmation before auto-creating wallet
     }
-    
+
     // Handle confirmation to proceed with wallet creation
     const isConfirmingWalletCreation = !hasWallet && (
       /^(yes|yep|yeah|sure|ok|okay|let's do it|let's go|go ahead|proceed|start|begin|ready|i'm ready|im ready)$/i.test(lowerContent.trim()) ||
@@ -705,7 +705,7 @@ export default function ChatPage() {
       lowerContent.includes("create it") ||
       lowerContent.includes("set it up")
     );
-    
+
     // Handle different intents
     // Auto-create wallet if user asks for balance/send but doesn't have one
     const needsWallet = !hasWallet && (
@@ -732,7 +732,7 @@ export default function ChatPage() {
           setWalletAddress(null);
           setHasWallet(false);
         }
-        
+
         const creatingMessage: ChatMessage = {
           id: crypto.randomUUID(),
           role: "assistant",
@@ -774,14 +774,14 @@ export default function ChatPage() {
           // Show PIN widget for challenge completion
           // Use encryptionKey from userData, or fallback to state
           const encryptionKeyToUse = userData.encryptionKey || encryptionKey;
-          
+
           if (!encryptionKeyToUse) {
             throw new Error(
               "Encryption key is required for PIN setup but was not provided. " +
               "Please try creating your wallet again."
             );
           }
-          
+
           setChallengeData({
             challengeId: result.challengeId,
             userId: result.userId,
@@ -840,15 +840,15 @@ export default function ChatPage() {
 
     if ((aiResponse.intent.intent === "send" || aiResponse.intent.intent === "pay") && aiResponse.transactionPreview && walletId) {
       // Check if transaction is blocked
-      const isBlocked = aiResponse.transactionPreview.blocked || 
-                        (aiResponse.transactionPreview.riskScore !== undefined && 
-                         aiResponse.transactionPreview.riskScore >= 80);
-      
+      const isBlocked = aiResponse.transactionPreview.blocked ||
+        (aiResponse.transactionPreview.riskScore !== undefined &&
+          aiResponse.transactionPreview.riskScore >= 80);
+
       // Check if user is confirming or canceling a new wallet transaction
       const isNewWallet = aiResponse.transactionPreview.isNewWallet;
       const isConfirming = /^(yes|confirm|proceed|ok|okay|sure|go ahead|do it)$/i.test(content.trim());
       const isCanceling = /^(no|cancel|stop|abort|don't|dont|nevermind|never mind)$/i.test(content.trim());
-      
+
       // If this is a new wallet and user hasn't confirmed yet, ask for confirmation
       if (isNewWallet && !isConfirming && !isCanceling) {
         // Send transaction preview with new wallet warning
@@ -860,23 +860,23 @@ export default function ChatPage() {
           timestamp: new Date(),
           transactionPreview: aiResponse.transactionPreview,
         };
-        
+
         // Always set pending transaction so the confirm button can work (even for blocked/high-risk)
         const previewAddress = aiResponse.transactionPreview.to;
         const addressValidation = validateAddress(previewAddress);
         const normalizedAddress = addressValidation.normalizedAddress || previewAddress;
-        
+
         setPendingTransaction({
           messageId,
           amount: aiResponse.transactionPreview.amount,
           to: normalizedAddress,
         });
-        
+
         setMessages((prev) => [...prev, aiMessage]);
         setIsLoading(false);
         return;
       }
-      
+
       // If user canceled, don't proceed
       if (isCanceling) {
         const cancelMessage: ChatMessage = {
@@ -889,7 +889,7 @@ export default function ChatPage() {
         setIsLoading(false);
         return;
       }
-      
+
       // Send transaction preview (only set pending if not blocked and confirmed)
       const messageId = crypto.randomUUID();
       const aiMessage: ChatMessage = {
@@ -899,21 +899,21 @@ export default function ChatPage() {
         timestamp: new Date(),
         transactionPreview: aiResponse.transactionPreview,
       };
-      
+
       // Always set pending transaction (even for blocked/high-risk - user can still approve)
       if (!isNewWallet || isConfirming) {
         // Use normalized checksummed address from preview
         const previewAddress = aiResponse.transactionPreview.to;
         const addressValidation = validateAddress(previewAddress);
         const normalizedAddress = addressValidation.normalizedAddress || previewAddress;
-        
+
         setPendingTransaction({
           messageId,
           amount: aiResponse.transactionPreview.amount,
           to: normalizedAddress, // Store normalized address
         });
       }
-      
+
       setMessages((prev) => [...prev, aiMessage]);
     } else if (aiResponse.intent.intent === "yield") {
       // Handle yield/USYC operations
@@ -921,7 +921,7 @@ export default function ChatPage() {
       const lowerCommand = content.toLowerCase();
       const isWithdraw = lowerCommand.includes("withdraw") || lowerCommand.includes("redeem");
       const isCheck = lowerCommand.includes("check") || lowerCommand.includes("balance") || lowerCommand.includes("status");
-      
+
       if (isCheck) {
         // Check USYC position
         if (!walletId || !walletAddress) {
@@ -935,7 +935,7 @@ export default function ChatPage() {
           setIsLoading(false);
           return;
         }
-        
+
         try {
           const response = await fetch('/api/circle/usyc', {
             method: 'POST',
@@ -947,21 +947,21 @@ export default function ChatPage() {
               blockchain: 'ETH',
             }),
           });
-          
+
           const result = await response.json();
-          
+
           if (result.success && result.data) {
             const position = result.data;
             const positionMsg: ChatMessage = {
               id: crypto.randomUUID(),
               role: "assistant",
               content: `💰 Your USYC Position\n\n` +
-                       `Balance: ${position.usycBalance} USYC\n` +
-                       `Value: ${position.usdcValue} USDC\n` +
-                       `Current Yield: ${position.currentYield} USDC (+${position.yieldPercentage}%)\n` +
-                       `APY: ${position.apy}%\n` +
-                       `Blockchain: ${position.blockchain}\n\n` +
-                       `Want to deposit more or withdraw?`,
+                `Balance: ${position.usycBalance} USYC\n` +
+                `Value: ${position.usdcValue} USDC\n` +
+                `Current Yield: ${position.currentYield} USDC (+${position.yieldPercentage}%)\n` +
+                `APY: ${position.apy}%\n` +
+                `Blockchain: ${position.blockchain}\n\n` +
+                `Want to deposit more or withdraw?`,
               timestamp: new Date(),
             };
             setMessages((prev) => [...prev, positionMsg]);
@@ -998,7 +998,7 @@ export default function ChatPage() {
           setIsLoading(false);
           return;
         }
-        
+
         // Check if user confirmed
         const isConfirming = /^(yes|confirm|proceed|ok|okay|sure|go ahead|do it)$/i.test(content.trim());
         if (aiResponse.requiresConfirmation && !isConfirming) {
@@ -1012,7 +1012,7 @@ export default function ChatPage() {
           setIsLoading(false);
           return;
         }
-        
+
         // Execute redeem
         if (isConfirming || !aiResponse.requiresConfirmation) {
           await handleUSYCOperation('redeem', amount, 'ETH');
@@ -1031,7 +1031,7 @@ export default function ChatPage() {
           setIsLoading(false);
           return;
         }
-        
+
         // Check if user confirmed
         const isConfirming = /^(yes|confirm|proceed|ok|okay|sure|go ahead|do it)$/i.test(content.trim());
         if (aiResponse.requiresConfirmation && !isConfirming) {
@@ -1045,7 +1045,7 @@ export default function ChatPage() {
           setIsLoading(false);
           return;
         }
-        
+
         // Execute subscribe
         if (isConfirming || !aiResponse.requiresConfirmation) {
           await handleUSYCOperation('subscribe', amount, 'ETH');
@@ -1085,11 +1085,11 @@ export default function ChatPage() {
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, aiMessage]);
-    } else if ((lowerContent.includes("faucet") || 
-               lowerContent.includes("testnet token") || 
-               lowerContent.includes("request token") ||
-               lowerContent.includes("get token")) && 
-               walletAddress) {
+    } else if ((lowerContent.includes("faucet") ||
+      lowerContent.includes("testnet token") ||
+      lowerContent.includes("request token") ||
+      lowerContent.includes("get token")) &&
+      walletAddress) {
       // Handle testnet token request
       const requestMessage: ChatMessage = {
         id: crypto.randomUUID(),
@@ -1098,9 +1098,9 @@ export default function ChatPage() {
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, requestMessage]);
-      
+
       const success = await requestTestnetTokens(walletAddress);
-      
+
       if (success) {
         const successMessage: ChatMessage = {
           id: crypto.randomUUID(),
@@ -1109,7 +1109,7 @@ export default function ChatPage() {
           timestamp: new Date(),
         };
         setMessages((prev) => [...prev, successMessage]);
-        
+
         // Refresh balance after a short delay
         setTimeout(async () => {
           if (walletId && walletAddress) {
@@ -1131,7 +1131,7 @@ export default function ChatPage() {
     } else if (aiResponse.intent.intent === "bridge" && walletId && walletAddress) {
       // Handle bridge intent with conversational messaging
       const { amount, recipient: destinationChain, address } = aiResponse.intent.entities;
-      
+
       // If bridgeData is provided (user has confirmed), execute the bridge
       if (aiResponse.bridgeData && aiResponse.requiresConfirmation) {
         // Show bridge confirmation message
@@ -1142,25 +1142,25 @@ export default function ChatPage() {
           timestamp: new Date(),
         };
         setMessages((prev) => [...prev, aiMessage]);
-        
+
         // Check if user is confirming
         const isConfirming = /^(yes|yeah|yup|confirm|confirmed|proceed|ok|okay|sure|absolutely|definitely|go ahead|do it|let'?s go|lets go)(\b|[!.?\s].*)?$/i.test(
           content.trim()
         );
-        
+
         if (isConfirming) {
-              // Show initiating message with friendly status
-              const transferMode = aiResponse.bridgeData.fastTransfer 
-                ? "⚡ Fast Transfer mode - settling in seconds!" 
-                : "🐢 Standard mode - will take 13-19 minutes";
-              const initMessage: ChatMessage = {
-                id: crypto.randomUUID(),
-                role: "assistant",
-                content: `Alright! Firing up the bridge... 🚀\n\n${aiResponse.bridgeData.amount ? `Bridging your $${aiResponse.bridgeData.amount} USDC. ` : ""}${transferMode}\n\nI'll keep you updated!`,
-                timestamp: new Date(),
-              };
+          // Show initiating message with friendly status
+          const transferMode = aiResponse.bridgeData.fastTransfer
+            ? "⚡ Fast Transfer mode - settling in seconds!"
+            : "🐢 Standard mode - will take 13-19 minutes";
+          const initMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `Alright! Firing up the bridge... 🚀\n\n${aiResponse.bridgeData.amount ? `Bridging your $${aiResponse.bridgeData.amount} USDC. ` : ""}${transferMode}\n\nI'll keep you updated!`,
+            timestamp: new Date(),
+          };
           setMessages((prev) => [...prev, initMessage]);
-          
+
           if (!userId || !userToken) {
             const credentialMessage: ChatMessage = {
               id: crypto.randomUUID(),
@@ -1190,9 +1190,9 @@ export default function ChatPage() {
                 fastTransfer: aiResponse.bridgeData.fastTransfer ?? false, // Pass Fast Transfer preference
               }),
             });
-            
+
             const bridgeResult = await response.json();
-            
+
             if (bridgeResult.success) {
               // Check if Gateway deposit is required (first-time bridge user)
               if (bridgeResult.data?.requiresDeposit && bridgeResult.data?.challengeId) {
@@ -1201,12 +1201,12 @@ export default function ChatPage() {
                   id: crypto.randomUUID(),
                   role: "assistant",
                   content: `🔧 Setting up instant bridging for you!\n\n` +
-                          `This is your first bridge, so I need to deposit ${bridgeResult.data.depositAmount || aiResponse.bridgeData.amount} USDC to Gateway.\n\n` +
-                          `Please complete the approval and deposit challenges (PIN) to continue.`,
+                    `This is your first bridge, so I need to deposit ${bridgeResult.data.depositAmount || aiResponse.bridgeData.amount} USDC to Gateway.\n\n` +
+                    `Please complete the approval and deposit challenges (PIN) to continue.`,
                   timestamp: new Date(),
                 };
                 setMessages((prev) => [...prev, depositMessage]);
-                
+
                 // Set up challenge data for Gateway deposit
                 setChallengeData({
                   challengeId: bridgeResult.data.challengeId,
@@ -1225,7 +1225,7 @@ export default function ChatPage() {
                 setShowPinWidget(true);
                 return;
               }
-              
+
               // Check if Gateway transfer signing is required
               if (bridgeResult.data?.requiresChallenge && bridgeResult.data?.challengeId) {
                 // Gateway transfer signing required - show PIN widget
@@ -1233,11 +1233,11 @@ export default function ChatPage() {
                   id: crypto.randomUUID(),
                   role: "assistant",
                   content: `✍️ Please sign the bridge transfer with your PIN.\n\n` +
-                          `This authorizes the cross-chain transfer to ${aiResponse.bridgeData.toChain}.`,
+                    `This authorizes the cross-chain transfer to ${aiResponse.bridgeData.toChain}.`,
                   timestamp: new Date(),
                 };
                 setMessages((prev) => [...prev, signingMessage]);
-                
+
                 // Set up challenge data for Gateway transfer signing
                 setChallengeData({
                   challengeId: bridgeResult.data.challengeId,
@@ -1257,18 +1257,18 @@ export default function ChatPage() {
                 setShowPinWidget(true);
                 return;
               }
-              
+
               // Bridge initiated successfully (no challenges required)
               const successMessage: ChatMessage = {
                 id: crypto.randomUUID(),
                 role: "assistant",
                 content: `🎉 Bridge initiated successfully!\n\n` +
-                        `Your ${aiResponse.bridgeData.amount} USDC is on its way to ${aiResponse.bridgeData.toChain}!\n\n` +
-                        `I'm monitoring the bridge - I'll let you know when it arrives (usually 10-30 seconds).`,
+                  `Your ${aiResponse.bridgeData.amount} USDC is on its way to ${aiResponse.bridgeData.toChain}!\n\n` +
+                  `I'm monitoring the bridge - I'll let you know when it arrives (usually 10-30 seconds).`,
                 timestamp: new Date(),
               };
               setMessages((prev) => [...prev, successMessage]);
-              
+
               // Start bridge monitoring with conversational callbacks
               if (bridgeResult.data?.bridgeId) {
                 const { startBridgeMonitoring } = await import("@/lib/notifications/bridge-monitor");
@@ -1311,8 +1311,8 @@ export default function ChatPage() {
                 id: crypto.randomUUID(),
                 role: "assistant",
                 content: `Oops, ran into an issue: ${bridgeResult.message || "Unknown error"}\n\n` +
-                        `${bridgeResult.message?.includes("balance") ? "Looks like you might not have enough USDC. Want to check your balance?" : ""}` +
-                        `\nWant to try again or need help troubleshooting?`,
+                  `${bridgeResult.message?.includes("balance") ? "Looks like you might not have enough USDC. Want to check your balance?" : ""}` +
+                  `\nWant to try again or need help troubleshooting?`,
                 timestamp: new Date(),
               };
               setMessages((prev) => [...prev, errorMessage]);
@@ -1330,7 +1330,7 @@ export default function ChatPage() {
         setIsLoading(false);
         return;
       }
-      
+
       // If not ready to execute yet, show AI response
       if (!amount || !destinationChain) {
         const aiMessage: ChatMessage = {
@@ -1380,38 +1380,38 @@ export default function ChatPage() {
 
   const handleConfirmTransaction = async () => {
     if (!walletId) return;
-    
+
     // Find the message with transaction preview (use pendingTransaction if available, otherwise find the latest one)
-    let message = pendingTransaction 
+    let message = pendingTransaction
       ? messages.find(m => m.id === pendingTransaction.messageId)
       : [...messages].reverse().find(m => m.transactionPreview);
-    
+
     if (!message?.transactionPreview) {
       console.error("Transaction preview not found");
       return;
     }
-    
+
     // Get transaction details from message preview
     const previewAmount = message.transactionPreview.amount;
     const previewTo = message.transactionPreview.to;
-    
+
     // If pendingTransaction is not set, create it from the message
     if (!pendingTransaction) {
       const addressValidation = validateAddress(previewTo);
       const normalizedAddress = addressValidation.normalizedAddress || previewTo;
-      
+
       setPendingTransaction({
         messageId: message.id,
         amount: previewAmount,
         to: normalizedAddress,
       });
     }
-    
+
     // Don't block - show warning but allow user to proceed if they confirm
     // User has seen the risks and can make an informed decision
-    if (message.transactionPreview.blocked || 
-        (message.transactionPreview.riskScore !== undefined && 
-         message.transactionPreview.riskScore >= 80)) {
+    if (message.transactionPreview.blocked ||
+      (message.transactionPreview.riskScore !== undefined &&
+        message.transactionPreview.riskScore >= 80)) {
       // Show warning message but don't block - user can still approve
       const warningMessage: ChatMessage = {
         id: crypto.randomUUID(),
@@ -1422,7 +1422,7 @@ export default function ChatPage() {
       setMessages((prev) => [...prev, warningMessage]);
       // Don't return - allow transaction to proceed if user confirms
     }
-    
+
     // Safety Check 2: Validate and normalize address
     const addressValidation = validateAddress(previewTo);
     if (!addressValidation.isValid) {
@@ -1435,16 +1435,16 @@ export default function ChatPage() {
       setMessages((prev) => [...prev, errorMessage]);
       return;
     }
-    
+
     // Use normalized checksummed address
     const normalizedAddress = addressValidation.normalizedAddress || previewTo;
-    
+
     // Safety Check 3: Re-validate risk score before execution (informational only)
     // User has already confirmed, so we allow the transaction to proceed
     // Only block if risk score increases significantly or if it's a zero address
     try {
       const currentRiskResult = await calculateRiskScore(normalizedAddress, previewAmount, undefined, undefined, userId || undefined);
-      
+
       // Only block zero address (truly invalid)
       if (normalizedAddress === "0x0000000000000000000000000000000000000000") {
         const errorMessage: ChatMessage = {
@@ -1456,7 +1456,7 @@ export default function ChatPage() {
         setMessages((prev) => [...prev, errorMessage]);
         return;
       }
-      
+
       // If risk score increased significantly, show warning but still allow
       if (currentRiskResult.score > (message.transactionPreview.riskScore || 0) + 20) {
         const warningMessage: ChatMessage = {
@@ -1472,7 +1472,7 @@ export default function ChatPage() {
       console.error("Error re-validating risk score:", error);
       // Continue with transaction if risk check fails (fail open, but log the error)
     }
-    
+
     setIsLoading(true);
 
     // Check balance and warn if insufficient (but don't auto-request faucet)
@@ -1498,7 +1498,7 @@ export default function ChatPage() {
       // Log error but continue with transaction attempt
       console.warn("Balance check failed:", e);
     }
-    
+
     try {
       // Ensure pendingTransaction is set (should be set above, but double-check)
       if (!pendingTransaction) {
@@ -1508,19 +1508,19 @@ export default function ChatPage() {
           to: normalizedAddress,
         });
       }
-      
+
       // Update message to show pending state
-      setMessages((prev) => prev.map(msg => 
+      setMessages((prev) => prev.map(msg =>
         msg.id === message.id
           ? {
-              ...msg,
-              transactionPreview: msg.transactionPreview ? {
-                ...msg.transactionPreview,
-              } : undefined,
-            }
+            ...msg,
+            transactionPreview: msg.transactionPreview ? {
+              ...msg.transactionPreview,
+            } : undefined,
+          }
           : msg
       ));
-      
+
       // Send transaction using normalized address
       // CRITICAL: walletAddress must be passed to avoid SDK public key fetch (401 error)
       if (!walletAddress) {
@@ -1534,7 +1534,7 @@ export default function ChatPage() {
         setIsLoading(false);
         return;
       }
-      
+
       // Validate all required fields before sending
       if (!walletId) {
         const errorMsg: ChatMessage = {
@@ -1547,7 +1547,7 @@ export default function ChatPage() {
         setIsLoading(false);
         return;
       }
-      
+
       if (!previewAmount || isNaN(parseFloat(previewAmount))) {
         const errorMsg: ChatMessage = {
           id: crypto.randomUUID(),
@@ -1559,7 +1559,7 @@ export default function ChatPage() {
         setIsLoading(false);
         return;
       }
-      
+
       if (!normalizedAddress) {
         const errorMsg: ChatMessage = {
           id: crypto.randomUUID(),
@@ -1571,12 +1571,12 @@ export default function ChatPage() {
         setIsLoading(false);
         return;
       }
-      
+
       // Resolve the latest credentials from state or Supabase (in case state is stale)
       let resolvedUserId = userId;
       let resolvedUserToken = userToken;
       let resolvedEncryptionKey = encryptionKey;
-      
+
       // If credentials are missing in state, try to load from Supabase
       if ((!resolvedUserId || !resolvedUserToken) && typeof window !== "undefined" && userId) {
         try {
@@ -1591,36 +1591,36 @@ export default function ChatPage() {
           console.error("[Transaction] Failed to load credentials from Supabase:", error);
         }
       }
-      
+
       if (!resolvedUserId || !resolvedUserToken) {
         console.warn("[Transaction] Missing user credentials:", {
           hasUserId: !!resolvedUserId,
           hasUserToken: !!resolvedUserToken,
         });
       }
-      
+
       console.log("Sending transaction with:", {
         walletId,
         destinationAddress: normalizedAddress,
         amount: previewAmount,
         walletAddress,
       });
-      
+
       let result: Awaited<ReturnType<typeof sendTransaction>> = null;
       let transaction: Transaction | null = null;
-      
+
       try {
         console.log("[Transaction] About to call sendTransaction...");
         result = await sendTransaction(
-        walletId,
-        normalizedAddress, // Use checksummed address
-        previewAmount,
-        walletAddress, // CRITICAL: Always pass wallet address for SDK transaction creation
+          walletId,
+          normalizedAddress, // Use checksummed address
+          previewAmount,
+          walletAddress, // CRITICAL: Always pass wallet address for SDK transaction creation
           resolvedUserId || undefined,
           resolvedUserToken || undefined
         );
         console.log("[Transaction] sendTransaction completed, result:", result);
-        
+
         // Check if result is a challenge (PIN required)
         if (result && result.type === "challenge") {
           console.log("[Transaction] ✅✅✅ Challenge required detected from return value!");
@@ -1628,7 +1628,7 @@ export default function ChatPage() {
           console.log("[Transaction] Wallet ID:", result.walletId);
           console.log("[Transaction] Destination:", result.destinationAddress);
           console.log("[Transaction] Amount:", result.amount);
-          
+
           // Check if token is expired before showing PIN widget
           if (resolvedUserToken) {
             const tokenStatus = checkTokenExpiry(resolvedUserToken, 5);
@@ -1654,7 +1654,7 @@ export default function ChatPage() {
               }
             }
           }
-          
+
           // Show PIN widget for transaction challenge
           // Store transaction details so we can complete it after PIN confirmation
           const challengeDataToSet = {
@@ -1676,7 +1676,7 @@ export default function ChatPage() {
             hasEncryptionKey: !!challengeDataToSet.encryptionKey,
             hasTransactionChallenge: !!challengeDataToSet.transactionChallenge,
           });
-          
+
           // Check if session keys can handle this transaction
           if (isSessionKeysEnabled() && resolvedUserId && resolvedUserToken && result.walletId) {
             // Dynamically import to avoid SSR issues with Circle SDK
@@ -1711,12 +1711,12 @@ export default function ChatPage() {
             // If session exists but can't auto-execute, fall through to PIN widget
             setSessionKeyStatus(status);
           }
-          
+
           setChallengeData(challengeDataToSet);
           setShowPinWidget(true);
-          
+
           console.log("[Transaction] ✅✅✅ PIN widget state set - showPinWidget should be true now");
-          
+
           // Update message to show challenge is required
           const challengeMessage: ChatMessage = {
             id: crypto.randomUUID(),
@@ -1725,12 +1725,12 @@ export default function ChatPage() {
             timestamp: new Date(),
           };
           setMessages((prev) => [...prev, challengeMessage]);
-          
+
           setIsLoading(false);
           console.log("[Transaction] ✅✅✅ Exiting early - PIN widget should be visible");
           return; // Exit early - PIN widget will handle completion
         }
-        
+
         // If result is a transaction (challenge already completed or not required)
         if (result && result.type === "transaction") {
           console.log("[Transaction] ✅ Transaction completed successfully:", result.transaction);
@@ -1750,7 +1750,7 @@ export default function ChatPage() {
         const errorMessage = txError?.message || String(txError);
         console.log("[Transaction] Error type:", typeof txError);
         console.log("[Transaction] Error message:", errorMessage);
-        
+
         // If it's not a challenge error, show error message
         console.error("[Transaction] ❌ Transaction failed:", errorMessage);
         const errorMsg: ChatMessage = {
@@ -1763,7 +1763,7 @@ export default function ChatPage() {
         setIsLoading(false);
         return; // Don't re-throw, we've already shown the error
       }
-      
+
       if (transaction) {
         // 🔥 CRITICAL: Cache transaction immediately so it never "disappears" from history
         // This ensures the transaction shows up in history instantly, even if Circle API is slow to index
@@ -1772,14 +1772,14 @@ export default function ChatPage() {
           await cacheTransaction(userId, walletId, transaction);
           console.log(`[Transaction] 💾 Cached transaction immediately: ${transaction.id}`);
         }
-        
+
         // Update address history for future risk scoring (using normalized address)
         if (userId) {
           updateAddressHistory(userId, normalizedAddress).catch(error => {
             console.error("[Transaction] Failed to update address history:", error);
           });
         }
-        
+
         // Optimistic balance update - immediately reflect the transaction
         if (walletAddress && balance && pendingTransaction) {
           const currentBalance = parseFloat(balance);
@@ -1787,7 +1787,7 @@ export default function ChatPage() {
           const newBalance = Math.max(0, (currentBalance - sentAmount)).toFixed(2); // Ensure non-negative
           setBalance(newBalance); // Immediate optimistic update
           console.log(`[Transaction] Optimistic balance update: ${balance} -> ${newBalance} (sent ${sentAmount})`);
-          
+
           // If balance goes to 0 or negative, show a message
           if (parseFloat(newBalance) <= 0) {
             const balanceMsg: ChatMessage = {
@@ -1799,7 +1799,7 @@ export default function ChatPage() {
             setMessages((prev) => [...prev, balanceMsg]);
           }
         }
-        
+
         // Refresh balance aggressively after successful transaction
         const refreshBalance = async () => {
           if (walletAddress) {
@@ -1827,31 +1827,31 @@ export default function ChatPage() {
             }
           }
         };
-        
+
         // Refresh balance multiple times to ensure we catch Circle API updates
         refreshBalance(); // Immediate
         setTimeout(refreshBalance, 2000); // 2s
         setTimeout(refreshBalance, 5000); // 5s
         setTimeout(refreshBalance, 10000); // 10s
         setTimeout(refreshBalance, 20000); // 20s (extra aggressive)
-        
+
         // Update message to show confirmed state with link to verify
         if (pendingTransaction) {
           // Get blockchain hash from transaction response
           // The hash should be directly on transaction.hash (mapped from API response)
           const blockchainHash = transaction.hash;
-          
+
           // Only generate explorer URL if we have a valid blockchain hash (starts with 0x and is 66 chars)
           // Circle transaction IDs are UUIDs, not blockchain hashes
           const isValidHash = blockchainHash && /^0x[a-fA-F0-9]{64}$/.test(blockchainHash);
-          
+
           console.log('[Transaction] Hash check:', {
             hash: blockchainHash,
             isValid: isValidHash,
             transactionId: transaction.id,
             fullTransaction: transaction
           });
-          
+
           // If hash is not available yet, poll for it immediately
           if (!isValidHash && transaction.id) {
             // Show initial message without hash
@@ -1859,24 +1859,24 @@ export default function ChatPage() {
             setMessages((prev) => prev.map(msg =>
               msg.id === pendingTransaction.messageId
                 ? {
-                    ...msg,
-                    content: `✅ Payment sent successfully!\n\nSent: $${pendingTransaction.amount} USDC\nTo: ${pendingTransaction.to.substring(0, 6)}...${pendingTransaction.to.substring(38)}${explorerLink}`,
-                    transactionPreview: undefined,
-                  }
+                  ...msg,
+                  content: `✅ Payment sent successfully!\n\nSent: $${pendingTransaction.amount} USDC\nTo: ${pendingTransaction.to.substring(0, 6)}...${pendingTransaction.to.substring(38)}${explorerLink}`,
+                  transactionPreview: undefined,
+                }
                 : msg
             ));
-            
+
             // Poll immediately for the transaction hash
             let hashFound = false;
             const pollForHash = async () => {
               if (hashFound) return; // Stop if hash already found
-              
+
               try {
                 // Try Circle API first
                 // Use state credentials or load from Supabase
                 let pollUserId = userId;
                 let pollUserToken = userToken;
-                
+
                 if ((!pollUserId || !pollUserToken) && typeof window !== "undefined" && userId) {
                   try {
                     const credentials = await loadUserCredentials(userId);
@@ -1887,12 +1887,12 @@ export default function ChatPage() {
                     console.error("[Transaction] Failed to load credentials for polling:", error);
                   }
                 }
-                
+
                 let queryString = `walletId=${walletId}&transactionId=${transaction.id}`;
                 if (pollUserId && pollUserToken) {
                   queryString += `&userId=${encodeURIComponent(pollUserId)}&userToken=${encodeURIComponent(pollUserToken)}`;
                 }
-                
+
                 const response = await fetch(`/api/circle/transactions?${queryString}`);
                 if (response.ok) {
                   const data = await response.json();
@@ -1906,17 +1906,17 @@ export default function ChatPage() {
                       setMessages((prev) => prev.map(msg =>
                         msg.id === pendingTransaction.messageId
                           ? {
-                              ...msg,
-                              content: `✅ Payment sent successfully!\n\nSent: $${pendingTransaction.amount} USDC\nTo: ${pendingTransaction.to.substring(0, 6)}...${pendingTransaction.to.substring(38)}${explorerLink}`,
-                              transactionPreview: undefined,
-                            }
+                            ...msg,
+                            content: `✅ Payment sent successfully!\n\nSent: $${pendingTransaction.amount} USDC\nTo: ${pendingTransaction.to.substring(0, 6)}...${pendingTransaction.to.substring(38)}${explorerLink}`,
+                            transactionPreview: undefined,
+                          }
                           : msg
                       ));
                       return true; // Hash found
                     }
                   }
                 }
-                
+
                 // Fallback: Try ArcScan API if Circle doesn't have the hash yet
                 // This can help us get the hash faster when Circle is slow to index
                 if (walletAddress && pendingTransaction.to && pendingTransaction.amount) {
@@ -1929,17 +1929,17 @@ export default function ChatPage() {
                       amountInSmallestUnit,
                       60 // Search last 60 seconds
                     );
-                    
+
                     if (arcScanHash && /^0x[a-fA-F0-9]{64}$/.test(arcScanHash)) {
                       hashFound = true;
                       const explorerLink = `\n\n🔗 [View on ArcScan](https://testnet.arcscan.app/tx/${arcScanHash})`;
                       setMessages((prev) => prev.map(msg =>
                         msg.id === pendingTransaction.messageId
                           ? {
-                              ...msg,
-                              content: `✅ Payment sent successfully!\n\nSent: $${pendingTransaction.amount} USDC\nTo: ${pendingTransaction.to.substring(0, 6)}...${pendingTransaction.to.substring(38)}${explorerLink}`,
-                              transactionPreview: undefined,
-                            }
+                            ...msg,
+                            content: `✅ Payment sent successfully!\n\nSent: $${pendingTransaction.amount} USDC\nTo: ${pendingTransaction.to.substring(0, 6)}...${pendingTransaction.to.substring(38)}${explorerLink}`,
+                            transactionPreview: undefined,
+                          }
                           : msg
                       ));
                       return true; // Hash found via ArcScan
@@ -1954,10 +1954,10 @@ export default function ChatPage() {
               }
               return false; // Hash not found yet
             };
-            
+
             // Poll immediately
             pollForHash();
-            
+
             // Poll every 500ms for up to 10 seconds (20 attempts)
             let attempts = 0;
             const maxAttempts = 20;
@@ -1971,16 +1971,16 @@ export default function ChatPage() {
                   setMessages((prev) => prev.map(msg =>
                     msg.id === pendingTransaction.messageId
                       ? {
-                          ...msg,
-                          content: `✅ Payment sent successfully!\n\nSent: $${pendingTransaction.amount} USDC\nTo: ${pendingTransaction.to.substring(0, 6)}...${pendingTransaction.to.substring(38)}\n\n⏳ Transaction is processing. The blockchain hash will be available once the transaction is confirmed.`,
-                          transactionPreview: undefined,
-                        }
+                        ...msg,
+                        content: `✅ Payment sent successfully!\n\nSent: $${pendingTransaction.amount} USDC\nTo: ${pendingTransaction.to.substring(0, 6)}...${pendingTransaction.to.substring(38)}\n\n⏳ Transaction is processing. The blockchain hash will be available once the transaction is confirmed.`,
+                        transactionPreview: undefined,
+                      }
                       : msg
                   ));
                 }
               }
             }, 500); // Poll every 500ms for faster response
-            
+
             // Stop polling after 10 seconds
             setTimeout(() => {
               clearInterval(pollInterval);
@@ -1988,22 +1988,22 @@ export default function ChatPage() {
             }, 10000);
           } else {
             // Hash is available immediately - show link right away
-            const explorerLink = isValidHash 
+            const explorerLink = isValidHash
               ? `\n\n🔗 [View on ArcScan](https://testnet.arcscan.app/tx/${blockchainHash})`
               : `\n\n⏳ Transaction is processing. The blockchain hash will be available once the transaction is confirmed.`;
-            
+
             setMessages((prev) => prev.map(msg =>
               msg.id === pendingTransaction.messageId
                 ? {
-                    ...msg,
-                    content: `✅ Payment sent successfully!\n\nSent: $${pendingTransaction.amount} USDC\nTo: ${pendingTransaction.to.substring(0, 6)}...${pendingTransaction.to.substring(38)}${explorerLink}`,
-                    transactionPreview: undefined,
-                  }
+                  ...msg,
+                  content: `✅ Payment sent successfully!\n\nSent: $${pendingTransaction.amount} USDC\nTo: ${pendingTransaction.to.substring(0, 6)}...${pendingTransaction.to.substring(38)}${explorerLink}`,
+                  transactionPreview: undefined,
+                }
                 : msg
             ));
           }
         }
-        
+
         // Notify transaction history to refresh immediately and aggressively
         if (typeof window !== 'undefined') {
           // Dispatch multiple refresh events at different intervals to catch Circle API indexing
@@ -2024,7 +2024,7 @@ export default function ChatPage() {
             window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
           }, 30000); // Extra aggressive - 30s
         }
-        
+
         // Monitor transaction with notification system
         if (transaction.id && walletId) {
           monitorTransaction({
@@ -2036,10 +2036,10 @@ export default function ChatPage() {
               if (status === "confirmed") {
                 // Add confirmation message with Arc-specific info
                 const isValidBlockchainHash = hash && /^0x[a-fA-F0-9]{64}$/.test(hash);
-                const explorerLink = isValidBlockchainHash 
+                const explorerLink = isValidBlockchainHash
                   ? `\n\n🔗 [View on ArcScan](https://testnet.arcscan.app/tx/${hash})`
                   : `\n\n⏳ Transaction is processing. The blockchain hash will be available once the transaction is confirmed.`;
-                
+
                 // Verify transaction on ArcScan if we have a hash
                 let verificationStatus = "";
                 if (isValidBlockchainHash) {
@@ -2058,14 +2058,14 @@ export default function ChatPage() {
                     // Don't show error to user, just continue
                   }
                 }
-                
+
                 // Don't add confirmation message to chat - transaction appears in transaction history panel
                 // Just trigger refresh events
                 if (typeof window !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
                   window.dispatchEvent(new CustomEvent('arcle:balance:refresh'));
                 }
-                
+
                 // Update balance immediately after transaction confirmation
                 if (walletId && walletAddress) {
                   const updatedBalance = await getBalance(
@@ -2078,11 +2078,11 @@ export default function ChatPage() {
                     setBalance(updatedBalance);
                   }
                 }
-                
+
                 // Trigger refresh for transaction history and balance
                 if (typeof window !== 'undefined') {
                   if (isValidBlockchainHash) {
-                  window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
+                    window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
                   }
                   // Force balance refresh
                   window.dispatchEvent(new CustomEvent('arcle:balance:refresh'));
@@ -2137,7 +2137,7 @@ export default function ChatPage() {
             console.error("[Transaction] Failed to clear data from Supabase:", error);
           }
         }
-        
+
         setUserId(null);
         setUserToken(null);
         setWalletId(null);
@@ -2146,7 +2146,7 @@ export default function ChatPage() {
         setBalance("0.00");
         setChallengeData(null);
         setShowPinWidget(false);
-        
+
         const errorMessage: ChatMessage = {
           id: crypto.randomUUID(),
           role: "assistant",
@@ -2155,13 +2155,13 @@ export default function ChatPage() {
         };
         setMessages((prev) => [...prev, errorMessage]);
       } else {
-      const errorMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: "An error occurred while sending the transaction. Please try again.",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+        const errorMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "An error occurred while sending the transaction. Please try again.",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, errorMessage]);
       }
     } finally {
       setPendingTransaction(null);
@@ -2171,10 +2171,10 @@ export default function ChatPage() {
 
   const handleCancelTransaction = () => {
     if (!pendingTransaction) return;
-    
+
     // Remove the transaction preview message
     setMessages((prev) => prev.filter(msg => msg.id !== pendingTransaction.messageId));
-    
+
     // Add cancellation message
     const cancelMessage: ChatMessage = {
       id: crypto.randomUUID(),
@@ -2183,7 +2183,7 @@ export default function ChatPage() {
       timestamp: new Date(),
     };
     setMessages((prev) => [...prev, cancelMessage]);
-    
+
     setPendingTransaction(null);
   };
 
@@ -2208,7 +2208,7 @@ export default function ChatPage() {
         const currentBalance = await getBalance(walletId, walletAddress || '', userId, userToken);
         const needed = parseFloat(amount);
         const current = currentBalance ? parseFloat(currentBalance) : 0;
-        
+
         if (current < needed) {
           const insufficientMsg: ChatMessage = {
             id: crypto.randomUUID(),
@@ -2343,13 +2343,13 @@ export default function ChatPage() {
       setIsLoading(false);
     }
   };
-  
-      // Poll transaction status until confirmed
-      // Arc has sub-second finality, so we can poll faster
-      const pollTransactionStatus = async (transactionId: string, maxAttempts = 30, pollInterval = 2000) => {
-        let attempts = 0;
-        let hasNotified = false;
-    
+
+  // Poll transaction status until confirmed
+  // Arc has sub-second finality, so we can poll faster
+  const pollTransactionStatus = async (transactionId: string, maxAttempts = 30, pollInterval = 2000) => {
+    let attempts = 0;
+    let hasNotified = false;
+
     const poll = async () => {
       if (attempts >= maxAttempts) {
         console.log(`Polling stopped after ${maxAttempts} attempts for transaction ${transactionId}`);
@@ -2365,30 +2365,30 @@ export default function ChatPage() {
         }));
         return;
       }
-      
+
       attempts++;
       console.log(`[Polling] Transaction ${transactionId} (attempt ${attempts}/${maxAttempts})...`);
-      
+
       const status = await getTransactionStatus(transactionId);
-      
+
       if (!status) {
         console.log(`[Polling] No status returned for transaction ${transactionId}, continuing to poll...`);
         setTimeout(poll, pollInterval);
         return;
       }
-      
+
       console.log(`[Polling] Transaction ${transactionId} status: ${status.status}, hash: ${status.hash || 'none'}`);
-      
+
       // Check if we have a valid blockchain hash (0x followed by 64 hex characters)
       const hasValidHash = status.hash && status.hash.startsWith("0x") && status.hash.length === 66;
-      
+
       // Transaction is confirmed when status is confirmed AND we have a blockchain hash
       const isConfirmed = status && status.status === "confirmed" && hasValidHash;
-      
+
       if (isConfirmed) {
         if (!hasNotified) {
           hasNotified = true;
-          
+
           // Update balance after confirmation
           if (walletId && walletAddress) {
             const updatedBalance = await getBalance(walletId, walletAddress, userId || undefined, userToken || undefined);
@@ -2396,13 +2396,13 @@ export default function ChatPage() {
               setBalance(updatedBalance);
             }
           }
-          
+
           // Don't add confirmation message to chat - transaction appears in transaction history panel
           // Just trigger refresh events
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
             window.dispatchEvent(new CustomEvent('arcle:balance:refresh'));
-            }
+          }
         }
         return; // Stop polling once confirmed with hash
       } else if (status && status.status === "confirmed" && !hasValidHash) {
@@ -2429,7 +2429,7 @@ export default function ChatPage() {
         setTimeout(poll, pollInterval);
       }
     };
-    
+
     setTimeout(poll, pollInterval);
   };
 
@@ -2440,26 +2440,26 @@ export default function ChatPage() {
       console.warn("[PIN Widget] Challenge already being processed, ignoring duplicate success callback");
       return;
     }
-    
+
     processingChallengeRef.current = true;
-    
-      // Handle Gateway deposit challenge completion
-      if (challengeData?.gatewayDeposit) {
+
+    // Handle Gateway deposit challenge completion
+    if (challengeData?.gatewayDeposit) {
       const deposit = challengeData.gatewayDeposit;
-      
+
       try {
-      // Wait a moment for deposit to finalize
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      
-      // Retry the bridge transfer now that deposit is complete
-      const retryMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: `✅ Gateway deposit complete!\n\nNow initiating the bridge transfer...`,
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, retryMessage]);
-      
+        // Wait a moment for deposit to finalize
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        // Retry the bridge transfer now that deposit is complete
+        const retryMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `✅ Gateway deposit complete!\n\nNow initiating the bridge transfer...`,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, retryMessage]);
+
         const response = await fetch("/api/circle/bridge", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -2474,9 +2474,9 @@ export default function ChatPage() {
             destinationAddress: deposit.destinationAddress,
           }),
         });
-        
+
         const bridgeResult = await response.json();
-        
+
         if (bridgeResult.success && bridgeResult.data?.requiresChallenge) {
           // Gateway transfer signing required - set up new challenge
           setChallengeData({
@@ -2499,7 +2499,7 @@ export default function ChatPage() {
           processingChallengeRef.current = false;
           return;
         }
-        
+
         // If no new challenge needed, deposit completed successfully
         setChallengeData(null);
         setShowPinWidget(false);
@@ -2521,16 +2521,16 @@ export default function ChatPage() {
         setIsLoading(false);
         return;
       }
-      }
-      
-      // Handle Gateway transfer signing challenge completion
-      if (challengeData?.gatewayTransfer) {
+    }
+
+    // Handle Gateway transfer signing challenge completion
+    if (challengeData?.gatewayTransfer) {
       const transfer = challengeData.gatewayTransfer;
-      
+
       // Get signature from challenge result
       // The signature should be in result.signature or we need to fetch it
       let signature: string | null = null;
-      
+
       try {
         // Log the result structure to understand what we're working with
         console.log(`[Gateway Transfer] PIN widget result:`, {
@@ -2542,7 +2542,7 @@ export default function ChatPage() {
           resultKeys: result ? Object.keys(result) : [],
           dataKeys: result?.data ? Object.keys(result.data) : [],
         });
-        
+
         // Try to get signature from the challenge result (check multiple possible locations)
         // For EIP-712 signing challenges, Circle might return signature in different places
         if (result?.signature) {
@@ -2568,17 +2568,17 @@ export default function ChatPage() {
           // If it's not there, we need to check the result structure more thoroughly
           console.log(`[Gateway Transfer] ⚠️ Signature not found in callback result. Checking result structure...`);
           console.log(`[Gateway Transfer] Full result object:`, JSON.stringify(result, null, 2));
-          
+
           // Try to extract signature from deeply nested structures
           const deepSearch = (obj: any, depth = 0): string | null => {
             if (depth > 5) return null; // Prevent infinite recursion
             if (!obj || typeof obj !== 'object') return null;
-            
+
             // Check if this is a signature (starts with 0x and is 130+ chars)
             if (typeof obj === 'string' && obj.startsWith('0x') && obj.length >= 130) {
               return obj;
             }
-            
+
             // Check all string values in the object
             for (const key in obj) {
               const value = obj[key];
@@ -2590,10 +2590,10 @@ export default function ChatPage() {
                 if (found) return found;
               }
             }
-            
+
             return null;
           };
-          
+
           const deepSignature = deepSearch(result);
           if (deepSignature) {
             signature = deepSignature;
@@ -2610,11 +2610,11 @@ export default function ChatPage() {
             );
           }
         }
-        
+
         if (!signature) {
           throw new Error("Could not retrieve signature from challenge");
         }
-        
+
         // Submit signed burn intent to Gateway API
         const submitResponse = await fetch("/api/circle/gateway-user", {
           method: "POST",
@@ -2625,20 +2625,20 @@ export default function ChatPage() {
             signature: signature,
           }),
         });
-        
+
         const submitResult = await submitResponse.json();
-        
+
         if (submitResult.success) {
           const successMessage: ChatMessage = {
             id: crypto.randomUUID(),
             role: "assistant",
             content: `🎉 Bridge transfer complete!\n\n` +
-                    `Your ${transfer.amount} USDC has been bridged from ${transfer.fromChain} to ${transfer.toChain}!\n\n` +
-                    `The transfer is instant - funds should arrive in seconds.`,
+              `Your ${transfer.amount} USDC has been bridged from ${transfer.fromChain} to ${transfer.toChain}!\n\n` +
+              `The transfer is instant - funds should arrive in seconds.`,
             timestamp: new Date(),
           };
           setMessages((prev) => [...prev, successMessage]);
-          
+
           // Refresh balance
           if (walletId) {
             const newBalance = await getBalance(walletId, walletAddress || undefined, userId || undefined, userToken || undefined);
@@ -2670,15 +2670,15 @@ export default function ChatPage() {
       }
       return;
     }
-    
+
     // Handle USYC approval challenge completion
     if (pendingUSYC && pendingUSYC.step === 'approve') {
       try {
         setIsLoading(true);
-        
+
         // Wait a moment for approval to finalize
         await new Promise(resolve => setTimeout(resolve, 2000));
-        
+
         const completeMessage: ChatMessage = {
           id: crypto.randomUUID(),
           role: "assistant",
@@ -2686,7 +2686,7 @@ export default function ChatPage() {
           timestamp: new Date(),
         };
         setMessages((prev) => [...prev, completeMessage]);
-        
+
         // Complete the second step
         const completeAction = pendingUSYC.action === 'subscribe' ? 'complete-subscribe' : 'complete-redeem';
         const response = await fetch('/api/circle/usyc', {
@@ -2701,9 +2701,9 @@ export default function ChatPage() {
             blockchain: pendingUSYC.blockchain || 'ETH',
           }),
         });
-        
+
         const completeResult = await response.json();
-        
+
         if (completeResult.success && completeResult.data?.challengeId) {
           // Second challenge required - show PIN widget again
           const challengeDataToSet = {
@@ -2712,7 +2712,7 @@ export default function ChatPage() {
             userToken: userToken!,
             encryptionKey: encryptionKey || undefined,
           };
-          
+
           setChallengeData(challengeDataToSet);
           setPendingUSYC({
             ...pendingUSYC,
@@ -2731,7 +2731,7 @@ export default function ChatPage() {
             timestamp: new Date(),
           };
           setMessages((prev) => [...prev, successMessage]);
-          
+
           // Refresh balance
           if (walletId && walletAddress) {
             const newBalance = await getBalance(walletId, walletAddress, userId || undefined, userToken || undefined);
@@ -2760,7 +2760,7 @@ export default function ChatPage() {
       }
       return;
     }
-    
+
     // Handle USYC complete step (subscribe/redeem challenge)
     if (pendingUSYC && pendingUSYC.step === 'complete') {
       // Operation is fully complete
@@ -2771,7 +2771,7 @@ export default function ChatPage() {
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, successMessage]);
-      
+
       // Refresh balance
       if (walletId && walletAddress) {
         const newBalance = await getBalance(walletId, walletAddress, userId || undefined, userToken || undefined);
@@ -2779,7 +2779,7 @@ export default function ChatPage() {
           setBalance(newBalance);
         }
       }
-      
+
       setChallengeData(null);
       setShowPinWidget(false);
       setPendingUSYC(null);
@@ -2787,23 +2787,23 @@ export default function ChatPage() {
       setIsLoading(false);
       return;
     }
-    
+
     // Original transaction challenge handling
     console.log("PIN widget success:", result);
     setShowPinWidget(false);
-    
+
     // Check if this is a transaction challenge (not wallet creation)
     const isTransactionChallenge = challengeData?.transactionChallenge !== undefined;
-    
+
     if (isTransactionChallenge && challengeData?.transactionChallenge) {
       // This is a transaction challenge - complete the transaction
       const txChallenge = challengeData.transactionChallenge;
       console.log("[Transaction] PIN confirmed for transaction challenge:", txChallenge);
-      
+
       // Ensure we have the latest credentials (load from Supabase if challengeData is missing them)
       let pollUserId: string | null = challengeData.userId || userId || null;
       let pollUserToken: string | null = challengeData.userToken || userToken || null;
-      
+
       // If credentials are missing, try to load from Supabase
       if (typeof window !== "undefined" && pollUserId && !pollUserToken) {
         try {
@@ -2821,10 +2821,10 @@ export default function ChatPage() {
           hasUserToken: !!pollUserToken,
         });
       }
-      
+
       try {
         setIsLoading(true);
-        
+
         // After PIN confirmation, the transaction should be completed on Circle's side
         // Poll for the transaction status to confirm it went through
         const progressMsgId = crypto.randomUUID();
@@ -2835,23 +2835,23 @@ export default function ChatPage() {
           timestamp: new Date(),
         };
         setMessages((prev) => [...prev, progressMsg]);
-        
+
         // Function to remove the processing message once transaction is found
         const removeProcessingMessage = () => {
           setMessages((prev) => prev.filter(msg => msg.id !== progressMsgId));
         };
-        
+
         // Poll for transaction status (transaction might be processing)
         let attempts = 0;
         const maxAttempts = 15; // Try for up to 15 seconds
         let transactionFound = false;
-        
+
         while (attempts < maxAttempts && !transactionFound) {
           await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second between attempts
           attempts++;
-          
+
           console.log(`[Transaction] Polling for transaction status (attempt ${attempts}/${maxAttempts})...`);
-          
+
           try {
             // Query transactions for this wallet to find the one that matches
             // Pass userId and userToken as query parameters (API expects them this way)
@@ -2865,7 +2865,7 @@ export default function ChatPage() {
             if (pollUserToken) {
               queryParams.append("userToken", pollUserToken);
             }
-            
+
             const response = await fetch(
               `/api/circle/transactions?${queryParams.toString()}`,
               {
@@ -2875,48 +2875,48 @@ export default function ChatPage() {
                 },
               }
             );
-            
+
             if (response.ok) {
               const data = await response.json();
               const transactions = data.data?.data || [];
-              
+
               // Find the most recent transaction matching our criteria
               // Check the most recent transactions first (they're usually sorted newest first)
               const matchingTx = transactions.find((tx: any) => {
                 const actualTx = tx.transaction || tx;
-                const destAddress = actualTx.destinationAddress || 
-                                   actualTx.destination?.address || 
-                                   actualTx.to?.address || 
-                                   actualTx.to;
-                
+                const destAddress = actualTx.destinationAddress ||
+                  actualTx.destination?.address ||
+                  actualTx.to?.address ||
+                  actualTx.to;
+
                 // Match by destination address (most reliable)
                 const addressMatches = destAddress?.toLowerCase() === txChallenge.destinationAddress.toLowerCase();
-                
+
                 // Accept any status that indicates the transaction exists (not failed)
-                const statusMatches = actualTx.status !== "failed" && 
-                                     actualTx.state !== "FAILED" && 
-                                     actualTx.state !== "DENIED" &&
-                                     actualTx.state !== "CANCELLED";
-                
+                const statusMatches = actualTx.status !== "failed" &&
+                  actualTx.state !== "FAILED" &&
+                  actualTx.state !== "DENIED" &&
+                  actualTx.state !== "CANCELLED";
+
                 return addressMatches && statusMatches;
               });
-              
+
               // If no exact match, check for the most recent transaction (might be our transaction)
               // This handles cases where the transaction was just created
               const mostRecentTx = transactions.length > 0 ? (transactions[0].transaction || transactions[0]) : null;
-              const fallbackMatch = mostRecentTx && 
-                                   (mostRecentTx.status !== "failed" && mostRecentTx.state !== "FAILED") &&
-                                   (!matchingTx); // Only use fallback if no exact match found
-              
+              const fallbackMatch = mostRecentTx &&
+                (mostRecentTx.status !== "failed" && mostRecentTx.state !== "FAILED") &&
+                (!matchingTx); // Only use fallback if no exact match found
+
               const txToUse = matchingTx || (fallbackMatch ? mostRecentTx : null);
-              
+
               if (txToUse) {
                 transactionFound = true;
                 const actualTx = txToUse.transaction || txToUse;
-                
+
                 // Remove the "Processing" message since we found the transaction
                 removeProcessingMessage();
-                
+
                 // Update balance immediately
                 const newBalance = await getBalance(
                   txChallenge.walletId,
@@ -2927,27 +2927,27 @@ export default function ChatPage() {
                 if (newBalance) {
                   setBalance(newBalance);
                 }
-                
+
                 // Extract blockchain hash - check multiple possible fields
-                const hash = actualTx.txHash || 
-                            actualTx.transactionHash || 
-                            actualTx.onChainTxHash || 
-                            actualTx.hash ||
-                            "";
-                
+                const hash = actualTx.txHash ||
+                  actualTx.transactionHash ||
+                  actualTx.onChainTxHash ||
+                  actualTx.hash ||
+                  "";
+
                 // Validate hash format (should be 0x followed by 64 hex chars)
                 const isValidHash = hash && /^0x[a-fA-F0-9]{64}$/.test(hash);
-                
+
                 // Don't add confirmation message to chat - transaction appears in transaction history panel
                 // Just trigger refresh events
                 if (typeof window !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
                   window.dispatchEvent(new CustomEvent('arcle:balance:refresh'));
                 }
-                
+
                 // Clear pending transaction
                 setPendingTransaction(null);
-                
+
                 // Trigger refresh for transaction history and balance
                 if (typeof window !== 'undefined') {
                   if (isValidHash) {
@@ -2968,7 +2968,7 @@ export default function ChatPage() {
                     }
                   }, 2000);
                 }
-                
+
                 break;
               }
             }
@@ -2976,15 +2976,15 @@ export default function ChatPage() {
             console.warn(`[Transaction] Poll attempt ${attempts} failed:`, pollError);
           }
         }
-        
+
         if (!transactionFound) {
           // Remove the processing message since we couldn't find the transaction
           removeProcessingMessage();
-          
+
           // Transaction not found after polling - might still be processing
           // Don't add another message, just let the transaction appear in history when it's ready
           console.log("[Transaction] Transaction not found after polling, but it may still be processing");
-          
+
           // Still trigger refresh events so transaction history can pick it up when available
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('arcle:transactions:refresh'));
@@ -3005,14 +3005,14 @@ export default function ChatPage() {
         setIsLoading(false);
         processingChallengeRef.current = false;
       }
-      
+
       return; // Exit early - transaction challenge handled
     }
-    
+
     // Otherwise, this is a wallet creation challenge
     // If status is IN_PROGRESS, the wallet creation is still processing
     const isInProgress = result.status === 'IN_PROGRESS';
-    
+
     if (isInProgress) {
       const progressMsg: ChatMessage = {
         id: crypto.randomUUID(),
@@ -3022,26 +3022,26 @@ export default function ChatPage() {
       };
       setMessages((prev) => [...prev, progressMsg]);
     }
-    
+
     try {
       // Poll for wallet creation (wallet might not be immediately available)
       if (userId && userToken) {
         let attempts = 0;
         const maxAttempts = 10; // Try for up to 10 seconds
         let wallets: any[] | null = null;
-        
+
         while (attempts < maxAttempts && (!wallets || wallets.length === 0)) {
           await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second between attempts
           attempts++;
-          
+
           console.log(`Polling for wallet (attempt ${attempts}/${maxAttempts})...`);
           wallets = await listWallets(userId, userToken);
-          
+
           if (wallets && wallets.length > 0) {
             break;
           }
         }
-        
+
         if (wallets && wallets.length > 0) {
           const wallet = wallets[0];
           setWalletId(wallet.id);
@@ -3104,34 +3104,34 @@ Your wallet is now set up and ready to use. Testnet tokens have been requested f
   // Handler for PIN widget error
   const handlePinWidgetError = async (error: any) => {
     console.error("PIN widget error:", error);
-    
+
     // Check if it's a 401 "Invalid credentials" error - likely expired token
-    const is401Error = error.code === 401 || 
-                      error.message?.includes("Invalid credentials") ||
-                      error.message?.includes("401");
-    
+    const is401Error = error.code === 401 ||
+      error.message?.includes("Invalid credentials") ||
+      error.message?.includes("401");
+
     if (is401Error && challengeData?.userId) {
       console.log("[PIN Widget] 401 error detected, attempting token refresh...");
-      
+
       try {
         const newToken = await refreshUserToken();
-        
+
         if (newToken && newToken.userToken) {
           console.log("[PIN Widget] ✅ Token refreshed, retrying PIN widget...");
-          
+
           // Update challengeData with new token
           const updatedChallengeData = {
             ...challengeData,
             userToken: newToken.userToken,
             encryptionKey: newToken.encryptionKey || challengeData.encryptionKey || "",
           };
-          
+
           // Update state
           setUserToken(newToken.userToken);
           if (newToken.encryptionKey) {
             setEncryptionKey(newToken.encryptionKey);
           }
-          
+
           // Retry with new credentials
           setChallengeData(updatedChallengeData);
           // Keep showPinWidget true to retry
@@ -3143,14 +3143,14 @@ Your wallet is now set up and ready to use. Testnet tokens have been requested f
         console.error("[PIN Widget] Error during token refresh:", refreshError);
       }
     }
-    
+
     setShowPinWidget(false);
     setChallengeData(null);
     setIsLoading(false);
 
     // Handle specific errors
     let errorMessage = "There was an issue setting up your PIN. Please try creating your wallet again.";
-    
+
     if (is401Error) {
       errorMessage = `⚠️ Authentication Error: Your session has expired.
 
@@ -3254,7 +3254,7 @@ If the issue persists, the encryption key might not be returned from Circle's AP
                       disabled={isLoading}
                       placeholder="Ask anything"
                       replyTo={null}
-                      onCancelReply={() => {}}
+                      onCancelReply={() => { }}
                       isCentered={true}
                       onQRCodeScanned={(data) => {
                         // Store QR code data in context for AI agent
@@ -3290,15 +3290,15 @@ If the issue persists, the encryption key might not be returned from Circle's AP
                 replyTo={
                   replyToMessageId
                     ? (() => {
-                        const repliedMsg = messages.find((m) => m.id === replyToMessageId);
-                        return repliedMsg
-                          ? {
-                              id: repliedMsg.id,
-                              content: repliedMsg.content,
-                              role: repliedMsg.role,
-                            }
-                          : null;
-                      })()
+                      const repliedMsg = messages.find((m) => m.id === replyToMessageId);
+                      return repliedMsg
+                        ? {
+                          id: repliedMsg.id,
+                          content: repliedMsg.content,
+                          role: repliedMsg.role,
+                        }
+                        : null;
+                    })()
                     : null
                 }
                 onCancelReply={() => setReplyToMessageId(null)}

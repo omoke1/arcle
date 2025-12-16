@@ -35,43 +35,43 @@ Based on comprehensive feature audit (docs/FEATURE_STATUS_REPORT.md):
 ## Priority Tasks (Start Here)
 
 ### Phase 1: Fix Database Architecture Issues (Critical)
-- [ ] **1.1** Fix Template Files Database Approach
+- [x] **1.1** Fix Template Files Database Approach
   - **Issue**: Template files use Prisma but project uses Supabase migrations
   - **Fix**: Rewrite all .template files to use Supabase client pattern
   - Reference existing Supabase setup in `lib/supabase.ts`
   - Use `getSupabaseClient()` for client-side operations
   - Use `getSupabaseAdmin()` for server-side operations
 
-- [ ] **1.2** Fix DeFi localStorage Dependencies  
+- [x] **1.2** Fix DeFi localStorage Dependencies  
   - **Issue**: Savings Goals & SafeLocks use localStorage, data lost on browser clear
   - **Fix**: Create Supabase-based implementations
   - Rewrite `lib/defi/goal-based-savings-db.ts.template` using Supabase queries
   - Rewrite `lib/defi/safelock-db.ts.template` using Supabase queries
   - Create Supabase migrations for savings_goals and safelocks tables
 
-- [ ] **1.3** Fix Notification Service Database Integration
+- [x] **1.3** Fix Notification Service Database Integration
   - **Issue**: Database code exists but commented out, uses localStorage fallback
   - **Fix**: Replace commented Prisma imports with Supabase client
   - Convert placeholder functions to use Supabase queries against existing notifications table
   - Update all notification-related API endpoints
 
-- [ ] **1.3** Fix Bridge False Positives
+- [x] **1.3** Fix Bridge False Positives
   - **Issue**: Bridge monitoring assumes completion after timeout, causing false positives
   - **Fix**: Implement balance-based verification before marking complete
   - Add post-bridge balance check to confirm funds actually arrived
 
 ### Phase 2: Fix Transaction Error Handling (High Priority)
-- [ ] **2.1** Fix Circle SDK Error Masking
+- [x] **2.1** Fix Circle SDK Error Masking
   - **Issue**: Circle 401/403 errors rethrown as generic 500 errors, masks root cause
   - **Fix**: Propagate actual Circle status codes (401/403) with actionable guidance
   - Add specific error message mapping for expired userToken/unfinished PIN challenge
 
-- [ ] **2.2** Fix Transaction Retry Logic
+- [x] **2.2** Fix Transaction Retry Logic
   - **Issue**: Client blindly retries on 500, no logic to refresh stale credentials
   - **Fix**: Detect 401/403 and trigger user recreation + PIN widget
   - Implement automatic token refresh with retry logic
 
-- [ ] **2.3** Fix Aggressive Transaction Polling
+- [x] **2.3** Fix Aggressive Transaction Polling
   - **Issue**: 3-second polling interval may cause rate limiting in production
   - **Fix**: Implement adaptive polling (faster when active, slower when idle)
   - Add intelligent polling frequency management

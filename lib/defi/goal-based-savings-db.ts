@@ -68,7 +68,7 @@ export async function createSavingsGoal(params: {
   reminderEnabled?: boolean;
 }): Promise<SavingsGoal> {
   const supabase = getSupabaseAdmin();
-  
+
   const {
     userId,
     walletId,
@@ -410,6 +410,7 @@ function calculateNextContribution(from: Date, frequency: SavingsFrequency): Dat
  */
 export async function getSavingsGoalsByUser(userId: string): Promise<SavingsGoal[]> {
   const supabase = getSupabaseAdmin();
+  // Fixed: Ensure data is not null in return
   const { data, error } = await supabase
     .from('savings_goals')
     .select('*')
@@ -445,7 +446,7 @@ export async function getSavingsTransactions(goalId: string): Promise<SavingsTra
     .select('*')
     .eq('goal_id', goalId)
     .order('timestamp', { ascending: false });
-    
+
   if (error) return [];
   return data || [];
 }
@@ -455,15 +456,15 @@ export async function getSavingsTransactions(goalId: string): Promise<SavingsTra
  */
 export async function getGoalsDueForContribution(): Promise<SavingsGoal[]> {
   const supabase = getSupabaseAdmin();
-  const now = new Date().toISOString(); 
-  
+  const now = new Date().toISOString();
+
   const { data, error } = await supabase
     .from('savings_goals')
     .select('*')
     .eq('status', 'active')
     .eq('reminder_enabled', true)
     .lte('next_contribution_at', now);
-    
+
   if (error) return [];
   return data || [];
 }
@@ -474,13 +475,13 @@ export async function getGoalsDueForContribution(): Promise<SavingsGoal[]> {
 export async function getMaturedGoals(): Promise<SavingsGoal[]> {
   const supabase = getSupabaseAdmin();
   const now = new Date().toISOString();
-  
+
   const { data, error } = await supabase
     .from('savings_goals')
     .select('*')
     .eq('status', 'active')
     .lte('maturity_date', now);
-    
+
   if (error) return [];
   return data || [];
 }

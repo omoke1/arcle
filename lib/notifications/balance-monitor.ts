@@ -4,18 +4,18 @@
  * Monitors wallet balance changes and generates notifications
  */
 
-import { createBalanceChangeNotification } from "./notification-service";
-import { getNotificationPreferences } from "./notification-service";
+import { createNotification } from "@/lib/db/services/notifications";
 
 export interface BalanceMonitorConfig {
   walletId: string;
   walletAddress: string;
+  userId?: string; // Added userId for notifications
   pollInterval?: number; // milliseconds
   enabled?: boolean;
   onBalanceChange?: (oldBalance: string, newBalance: string, change: string) => void;
 }
 
-let balanceMonitors = new Map<string, NodeJS.Timeout | null>();
+let balanceMonitors = new Map<string, any>();
 
 /**
  * Start monitoring balance for a wallet
@@ -26,6 +26,7 @@ export function startBalanceMonitoring(
   const {
     walletId,
     walletAddress,
+    userId,
     pollInterval = 5000, // 5 seconds for faster balance updates
     enabled = true,
     onBalanceChange,
@@ -69,16 +70,26 @@ export function startBalanceMonitoring(
           // Only trigger notification if change is significant (>= 0.000001 USDC)
           // This filters out tiny rounding differences and only shows real transactions
           if (changeNum >= 0.000001) {
-          // Create notification
-          createBalanceChangeNotification(
-            lastBalance,
-            currentBalance,
-            change
-          );
+            // Create notification if userId is provided
+            if (userId) {
+              const changeType = newBalanceNum > oldBalanceNum ? "received" : "sent";
+              createNotification({
+                user_id: userId,
+                type: 'transaction',
+                title: 'Balance Updated',
+                message: `You ${changeType} ${Math.abs(parseFloat(change))} USDC. New balance: ${currentBalance} USDC`,
+                priority: 'low',
+                metadata: {
+                  oldBalance: lastBalance,
+                  newBalance: currentBalance,
+                  change
+                }
+              }).catch(err => console.error("Error creating balance notification:", err));
+            }
 
-          // Call callback if provided
-          if (onBalanceChange) {
-            onBalanceChange(lastBalance, currentBalance, change);
+            // Call callback if provided
+            if (onBalanceChange) {
+              onBalanceChange(lastBalance, currentBalance, change);
             }
           }
         }

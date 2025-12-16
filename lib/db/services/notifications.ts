@@ -34,8 +34,10 @@ export interface CreateNotificationData {
  * Create a new notification
  */
 export async function createNotification(data: CreateNotificationData): Promise<Notification> {
-  const supabase = getSupabaseAdmin();
-  
+  const supabase = typeof window === 'undefined'
+    ? getSupabaseAdmin()
+    : getSupabaseClient();
+
   const { data: notification, error } = await supabase
     .from('notifications')
     .insert({
@@ -60,7 +62,7 @@ export async function createNotification(data: CreateNotificationData): Promise<
  */
 export async function getNotificationById(id: string): Promise<Notification | null> {
   const supabase = getSupabaseClient();
-  
+
   const { data, error } = await supabase
     .from('notifications')
     .select('*')
@@ -93,7 +95,7 @@ export async function getUserNotifications(
 
   try {
     const supabase = getSupabaseClient();
-    
+
     const { data, error } = await supabase
       .from('notifications')
       .select('*')
@@ -121,7 +123,7 @@ export async function getUnreadNotifications(
   limit: number = 50
 ): Promise<Notification[]> {
   const supabase = getSupabaseClient();
-  
+
   const { data, error } = await supabase
     .from('notifications')
     .select('*')
@@ -147,7 +149,7 @@ export async function getNotificationsByType(
   limit: number = 50
 ): Promise<Notification[]> {
   const supabase = getSupabaseClient();
-  
+
   const { data, error } = await supabase
     .from('notifications')
     .select('*')
@@ -174,7 +176,7 @@ export async function getUnreadCount(user_id: string): Promise<number> {
 
   try {
     const supabase = getSupabaseClient();
-    
+
     const { count, error } = await supabase
       .from('notifications')
       .select('*', { count: 'exact', head: true })
@@ -202,8 +204,10 @@ export async function markAsRead(id: string): Promise<Notification> {
   }
 
   try {
-    const supabase = getSupabaseAdmin();
-    
+    const supabase = typeof window === 'undefined'
+      ? getSupabaseAdmin()
+      : getSupabaseClient();
+
     const { data, error } = await supabase
       .from('notifications')
       .update({
@@ -232,8 +236,10 @@ export async function markAsRead(id: string): Promise<Notification> {
  * Mark all notifications as read
  */
 export async function markAllAsRead(user_id: string): Promise<boolean> {
-  const supabase = getSupabaseAdmin();
-  
+  const supabase = typeof window === 'undefined'
+    ? getSupabaseAdmin()
+    : getSupabaseClient();
+
   const { error } = await supabase
     .from('notifications')
     .update({
@@ -256,7 +262,7 @@ export async function markAllAsRead(user_id: string): Promise<boolean> {
  */
 export async function deleteNotification(id: string): Promise<boolean> {
   const supabase = getSupabaseAdmin();
-  
+
   const { error } = await supabase
     .from('notifications')
     .delete()
@@ -275,7 +281,7 @@ export async function deleteNotification(id: string): Promise<boolean> {
  */
 export async function deleteAllRead(user_id: string): Promise<boolean> {
   const supabase = getSupabaseAdmin();
-  
+
   const { error } = await supabase
     .from('notifications')
     .delete()

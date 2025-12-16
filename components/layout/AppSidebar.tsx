@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import * as React from "react";
-import { 
+import {
   History,
   Wallet,
   CalendarDays,
@@ -56,14 +56,14 @@ export function AppSidebar({
 }: AppSidebarProps) {
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [currentView, setCurrentView] = useState<SidebarView>(initialView);
-  
+
   // Update view when initialView prop changes
   useEffect(() => {
     if (initialView !== currentView) {
       setCurrentView(initialView);
     }
-  }, [initialView]);
-  
+  }, [initialView, currentView]);
+
   // Notify parent of view changes
   useEffect(() => {
     onViewChange?.(currentView);
@@ -82,7 +82,7 @@ export function AppSidebar({
   return (
     <>
       {/* Sidebar - Responsive */}
-      <aside 
+      <aside
         className={cn(
           "bg-carbon border-r border-graphite/30 flex flex-col h-full transition-all duration-300 ease-in-out group",
           // Mobile: Fixed overlay, Desktop: Inline
@@ -90,8 +90,8 @@ export function AppSidebar({
             ? "fixed left-0 top-0 z-[60] h-screen"
             : "relative",
           // Width based on open state
-          isOpen 
-            ? isMobile ? "w-64 translate-x-0" : "w-64" 
+          isOpen
+            ? isMobile ? "w-64 translate-x-0" : "w-64"
             : isMobile ? "-translate-x-full w-64" : "w-16"
         )}
       >
@@ -142,29 +142,29 @@ export function AppSidebar({
               <div className="mb-4">
                 <div className="space-y-1">
                   {walletId && (
-                    <SidebarItem 
-                      icon={History} 
+                    <SidebarItem
+                      icon={History}
                       label="Transaction History"
                       onClick={() => handleItemClick(() => setCurrentView("transaction-history"))}
                       isCollapsed={!isOpen}
                     />
                   )}
                   {walletId && (
-                    <SidebarItem 
-                      icon={Wallet} 
+                    <SidebarItem
+                      icon={Wallet}
                       label="Wallet Settings"
                       onClick={() => handleItemClick(() => setCurrentView("wallet"))}
                       isCollapsed={!isOpen}
                     />
                   )}
-                  <SidebarItem 
-                    icon={CalendarDays} 
+                  <SidebarItem
+                    icon={CalendarDays}
                     label="Schedules"
                     onClick={() => handleItemClick(() => setCurrentView("schedules"))}
                     isCollapsed={!isOpen}
                   />
-                  <SidebarItem 
-                    icon={Search} 
+                  <SidebarItem
+                    icon={Search}
                     label="Scan Reports"
                     onClick={() => handleItemClick(() => setCurrentView("scan-reports"))}
                     isCollapsed={!isOpen}
@@ -181,14 +181,14 @@ export function AppSidebar({
                   Settings & Help
                 </h3>
                 <div className="space-y-1">
-                  <SidebarItem 
-                    icon={Settings} 
+                  <SidebarItem
+                    icon={Settings}
                     label="Settings"
                     onClick={() => handleItemClick(() => setCurrentView("settings"))}
                     isCollapsed={!isOpen}
                   />
-                  <SidebarItem 
-                    icon={HelpCircle} 
+                  <SidebarItem
+                    icon={HelpCircle}
                     label="Help & Support"
                     onClick={() => handleItemClick(() => setCurrentView("help"))}
                     isCollapsed={!isOpen}
@@ -229,7 +229,7 @@ export function AppSidebar({
           </>
         ) : currentView === "transaction-history" ? (
           <div className="flex-1 flex flex-col overflow-hidden">
-            <TransactionHistoryPage 
+            <TransactionHistoryPage
               onBack={() => setCurrentView("main")}
               walletId={walletId}
               walletAddress={walletAddress}
@@ -237,37 +237,37 @@ export function AppSidebar({
           </div>
         ) : currentView === "wallet" ? (
           <div className="flex-1 flex flex-col overflow-hidden">
-            <WalletSettingsPage 
+            <WalletSettingsPage
               onBack={() => setCurrentView("main")}
               walletAddress={walletAddress}
               walletId={walletId}
-              onCreateWallet={() => {}}
-              onViewPermissions={() => {}}
+              onCreateWallet={() => { }}
+              onViewPermissions={() => { }}
             />
           </div>
         ) : currentView === "schedules" ? (
           <div className="flex-1 flex flex-col overflow-hidden">
-            <SchedulesPage 
+            <SchedulesPage
               onBack={() => setCurrentView("main")}
               userId={userId}
             />
           </div>
         ) : currentView === "scan-reports" ? (
           <div className="flex-1 flex flex-col overflow-hidden">
-            <ScanReportsPage 
+            <ScanReportsPage
               onBack={() => setCurrentView("main")}
             />
           </div>
         ) : currentView === "settings" ? (
           <div className="flex-1 flex flex-col overflow-hidden">
-            <SettingsPage 
+            <SettingsPage
               onBack={() => setCurrentView("main")}
               onLogout={onLogout}
             />
           </div>
         ) : currentView === "profile" ? (
           <div className="flex-1 flex flex-col overflow-hidden">
-            <SettingsPage 
+            <SettingsPage
               onBack={() => setCurrentView("main")}
               onLogout={onLogout}
               showProfileOnMount={true}
@@ -275,7 +275,7 @@ export function AppSidebar({
           </div>
         ) : currentView === "help" ? (
           <div className="flex-1 flex flex-col overflow-hidden">
-            <HelpPage 
+            <HelpPage
               onBack={() => setCurrentView("main")}
             />
           </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Paperclip,
   ShoppingBag,
@@ -36,6 +36,58 @@ export function AttachmentMenu({
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const [isMobile, setIsMobile] = useState(false);
 
+  // Calculate position based on anchor
+  const getMenuPosition = useCallback(() => {
+    if (!anchorRef.current) {
+      // Don't warn on initial render if null
+      return { top: 0, left: 0 };
+    }
+    const rect = anchorRef.current.getBoundingClientRect();
+    const inputBar = anchorRef.current.closest('.max-w-2xl')?.getBoundingClientRect();
+
+    // Calculate position with bounds checking
+    let top = rect.bottom + 8;
+    let left = inputBar ? inputBar.left : rect.left;
+
+    // Responsive bounds
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const menuWidth = isMobile ? Math.min(320, viewportWidth - 32) : 240;
+    const menuHeight = Math.min(isMobile ? 320 : 320, Math.floor(viewportHeight * 0.5));
+    // Adjust if menu would go off right edge
+    if (left + menuWidth > viewportWidth) {
+      left = viewportWidth - menuWidth - 16; // 16px padding from edge
+    }
+
+    // Adjust if menu would go off bottom edge (show above instead)
+    if (top + menuHeight > viewportHeight) {
+      top = rect.top - menuHeight - 8; // Show above the button
+    }
+
+    // Ensure minimum padding from edges
+    left = Math.max(16, left);
+    top = Math.max(16, top);
+
+    const position = { top, left };
+    return position;
+  }, [anchorRef, isMobile]);
+
+  const getMoreMenuPosition = useCallback(() => {
+    if (!menuRef.current) return { top: 0, left: 0 };
+    const rect = menuRef.current.getBoundingClientRect();
+    // On mobile, stack below the main menu; on desktop, align to the right.
+    if (isMobile) {
+      return {
+        top: rect.bottom + 8,
+        left: rect.left,
+      };
+    }
+    return {
+      top: rect.top,
+      left: rect.right - 8,
+    };
+  }, [isMobile]);
+
   useEffect(() => {
     const checkMobile = () => {
       setIsMobile(window.innerWidth < 640);
@@ -51,7 +103,7 @@ export function AttachmentMenu({
 
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Node;
-      
+
       // Don't close if clicking on the anchor button (Plus icon) or its parent
       if (anchorRef.current) {
         const anchorElement = anchorRef.current;
@@ -68,16 +120,16 @@ export function AttachmentMenu({
           parent = parent.parentElement;
         }
       }
-      
+
       // Don't close if clicking inside the menus
       if (menuRef.current && menuRef.current.contains(target)) {
         return;
       }
-      
+
       if (moreMenuRef.current && moreMenuRef.current.contains(target)) {
         return;
       }
-      
+
       // Close if clicking outside
       onClose();
       setShowMoreMenu(false);
@@ -108,7 +160,7 @@ export function AttachmentMenu({
       console.log("[AttachmentMenu] Menu is open, anchorRef:", anchorRef.current);
       console.log("[AttachmentMenu] Menu position:", getMenuPosition());
     }
-  }, [isOpen, anchorRef]);
+  }, [isOpen, anchorRef, getMenuPosition]);
 
   if (!isOpen) return null;
 
@@ -194,58 +246,7 @@ export function AttachmentMenu({
     setShowMoreMenu(false);
   };
 
-  // Calculate position based on anchor
-  const getMenuPosition = () => {
-    if (!anchorRef.current) {
-      console.warn("[AttachmentMenu] anchorRef is null");
-      return { top: 0, left: 0 };
-    }
-    const rect = anchorRef.current.getBoundingClientRect();
-    const inputBar = anchorRef.current.closest('.max-w-2xl')?.getBoundingClientRect();
-    
-    // Calculate position with bounds checking
-    let top = rect.bottom + 8;
-    let left = inputBar ? inputBar.left : rect.left;
-    
-    // Responsive bounds
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    const menuWidth = isMobile ? Math.min(320, viewportWidth - 32) : 240;
-    const menuHeight = Math.min(isMobile ? 320 : 320, Math.floor(viewportHeight * 0.5));
-    // Adjust if menu would go off right edge
-    if (left + menuWidth > viewportWidth) {
-      left = viewportWidth - menuWidth - 16; // 16px padding from edge
-    }
-    
-    // Adjust if menu would go off bottom edge (show above instead)
-    if (top + menuHeight > viewportHeight) {
-      top = rect.top - menuHeight - 8; // Show above the button
-    }
-    
-    // Ensure minimum padding from edges
-    left = Math.max(16, left);
-    top = Math.max(16, top);
-    
-    const position = { top, left };
-    console.log("[AttachmentMenu] Calculated position:", position, "rect:", rect, "viewport:", { width: viewportWidth, height: viewportHeight });
-    return position;
-  };
 
-  const getMoreMenuPosition = () => {
-    if (!menuRef.current) return { top: 0, left: 0 };
-    const rect = menuRef.current.getBoundingClientRect();
-    // On mobile, stack below the main menu; on desktop, align to the right.
-    if (isMobile) {
-      return {
-        top: rect.bottom + 8,
-        left: rect.left,
-      };
-    }
-    return {
-      top: rect.top,
-      left: rect.right - 8,
-    };
-  };
 
   const menuPosition = getMenuPosition();
   const moreMenuPosition = getMoreMenuPosition();
