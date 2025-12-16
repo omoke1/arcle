@@ -16,9 +16,9 @@ export interface CreateUserRequest {
     id: string;
     type: "EMAIL" | "PHONE" | "WALLET";
   };
-  action?: "create" | "email-login" | "resend-otp"; // Action to perform
+  action?: "create" | "email-login" | "resend-otp" | "social-login"; // Action to perform
   email?: string; // For email authentication
-  deviceId?: string; // For email authentication
+  deviceId?: string; // For email or social authentication
   deviceToken?: string; // Device token from email login
   otpToken?: string; // OTP token for resending
   userToken?: string; // User token for resending OTP
@@ -26,10 +26,11 @@ export interface CreateUserRequest {
 
 /**
  * POST /api/circle/users
- * Create a new user for User-Controlled Wallets or handle email authentication
+ * Create a new user for User-Controlled Wallets or handle authentication
  * 
  * Actions:
  * - "create" (default): Create a standard user
+ * - "social-login": Get device token for social login (Google, Facebook, Apple)
  * - "email-login": Initiate email OTP authentication
  * - "resend-otp": Resend OTP email
  */
@@ -99,6 +100,86 @@ export async function POST(request: NextRequest) {
         },
         { status: 401 }
       );
+    }
+    
+    // Handle social login (Google, Facebook, Apple)
+    if (body.action === "social-login") {
+      console.log("Initiating social login...");
+      
+      if (!body.deviceId) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "deviceId is required for social login",
+          },
+          { status: 400 }
+        );
+      }
+      
+      const deviceId = body.deviceId;
+      
+      try {
+        console.log("Calling createDeviceTokenForSocialLogin with deviceId:", deviceId);
+        
+        const response = await client.createDeviceTokenForSocialLogin({
+          deviceId,
+        });
+        
+        console.log("Social login token response:", {
+          hasData: !!response.data,
+          hasDeviceToken: !!response.data?.deviceToken,
+          hasDeviceEncryptionKey: !!response.data?.deviceEncryptionKey,
+        });
+        
+        if (!response.data?.deviceToken) {
+          console.error("No deviceToken in response:", response);
+          throw new Error("No deviceToken returned from Circle");
+        }
+        
+        return NextResponse.json({
+          success: true,
+          data: {
+            deviceId,
+            deviceToken: response.data.deviceToken,
+            deviceEncryptionKey: response.data.deviceEncryptionKey,
+          },
+        });
+      } catch (socialError: any) {
+        console.error("=== Circle social login error ===");
+        console.error("Error message:", socialError.message);
+        console.error("Error type:", socialError.constructor?.name);
+        
+        // Safely extract error details without circular references
+        const errorData = socialError.response?.data;
+        const errorStatus = socialError.response?.status;
+        
+        if (errorData) {
+          console.error("Error response data:", JSON.stringify(errorData, null, 2));
+        }
+        if (errorStatus) {
+          console.error("Error response status:", errorStatus);
+        }
+        
+        // Extract error message safely
+        const errorMessage = errorData?.message || 
+                           errorData?.error ||
+                           socialError.message || 
+                           "Failed to create device token for social login";
+        
+        return NextResponse.json(
+          {
+            success: false,
+            error: errorMessage,
+            details: errorData ? {
+              message: errorData.message || errorData.error,
+              code: errorData.code,
+            } : {
+              message: socialError.message,
+            },
+          },
+          { status: errorStatus || 500 }
+        );
+      }
     }
     
     // Handle email authentication

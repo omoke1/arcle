@@ -232,7 +232,7 @@ export function ChatBubble({
       className={cn(
         "flex w-full relative",
         isUser ? "justify-end" : "justify-start",
-        groupedWithPrevious ? "mt-1 mb-2" : "mt-3 mb-3"
+        groupedWithPrevious ? "mt-1 mb-2" : "mt-2 mb-3"
       )}
     >
       {!isUser && showAvatar && (
@@ -259,13 +259,15 @@ export function ChatBubble({
         </div>
       )}
 
+      {/* Main Bubble container */}
       <div
         ref={bubbleRef}
         className={cn(
-          "max-w-[80%] sm:max-w-[70%] md:max-w-[60%] flex flex-col relative",
+          // width & layout
+          "max-w-[90%] md:max-w-[75%] flex flex-col relative ",
           isUser ? "items-end" : "items-start",
-          !isMobile && "touch-none select-none", // allow vertical scroll on mobile
-          isDragging && "transition-none" // Disable transitions during drag
+          !isMobile && "touch-none select-none",
+          isDragging && "transition-none"
         )}
         style={{
           transform: `translateX(${swipeOffset}px)`,
@@ -277,29 +279,29 @@ export function ChatBubble({
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp} // Cancel drag if mouse leaves
+        onMouseLeave={handleMouseUp}
         onClick={() => {
-          // On mobile, tap to reply instead of swipe
           if (isMobile && onReply && messageId) {
             onReply(messageId);
             return;
           }
         }}
       >
+        {/* Bubble itself */}
         <div
           className={cn(
-            "px-4 py-2 text-sm leading-relaxed break-words shadow-sm relative",
-            "transition-all duration-150",
+            "py-2.5 px-4 shadow-md transition-all duration-150 break-words relative whitespace-pre-wrap",
             isUser
-              ? "bg-aurora text-carbon rounded-3xl rounded-br-sm"
-              : "bg-[#2A2A2A] text-signal-white border border-graphite/60 rounded-3xl rounded-bl-sm",
-            // Add subtle glow for assistant messages to make them more visible against dark background
-            !isUser && "shadow-[0_0_16px_rgba(53,53,53,0.6)]",
-            isPending && "opacity-70",
-            // Visual feedback during swipe
-            isDragging && "scale-[0.98]",
-            showReplyIcon && "ring-2 ring-aurora/50"
+              ? "bg-aurora text-carbon rounded-[22px] rounded-br-[5px] ml-auto"
+              : "bg-[#242424] border border-graphite/60 text-signal-white rounded-[22px] rounded-bl-[5px] mr-auto",
+            isPending && "opacity-70"
           )}
+          style={{
+            minWidth: "60px",
+            boxShadow: isUser
+              ? "0px 2px 16px 0px rgba(233,242,142,0.08)"
+              : "0px 2px 16px 0px rgba(53,53,53,0.3)",
+          }}
         >
           {/* Copy button (shows on hover) */}
           <button
@@ -318,33 +320,17 @@ export function ChatBubble({
           <div className="whitespace-pre-wrap">
             {children}
           </div>
-          
-          {/* Timestamp inside bubble - bottom right */}
           {timestamp && (
-            <div
+            <span
               className={cn(
-                "absolute bottom-1.5 right-3 flex items-center gap-1",
-                isUser ? "text-carbon/70" : "text-signal-white/60"
+                "absolute bottom-2 right-3 text-xs font-normal opacity-70 select-none",
+                isUser ? "text-carbon/60" : "text-soft-mist/60"
               )}
             >
-              <span className="text-[10px] font-medium">
-                {formatTime(timestamp)}
-              </span>
-            </div>
+              {formatTime(timestamp)}
+            </span>
           )}
         </div>
-
-        {/* Timestamp below bubble (fallback/alternative) */}
-        {timestamp && (
-          <span
-            className={cn(
-              "mt-1.5 text-[11px] tracking-wide font-medium",
-              isUser ? "text-soft-mist/70" : "text-soft-mist/60"
-            )}
-          >
-            {formatTime(timestamp)}
-          </span>
-        )}
       </div>
     </div>
   );

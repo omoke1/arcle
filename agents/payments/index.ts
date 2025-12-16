@@ -9,6 +9,7 @@ import { sendToPhone, sendToEmail } from './phoneEmailPayments';
 import { createOneTimeLink, processPaymentLink, generatePaymentLinkUrl, getUserPaymentLinks } from './oneTimeLinks';
 import { createQRPaymentLink, getQRPaymentLink } from './qrPayments';
 import { createRecurringPayment, executeRecurringPayment } from './recurringPayments';
+import { executeBillPayment, validateBillerDetails, SUPPORTED_BILLERS, BillType } from './billPayments';
 import type { ExecutionResult } from '@/lib/wallet/sessionKeys/delegateExecution';
 import type { AgentRequest, AgentResponse } from '@/core/routing/types';
 import { toSmallestUnit } from '@/agents/inera/utils';
@@ -150,6 +151,29 @@ class PaymentsAgent {
   }
 
   /**
+   * Execute a bill payment (Airtime, Electricity, Betting)
+   */
+  async executeBillPayment(params: {
+    walletId: string;
+    userId: string;
+    userToken: string;
+    billType: BillType;
+    provider: string;
+    identifier: string;
+    amount: string;
+  }) {
+    return await executeBillPayment({
+      walletId: params.walletId,
+      userId: params.userId,
+      userToken: params.userToken,
+      billType: params.billType,
+      provider: params.provider,
+      identifier: params.identifier,
+      amount: params.amount,
+    });
+  }
+
+  /**
    * Execute agent action (for routing)
    */
   async execute(action: string, params: Record<string, any>): Promise<any> {
@@ -216,6 +240,17 @@ class PaymentsAgent {
           dayOfMonth: params.dayOfMonth,
           weekday: params.weekday,
           autoRenew: params.autoRenew,
+        });
+
+      case 'executeBillPayment':
+        return await this.executeBillPayment({
+          walletId: params.walletId,
+          userId: params.userId,
+          userToken: params.userToken,
+          billType: params.billType,
+          provider: params.provider,
+          identifier: params.identifier,
+          amount: params.amount,
         });
 
       default:
