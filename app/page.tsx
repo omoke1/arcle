@@ -6,7 +6,10 @@ import { Loader2, CheckCircle2, XCircle, X } from "lucide-react";
 import { BorderBeamDemo } from "@/components/ui/border-beam-demo";
 import { BorderBeam } from "@/components/ui/border-beam";
 import { hasValidAccess, grantAccess } from "@/lib/auth/invite-codes";
-import { loadWalletData, loadUserCredentials } from "@/lib/supabase-data";
+import { loadWalletData, loadUserCredentials, saveUserCredentials } from "@/lib/supabase-data";
+import { CircleGoogleAuth } from "@/components/auth/CircleGoogleAuth";
+import { CircleEmailWidget } from "@/components/wallet/CircleEmailWidget";
+import { circleConfig } from "@/lib/circle";
 
 const designTokens = {
   aurora: "#E9F28E",
@@ -19,10 +22,21 @@ export default function Home() {
   const [showContent, setShowContent] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showGoogleAuth, setShowGoogleAuth] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
   const [verificationStatus, setVerificationStatus] = useState<"idle" | "success" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
+  const [circleAuthData, setCircleAuthData] = useState<{
+    userId: string;
+    userToken: string;
+    encryptionKey: string;
+  } | null>(null);
+  const [email, setEmail] = useState("");
+  const [showEmailOTP, setShowEmailOTP] = useState(false);
+  const [otpCode, setOtpCode] = useState("");
+  const [emailAuthData, setEmailAuthData] = useState<any>(null);
+  const [isSendingOTP, setIsSendingOTP] = useState(false);
 
   const handleGetAccess = async () => {
     const hasAccess = await hasValidAccess();
@@ -30,7 +44,116 @@ export default function Home() {
       setIsCreating(true);
       router.push("/chat");
     } else {
+      // Show Google auth first, then invite code
+      setShowGoogleAuth(true);
+    }
+  };
+
+  const handleGoogleAuthSuccess = (result: {
+    userId: string;
+    userToken: string;
+    encryptionKey: string;
+  }) => {
+    console.log("Social login successful, showing invite code modal...");
+    setCircleAuthData(result);
+    setShowGoogleAuth(false);
+    setShowInviteModal(true);
+  };
+
+  const handleGoogleAuthError = (error: any) => {
+    console.error("Social login error:", error);
+    setErrorMessage(error.message || "Failed to authenticate with social provider");
+    setShowGoogleAuth(false);
+  };
+
+  const handleEmailSignUp = async () => {
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setErrorMessage("Please enter a valid email address");
+      return;
+    }
+
+    setIsSendingOTP(true);
+    setErrorMessage("");
+
+    try {
+      const response = await fetch("/api/circle/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "email-login",
+          email: email.trim(),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success && data.data) {
+        setEmailAuthData(data.data);
+        setShowEmailOTP(true);
+        console.log("OTP sent to email:", email);
+      } else {
+        setErrorMessage(data.error || "Failed to send verification code");
+      }
+    } catch (error) {
+      setErrorMessage("Connection error. Please try again.");
+    } finally {
+      setIsSendingOTP(false);
+    }
+  };
+
+  const handleEmailOTPSuccess = (result: any) => {
+    console.log("Email OTP verified successfully:", result);
+    
+    // Extract user credentials from the W3S SDK result
+    // The SDK should return userId, userToken, and encryptionKey after successful OTP verification
+    if (result && result.userId) {
+      setCircleAuthData({
+        userId: result.userId,
+        userToken: result.userToken,
+        encryptionKey: result.encryptionKey,
+      });
+      setShowGoogleAuth(false);
+      setShowEmailOTP(false);
       setShowInviteModal(true);
+    } else {
+      setErrorMessage("Failed to retrieve user credentials from Circle");
+    }
+  };
+
+  const handleEmailOTPError = (error: any) => {
+    console.error("Email OTP error:", error);
+    setErrorMessage(error.message || "Failed to verify email");
+  };
+
+  const handleResendOTP = async () => {
+    try {
+      const response = await fetch("/api/circle/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "resend-otp",
+          email: emailAuthData.email,
+          deviceId: emailAuthData.deviceId,
+          otpToken: emailAuthData.otpToken,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        console.log("OTP resent successfully");
+        // Update the otpToken if a new one is returned
+        if (data.data?.otpToken) {
+          setEmailAuthData({
+            ...emailAuthData,
+            otpToken: data.data.otpToken,
+          });
+        }
+      } else {
+        setErrorMessage(data.error || "Failed to resend OTP");
+      }
+    } catch (error) {
+      setErrorMessage("Connection error. Please try again.");
     }
   };
 
@@ -49,7 +172,12 @@ export default function Home() {
       const response = await fetch('/api/auth/verify-invite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: inviteCode.trim() }),
+        body: JSON.stringify({ 
+          code: inviteCode.trim(),
+          circleUserId: circleAuthData?.userId,
+          circleUserToken: circleAuthData?.userToken,
+          circleEncryptionKey: circleAuthData?.encryptionKey,
+        }),
       });
 
       const data = await response.json();
@@ -57,6 +185,19 @@ export default function Home() {
       if (data.valid) {
         setVerificationStatus('success');
         await grantAccess(inviteCode.trim());
+        
+        // Save Circle credentials to Supabase if we have them
+        if (circleAuthData) {
+          try {
+            await saveUserCredentials(circleAuthData.userId, {
+              userToken: circleAuthData.userToken,
+              encryptionKey: circleAuthData.encryptionKey,
+            });
+            console.log("Circle credentials saved to Supabase");
+          } catch (error) {
+            console.error("Failed to save Circle credentials:", error);
+          }
+        }
         
         // Redirect after short delay
         setTimeout(() => {
@@ -202,6 +343,192 @@ export default function Home() {
           )}
         </button>
       </div>
+
+      {showGoogleAuth && (
+        <div 
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 px-4"
+          onClick={() => setShowGoogleAuth(false)}
+        >
+          <div 
+            className="bg-onyx border border-white/20 rounded-2xl p-8 max-w-md w-full relative overflow-hidden animate-in fade-in zoom-in duration-300"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Animated Border Beam */}
+            <BorderBeam size={200} duration={10} delay={0} />
+            
+            {/* Close Button */}
+            <button
+              onClick={() => setShowGoogleAuth(false)}
+              className="absolute top-4 right-4 text-white/60 hover:text-white/90 transition-colors z-10"
+            >
+              <X className="w-6 h-6" />
+            </button>
+
+            {/* Title */}
+            <div className="mb-6">
+              <h2 className="text-3xl font-bold text-white/90 mb-2">
+                Sign up
+              </h2>
+              <p className="text-sm text-white/60">
+                Already have an account?{" "}
+                <button
+                  onClick={() => {
+                    // For now, just close and reopen - you can add login state later
+                    setShowGoogleAuth(false);
+                    setTimeout(() => setShowGoogleAuth(true), 100);
+                  }}
+                  className="text-aurora hover:text-aurora/80 transition-colors font-medium"
+                >
+                  Log in
+                </button>
+              </p>
+            </div>
+
+            {!showEmailOTP ? (
+              <>
+                {/* Email Section */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-white/90 mb-2">
+                    Email address
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !isSendingOTP) {
+                        handleEmailSignUp();
+                      }
+                    }}
+                    placeholder="Email"
+                    className="
+                      w-full
+                      bg-white/5 border border-white/10 rounded-lg
+                      px-4 py-3
+                      text-white placeholder:text-white/40
+                      focus:outline-none focus:ring-2 focus:ring-aurora/50 focus:border-aurora/50
+                      transition-all
+                    "
+                    disabled={isSendingOTP}
+                  />
+                  <p className="text-xs text-white/50 mt-2">
+                    We'll send an email with a verification code.
+                  </p>
+                  <button
+                    onClick={handleEmailSignUp}
+                    disabled={isSendingOTP || !email.trim()}
+                    className="
+                      w-full mt-4
+                      bg-aurora text-carbon
+                      rounded-lg px-4 py-3
+                      font-semibold text-sm tracking-wide uppercase
+                      hover:bg-aurora/90
+                      disabled:opacity-50 disabled:cursor-not-allowed
+                      transition-colors
+                      flex items-center justify-center gap-2
+                    "
+                  >
+                    {isSendingOTP ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Sending...
+                      </>
+                    ) : (
+                      "SIGN UP"
+                    )}
+                  </button>
+                </div>
+
+                {/* Divider */}
+                <div className="flex items-center gap-4 my-6">
+                  <div className="flex-1 h-px bg-white/10"></div>
+                  <span className="text-xs text-white/40">or</span>
+                  <div className="flex-1 h-px bg-white/10"></div>
+                </div>
+
+                {/* Social Login Buttons */}
+                <div className="space-y-3">
+                  <CircleGoogleAuth
+                    appId={circleConfig.appId}
+                    onSuccess={handleGoogleAuthSuccess}
+                    onError={handleGoogleAuthError}
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Circle Email OTP Widget */}
+                <div className="mb-4">
+                  <p className="text-sm text-white/60 mb-4">
+                    Enter the 6-digit code sent to <span className="text-white/90">{emailAuthData.email}</span>
+                  </p>
+                  
+                  <CircleEmailWidget
+                    appId={circleConfig.appId}
+                    email={emailAuthData.email}
+                    deviceToken={emailAuthData.deviceToken}
+                    deviceEncryptionKey={emailAuthData.deviceEncryptionKey}
+                    otpToken={emailAuthData.otpToken}
+                    onSuccess={handleEmailOTPSuccess}
+                    onError={handleEmailOTPError}
+                    onResendOTP={handleResendOTP}
+                  />
+                </div>
+
+                {/* Back Button */}
+                <button
+                  onClick={() => {
+                    setShowEmailOTP(false);
+                    setErrorMessage("");
+                  }}
+                  className="
+                    w-full
+                    text-white/60 text-sm
+                    hover:text-white/80
+                    transition-colors
+                    mt-4
+                  "
+                >
+                  ← Back to email
+                </button>
+              </>
+            )}
+
+            {/* Error Message */}
+            {errorMessage && (
+              <div className="flex items-center justify-center gap-2 text-red-400/90 text-sm mb-4">
+                <XCircle className="w-4 h-4" />
+                <span>{errorMessage}</span>
+              </div>
+            )}
+
+            {/* Terms Text */}
+            <div className="text-center mt-6">
+              <p className="text-xs text-white/50">
+                By continuing, you agree to our{" "}
+                <a 
+                  href="https://x.com/ArcleAI" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-aurora hover:text-aurora/80 transition-colors"
+                >
+                  Terms of Use
+                </a>
+                {" & "}
+                <a 
+                  href="https://x.com/ArcleAI" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-aurora hover:text-aurora/80 transition-colors"
+                >
+                  Privacy Policy
+                </a>
+                .
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showInviteModal && (
         <div 

@@ -40,6 +40,7 @@ export interface ExecutionResult {
   transactionId?: string;
   transactionHash?: string;
   error?: string;
+  message?: string;
 }
 
 /**
@@ -59,12 +60,12 @@ export async function delegateExecution(
 
     // Step 1: Get session key for THIS specific agent (if agentId provided)
     let sessionKey: CircleSessionKey | null = null;
-    
+
     if (agentId) {
       // Get agent-specific session key
       const { getAgentSessionKey } = await import('@/core/sessionKeys/agentSessionKeys');
       sessionKey = await getAgentSessionKey(walletId, userId, userToken, agentId);
-      
+
       if (sessionKey && sessionKey.agentId !== agentId) {
         // This session key belongs to a different agent
         console.log(`[Delegate Execution] Session key belongs to different agent (${sessionKey.agentId}), falling back to user approval`);
@@ -80,7 +81,7 @@ export async function delegateExecution(
       console.log('[Delegate Execution] No active session, falling back to user approval');
       return await executeWithUserApproval(params);
     }
-    
+
     // Step 2.5: Verify agent ownership if agentId is specified
     if (agentId && sessionKey.agentId && sessionKey.agentId !== agentId) {
       console.log(`[Delegate Execution] Session key agent mismatch (expected ${agentId}, got ${sessionKey.agentId}), falling back to user approval`);
@@ -148,7 +149,7 @@ async function executeWithSessionKey(
     const mscaAddress = sessionKey.mscaAddress || walletResponse.data.addresses[0].address;
 
     // Build and sign UserOperation
-    const { buildUserOperation, signUserOperationWithSessionKey, submitUserOperation } = 
+    const { buildUserOperation, signUserOperationWithSessionKey, submitUserOperation } =
       await import('./sessionKeySigner');
 
     const userOp = await buildUserOperation(params, sessionKey, mscaAddress);
@@ -187,7 +188,7 @@ async function executeWithSessionKey(
     // If bundler submission fails, fallback to Circle's contract execution
     // This still uses the session key but through Circle's API
     console.log('[Delegate Execution] Bundler submission failed, falling back to Circle API');
-    
+
     // Handle bridge operations specially - they may need Gateway API
     if (params.action === 'bridge' || params.action === 'gateway' || params.action === 'cctp') {
       // For bridge operations, we need to use the Gateway/CCTP APIs
@@ -195,10 +196,10 @@ async function executeWithSessionKey(
       // We'll route through the bridge API which will handle the flow
       // The session key validation has already passed, so we can proceed
       console.log('[Delegate Execution] Bridge operation - routing through Gateway API');
-      
+
       // Import bridge implementation
       const { transferViaGatewayUser } = await import('@/lib/gateway/gateway-sdk-implementation-user');
-      
+
       try {
         // Get wallet address first
         const { getUserCircleClient } = await import('@/lib/circle-user-sdk');
@@ -207,12 +208,12 @@ async function executeWithSessionKey(
           userToken: params.userToken,
           id: params.walletId, // Circle SDK expects 'id', not 'walletId'
         });
-        
+
         const walletAddress = walletResponse.data?.addresses?.[0]?.address;
         if (!walletAddress) {
           throw new Error('Wallet address not found');
         }
-        
+
         // Execute bridge via Gateway with session key (no PIN required!)
         // Session key will sign EIP-712 typed data directly
         const bridgeResult = await transferViaGatewayUser({
@@ -237,7 +238,7 @@ async function executeWithSessionKey(
               // The attestation serves as the transfer identifier
             };
           }
-          
+
           // If status is "signing", user still needs to complete challenge (deposit or PIN)
           return {
             success: true,
@@ -251,7 +252,7 @@ async function executeWithSessionKey(
         // Fall through to contract execution
       }
     }
-    
+
     if (params.contractAddress && params.abiFunctionSignature) {
       const result = await executeContract({
         userId: params.userId,
@@ -321,7 +322,7 @@ async function executeWithUserApproval(
 
     // For other actions, they will need to be handled by their respective APIs
     // (e.g., sendTransaction, bridgeTransaction, etc.)
-    
+
     return {
       success: false,
       executedViaSessionKey: false,

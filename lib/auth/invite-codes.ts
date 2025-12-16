@@ -17,10 +17,8 @@ const INVITE_BATCH_CREATED_AT = "2025-12-16T04:56:09.978Z";
 const INVITE_CODE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function isInviteBatchExpired(): boolean {
-  if (!INVITE_BATCH_CREATED_AT) return false;
-  const createdAt = new Date(INVITE_BATCH_CREATED_AT).getTime();
-  if (Number.isNaN(createdAt)) return false;
-  return Date.now() - createdAt > INVITE_CODE_TTL_MS;
+  // TEMP: Always return false so codes never expire while we debug.
+  return false;
 }
 
 // Generate random invite code (8 characters, alphanumeric, readable)
@@ -42,16 +40,16 @@ function generateCode(): string {
 // - Each code can be used once
 // - Codes expire 24 hours after INVITE_BATCH_CREATED_AT if not used
 export const DAILY_INVITE_CODES: string[] = [
-  "22ZXUGBP", // Code 1
-  "ZMFLLHWX", // Code 2
-  "A8MT8TUS", // Code 3
-  "BM55C5SR", // Code 4
-  "VYQBGB8N", // Code 5
-  "5ZDCLQCH", // Code 6
-  "YJ6JXXFU", // Code 7
-  "RQ95BB9W", // Code 8
-  "MBS4XSCX", // Code 9
-  "9QCR9Y3H", // Code 10
+  "PQS2GXB3",
+  "Z83Q8TQ6",
+  "JUBVC8CC",
+  "MH8J5QSE",
+  "FYFZU6CP",
+  "QQ377A4Y",
+  "G7KTSJZ4",
+  "STVD4U9M",
+  "QU7TBVDK",
+  "6L9CNQV8",
 ];
 
 // Get all invite codes from environment or fallback to default
