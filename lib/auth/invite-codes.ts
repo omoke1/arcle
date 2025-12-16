@@ -13,9 +13,7 @@ import { loadPreference, savePreference } from "@/lib/supabase-data";
 // Invite code batch metadata
 // When you generate a new batch of codes, update INVITE_BATCH_CREATED_AT
 // so that codes automatically expire 24 hours after creation if not used.
-// NOTE: Temporarily disabling expiry to avoid blocking testers.
-// const INVITE_BATCH_CREATED_AT = "2025-12-04T16:14:55.978Z";
-const INVITE_BATCH_CREATED_AT = "";
+const INVITE_BATCH_CREATED_AT = "2025-12-16T04:56:09.978Z";
 const INVITE_CODE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function isInviteBatchExpired(): boolean {
@@ -60,12 +58,12 @@ export function getInviteCodes(): string[] {
     // Client-side: codes should be validated server-side only
     return [];
   }
-  
+
   // Server-side: ALWAYS start with DAILY_INVITE_CODES as the base
   // This ensures new codes added to DAILY_INVITE_CODES always work
   // Environment variable codes are ADDED to the base, not replacing it
   const allCodes = new Set<string>(DAILY_INVITE_CODES);
-  
+
   // Add environment codes if they exist (for additional codes beyond DAILY_INVITE_CODES)
   const envCodes = process.env.INVITE_CODES;
   if (envCodes) {
@@ -77,12 +75,12 @@ export function getInviteCodes(): string[] {
       }
     });
   }
-  
+
   // Log for debugging (only in development or when explicitly enabled)
   if (process.env.NODE_ENV === 'development' || process.env.DEBUG_INVITE_CODES === 'true') {
     console.log(`[Invite Codes] Total codes available: ${allCodes.size} (${DAILY_INVITE_CODES.length} from DAILY_INVITE_CODES + ${envCodes ? envCodes.split(',').length : 0} from env)`);
   }
-  
+
   return Array.from(allCodes);
 }
 
@@ -99,15 +97,15 @@ export function isValidInviteCode(code: string): boolean {
     }
     return false;
   }
-  
+
   const trimmedCode = code.toUpperCase().trim();
   if (!trimmedCode || trimmedCode.length !== 8) {
     return false;
   }
-  
+
   const validCodes = getInviteCodes();
   const isValid = validCodes.includes(trimmedCode);
-  
+
   // Log for debugging (only in development or when explicitly enabled)
   if (process.env.NODE_ENV === 'development' || process.env.DEBUG_INVITE_CODES === 'true') {
     console.log(`[Invite Code Validation] Code: ${trimmedCode}, Valid: ${isValid}, Total codes: ${validCodes.length}`);
@@ -115,14 +113,14 @@ export function isValidInviteCode(code: string): boolean {
       console.log(`[Invite Code Validation] Code not found. First 5 codes: ${validCodes.slice(0, 5).join(', ')}`);
     }
   }
-  
+
   return isValid;
 }
 
 // Check if code has been used (Supabase)
 export async function isCodeUsed(code: string, userId?: string): Promise<boolean> {
   if (typeof window === 'undefined') return false;
-  
+
   const usedCodes = await getUsedCodes(userId);
   return usedCodes.includes(code.toUpperCase().trim());
 }
@@ -130,7 +128,7 @@ export async function isCodeUsed(code: string, userId?: string): Promise<boolean
 // Get all used codes from Supabase
 export async function getUsedCodes(userId?: string): Promise<string[]> {
   if (typeof window === 'undefined') return [];
-  
+
   // Try to get userId if not provided
   if (!userId) {
     // Try to get from a "current_user_id" preference
@@ -143,7 +141,7 @@ export async function getUsedCodes(userId?: string): Promise<string[]> {
       // Ignore
     }
   }
-  
+
   // If we have userId, try Supabase
   if (userId) {
     try {
@@ -155,7 +153,7 @@ export async function getUsedCodes(userId?: string): Promise<string[]> {
       console.warn("[InviteCodes] Failed to load from Supabase, trying localStorage migration:", error);
     }
   }
-  
+
   // Migration fallback: try localStorage
   const stored = localStorage.getItem('arcle_used_codes');
   if (stored) {
@@ -173,14 +171,14 @@ export async function getUsedCodes(userId?: string): Promise<string[]> {
       return codes;
     }
   }
-  
+
   return [];
 }
 
 // Mark code as used
 export async function markCodeAsUsed(code: string, userId?: string): Promise<void> {
   if (typeof window === 'undefined') return;
-  
+
   // Try to get userId if not provided
   if (!userId) {
     try {
@@ -192,13 +190,13 @@ export async function markCodeAsUsed(code: string, userId?: string): Promise<voi
       // Ignore
     }
   }
-  
+
   const usedCodes = await getUsedCodes(userId);
   const upperCode = code.toUpperCase().trim();
-  
+
   if (!usedCodes.includes(upperCode)) {
     usedCodes.push(upperCode);
-    
+
     // Save to Supabase if userId is available
     if (userId) {
       try {
@@ -221,7 +219,7 @@ export async function markCodeAsUsed(code: string, userId?: string): Promise<voi
 // Check if user has valid access
 export async function hasValidAccess(userId?: string): Promise<boolean> {
   if (typeof window === 'undefined') return false;
-  
+
   // Try to get userId if not provided
   if (!userId) {
     try {
@@ -233,7 +231,7 @@ export async function hasValidAccess(userId?: string): Promise<boolean> {
       // Ignore
     }
   }
-  
+
   // Try Supabase first
   if (userId) {
     try {
@@ -245,7 +243,7 @@ export async function hasValidAccess(userId?: string): Promise<boolean> {
       console.warn("[InviteCodes] Failed to load from Supabase, trying localStorage migration:", error);
     }
   }
-  
+
   // Migration fallback: try localStorage
   const stored = localStorage.getItem('arcle_invite_verified');
   if (stored === 'true') {
@@ -267,14 +265,14 @@ export async function hasValidAccess(userId?: string): Promise<boolean> {
     }
     return true;
   }
-  
+
   return false;
 }
 
 // Grant access to user
 export async function grantAccess(code: string, userId?: string): Promise<void> {
   if (typeof window === 'undefined') return;
-  
+
   // Try to get userId if not provided
   if (!userId) {
     try {
@@ -286,9 +284,9 @@ export async function grantAccess(code: string, userId?: string): Promise<void> 
       // Ignore
     }
   }
-  
+
   const upperCode = code.toUpperCase().trim();
-  
+
   // Save to Supabase if userId is available
   if (userId) {
     try {
@@ -308,14 +306,14 @@ export async function grantAccess(code: string, userId?: string): Promise<void> 
     localStorage.setItem('arcle_invite_code_used', upperCode);
     localStorage.setItem('arcle_access_granted_at', new Date().toISOString());
   }
-  
+
   await markCodeAsUsed(code, userId);
 }
 
 // Revoke access (for admin)
 export async function revokeAccess(userId?: string): Promise<void> {
   if (typeof window === 'undefined') return;
-  
+
   // Try to get userId if not provided
   if (!userId) {
     try {
@@ -327,7 +325,7 @@ export async function revokeAccess(userId?: string): Promise<void> {
       // Ignore
     }
   }
-  
+
   // Remove from Supabase if userId is available
   if (userId) {
     try {
@@ -337,7 +335,7 @@ export async function revokeAccess(userId?: string): Promise<void> {
       console.error("[InviteCodes] Failed to revoke in Supabase:", error);
     }
   }
-  
+
   // Also clear localStorage
   localStorage.removeItem('arcle_invite_verified');
   localStorage.removeItem('arcle_invite_code_used');
@@ -358,12 +356,12 @@ export interface InviteStats {
 export async function getInviteStats(userId?: string): Promise<InviteStats> {
   const usedCodes = await getUsedCodes(userId);
   const validCodes = getInviteCodes();
-  
+
   // Get timestamps for used codes
   const usedCodesList = await Promise.all(
     usedCodes.map(async (code) => {
       let usedAt = 'Unknown';
-      
+
       // Try Supabase first
       if (userId) {
         try {
@@ -375,7 +373,7 @@ export async function getInviteStats(userId?: string): Promise<InviteStats> {
           // Ignore
         }
       }
-      
+
       // Migration fallback: try localStorage
       if (usedAt === 'Unknown' && typeof window !== 'undefined') {
         const stored = localStorage.getItem(`arcle_code_used_${code}`);
@@ -383,11 +381,11 @@ export async function getInviteStats(userId?: string): Promise<InviteStats> {
           usedAt = stored;
         }
       }
-      
+
       return { code, usedAt };
     })
   );
-  
+
   return {
     totalCodes: validCodes.length,
     usedCodes: usedCodes.length,

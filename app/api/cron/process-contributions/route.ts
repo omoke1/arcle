@@ -22,7 +22,7 @@ import { NextRequest, NextResponse } from "next/server";
 // Uncomment these lines when activating database:
 // import { prisma } from "@/lib/db/prisma";
 // import { addContribution } from "@/lib/defi/goal-based-savings-db";
-import { sendNotification } from "@/lib/notifications/notification-service";
+import { createNotification } from "@/lib/db/services/notifications";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -84,10 +84,16 @@ export async function GET(request: NextRequest) {
 
           if (result.success) {
             // Send success notification
-            await sendNotification(goal.userId, "contribution_success", {
-              goalName: goal.goalName,
-              amount: contributionAmount.toString(),
-              goalId: goal.id,
+            await createNotification({
+              user_id: goal.userId,
+              type: 'transaction',
+              title: 'Contribution Successful',
+              message: `Successfully contributed $${contributionAmount} to ${goal.goalName}`,
+              priority: 'low',
+              metadata: {
+                goalId: goal.id,
+                amount: contributionAmount.toString(),
+              }
             });
 
             results.push({
@@ -106,9 +112,16 @@ export async function GET(request: NextRequest) {
           console.log(`[Cron] ⚠️ Insufficient balance for goal ${goal.id}: $${balance} < $${contributionAmount}`);
 
           // Send low balance notification
-          await sendNotification(goal.userId, "low_balance", {
-            goalName: goal.goalName,
-            amount: contributionAmount.toString(),
+          await createNotification({
+            user_id: goal.userId,
+            type: 'system',
+            title: 'Low Balance Alert',
+            message: `Could not process contribution of $${contributionAmount} for ${goal.goalName} due to insufficient balance.`,
+            priority: 'high',
+            metadata: {
+              goalId: goal.id,
+              requiredAmount: contributionAmount.toString(),
+            }
           });
 
           // Create pending contribution for retry
@@ -132,10 +145,16 @@ export async function GET(request: NextRequest) {
         console.error(`[Cron] ❌ Error processing goal ${goal.id}:`, error);
 
         // Send failure notification
-        await sendNotification(goal.userId, "contribution_failed", {
-          goalName: goal.goalName,
-          amount: goal.contributionAmount?.toString() || "0",
-          error: error.message,
+        await createNotification({
+          user_id: goal.userId,
+          type: 'system',
+          title: 'Contribution Failed',
+          message: `Failed to process contribution for ${goal.goalName}: ${error.message}`,
+          priority: 'high',
+          metadata: {
+            goalId: goal.id,
+            error: error.message,
+          }
         });
 
         results.push({
@@ -162,9 +181,15 @@ export async function GET(request: NextRequest) {
     console.log(`[Cron] Found ${maturedGoals.length} matured goals`);
 
     for (const goal of maturedGoals) {
-      await sendNotification(goal.userId, "goal_matured", {
-        goalName: goal.goalName,
-        goalId: goal.id,
+      await createNotification({
+        user_id: goal.userId,
+        type: 'system',
+        title: 'Goal Matured! ',
+        message: `Your savings goal "${goal.goalName}" has matured! You can now withdraw your funds.`,
+        priority: 'high',
+        metadata: {
+          goalId: goal.id,
+        }
       });
     }
 
@@ -180,9 +205,15 @@ export async function GET(request: NextRequest) {
     console.log(`[Cron] Found ${maturedLocks.length} matured SafeLocks`);
 
     for (const lock of maturedLocks) {
-      await sendNotification(lock.userId, "safelock_matured", {
-        safelockId: lock.id,
-        amount: lock.amount.toString(),
+      await createNotification({
+        user_id: lock.userId,
+        type: 'system',
+        title: 'SafeLock Matured! 🔓',
+        message: `Your SafeLock of $${lock.amount} has matured and is now available.`,
+        priority: 'high',
+        metadata: {
+          safelockId: lock.id,
+        }
       });
     }
     */
@@ -220,7 +251,7 @@ export async function GET(request: NextRequest) {
 async function getBalance(walletId: string): Promise<string> {
   // TODO: Implement actual balance check using Circle API
   // For now, return mock balance
-  
+
   // Example implementation:
   /*
   const response = await fetch(`${process.env.CIRCLE_API_URL}/v1/w3s/wallets/${walletId}/balances`, {
@@ -232,7 +263,7 @@ async function getBalance(walletId: string): Promise<string> {
   const usdcBalance = data.tokenBalances?.find(t => t.token.symbol === 'USDC');
   return usdcBalance?.amount || '0';
   */
-  
+
   return "1000"; // Mock balance for testing
 }
 

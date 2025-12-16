@@ -4,7 +4,7 @@
  * Polls for transaction status changes and generates notifications
  */
 
-import { createTransactionNotification } from "./notification-service";
+import { createNotification } from "@/lib/db/services/notifications";
 
 export interface TransactionMonitorConfig {
   walletId: string;
@@ -19,7 +19,7 @@ export interface TransactionMonitorConfig {
  */
 export async function monitorTransaction(
   config: TransactionMonitorConfig
-): Promise<"confirmed" | "failed" | "timeout"> {
+): Promise<"confirmed" | "failed" | "timeout" | "error"> {
   const {
     walletId,
     transactionId,
@@ -29,7 +29,10 @@ export async function monitorTransaction(
   } = config;
 
   let attempts = 0;
+  let consecutiveFailures = 0;
+  const MAX_CONSECUTIVE_FAILURES = 5;
   let lastStatus: "pending" | "confirmed" | "failed" | null = null;
+  let userId: string | null = null;
 
   return new Promise((resolve) => {
     const poll = async () => {
@@ -37,14 +40,13 @@ export async function monitorTransaction(
 
       try {
         // Get userId and userToken from Supabase (with localStorage migration fallback)
-        let userId: string | null = null;
         let userToken: string | null = null;
-        
+
         if (typeof window !== 'undefined') {
           // Migration: Try localStorage first, then Supabase
           const legacyUserId = localStorage.getItem('arcle_user_id');
           const legacyUserToken = localStorage.getItem('arcle_user_token');
-          
+
           if (legacyUserId && legacyUserToken) {
             userId = legacyUserId;
             userToken = legacyUserToken;
@@ -53,7 +55,10 @@ export async function monitorTransaction(
             try {
               const { loadUserCredentials, loadPreference } = await import("@/lib/supabase-data");
               // Try to get current user ID from a preference (if set)
-              const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
+              const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch((e) => {
+                console.warn("[Transaction Monitor] Failed to load user preference:", e);
+                return null;
+              });
               if (currentUserPref?.value) {
                 const credentials = await loadUserCredentials(currentUserPref.value);
                 if (credentials.userToken) {
@@ -62,22 +67,32 @@ export async function monitorTransaction(
                 }
               }
             } catch (error) {
-              // Ignore - will use null values
+              console.warn("[Transaction Monitor] Credential fallback failed:", error);
             }
           }
         }
-        
+
         // Build query string with optional userId/userToken
         let queryString = `walletId=${walletId}&transactionId=${transactionId}`;
         if (userId && userToken) {
           queryString += `&userId=${encodeURIComponent(userId)}&userToken=${encodeURIComponent(userToken)}`;
         }
-        
+
         const response = await fetch(
           `/api/circle/transactions?${queryString}`
         );
 
         if (!response.ok) {
+          consecutiveFailures++;
+          console.error(`[Transaction Monitor] API Error ${response.status}: ${response.statusText}`);
+
+          // Fail fast on Auth errors or 500s persisting
+          if (response.status === 401 || response.status === 403 || consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            console.error("[Transaction Monitor] Aborting due to critical or persistent API error.");
+            resolve("error");
+            return;
+          }
+
           if (attempts >= maxAttempts) {
             resolve("timeout");
             return;
@@ -85,6 +100,9 @@ export async function monitorTransaction(
           setTimeout(poll, pollInterval);
           return;
         }
+
+        // Reset consecutive failures on success
+        consecutiveFailures = 0;
 
         const data = await response.json();
 
@@ -105,7 +123,7 @@ export async function monitorTransaction(
 
           const circleState = txData.state || txData.status;
           const txHash = txData.txHash || txData.transactionHash || txData.hash;
-          
+
           // Map Circle states to our status
           let status: "pending" | "confirmed" | "failed" = "pending";
           if (circleState === "COMPLETE" || circleState === "COMPLETED" || circleState === "CONFIRMED" || circleState === "SENT") {
@@ -123,13 +141,27 @@ export async function monitorTransaction(
             const to = txData.destinationAddress || txData.destination?.address || "";
 
             // Create notification
-            createTransactionNotification(
-              transactionId,
-              status,
-              amount,
-              to,
-              txHash
-            );
+            if (userId && (status === "confirmed" || status === "failed")) {
+              try {
+                await createNotification({
+                  user_id: userId,
+                  type: 'transaction',
+                  title: status === "confirmed" ? 'Transaction Confirmed' : 'Transaction Failed',
+                  message: status === "confirmed"
+                    ? `Your transaction of ${amount} to ${to.slice(0, 6)}... has been confirmed.`
+                    : `Your transaction of ${amount} to ${to.slice(0, 6)}... failed.`,
+                  priority: status === "failed" ? 'high' : 'normal',
+                  metadata: {
+                    transactionId,
+                    txHash,
+                    amount,
+                    to
+                  }
+                });
+              } catch (notifyError) {
+                console.error("[Transaction Monitor] Failed to create notification (non-blocking):", notifyError);
+              }
+            }
 
             // Call callback if provided
             if (onStatusChange) {
@@ -151,7 +183,15 @@ export async function monitorTransaction(
           resolve("timeout");
         }
       } catch (error) {
-        console.error("Error polling transaction status:", error);
+        consecutiveFailures++;
+        console.error("[Transaction Monitor] Polling error:", error);
+
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          console.error("[Transaction Monitor] Aborting due to persistent network errors.");
+          resolve("error");
+          return;
+        }
+
         if (attempts >= maxAttempts) {
           resolve("timeout");
         } else {

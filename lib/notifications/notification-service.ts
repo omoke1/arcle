@@ -1,13 +1,9 @@
 /**
+ * @deprecated This service is deprecated. Use @/lib/db/services/notifications instead.
  * Notification Service
  * 
- * Handles all notification types for savings goals and SafeLocks.
- * 
- * To activate:
- * 1. Ensure Prisma is set up with Notification model
- * 2. Import and use in your API routes and cron jobs
- * 3. For email: Install Resend (npm install resend) and set RESEND_API_KEY
- */
+ * Manages user notifications
+  */
 
 // NOTE: Prisma import commented out until database is set up
 // Uncomment this line when activating database:
@@ -164,9 +160,9 @@ export function updateNotificationPreferences(preferencesOrUserId: any, preferen
   // updateNotificationPreferences(userId, preferences) - with userId
   const prefs = preferences || preferencesOrUserId;
   const userId = preferences ? preferencesOrUserId : undefined;
-  
+
   console.log(`[Notification] Update preferences${userId ? ` for ${userId}` : ''} (placeholder)`);
-  
+
   // Return updated preferences for display
   return {
     ...getNotificationPreferences(),

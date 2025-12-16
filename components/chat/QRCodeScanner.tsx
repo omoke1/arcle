@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { X, Camera, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -12,6 +12,65 @@ const loadJsQR = async () => {
     jsQRFunction = jsQRModule.default || jsQRModule;
   }
   return jsQRFunction;
+};
+
+// Check if QR code is a USDC address (Ethereum-based chains)
+const isUSDCAddress = (data: string): boolean => {
+  // Ethereum addresses start with 0x and are 42 characters
+  if (data.startsWith("0x") && data.length === 42) {
+    return /^0x[a-fA-F0-9]{40}$/.test(data);
+  }
+  // Solana addresses are base58 encoded, typically 32-44 characters
+  if (data.length >= 32 && data.length <= 44 && !data.includes("://")) {
+    // Basic check - could be Solana address
+    return /^[A-HJ-NP-Za-km-z1-9]+$/.test(data);
+  }
+  return false;
+};
+
+// Check if QR code is a payment link/request
+const isFiatPayment = (data: string): boolean => {
+  // Check for common payment QR code formats
+  const paymentPatterns = [
+    /^https?:\/\/.*(pay|payment|invoice|checkout)/i,
+    /^upi:\/\//i, // UPI payment (India)
+    /^bitcoin:/i,
+    /^ethereum:/i,
+    /^amount=/i,
+    /^payment_request=/i,
+  ];
+  return paymentPatterns.some((pattern) => pattern.test(data));
+};
+
+// Parse QR code data
+const parseQRCode = (data: string) => {
+  const trimmed = data.trim();
+
+  if (isUSDCAddress(trimmed)) {
+    return {
+      type: "usdc_address" as const,
+      address: trimmed,
+      rawData: data,
+    };
+  }
+
+  if (isFiatPayment(trimmed)) {
+    // Try to extract amount and currency from payment link
+    const amountMatch = trimmed.match(/amount[=:]([\d.]+)/i);
+    const currencyMatch = trimmed.match(/currency[=:]([A-Z]{3})/i);
+
+    return {
+      type: "fiat_payment" as const,
+      amount: amountMatch?.[1],
+      currency: currencyMatch?.[1] || "USD",
+      rawData: data,
+    };
+  }
+
+  return {
+    type: "unknown" as const,
+    rawData: data,
+  };
 };
 
 interface QRCodeScannerProps {
@@ -38,102 +97,10 @@ export function QRCodeScanner({ isOpen, onClose, onScan }: QRCodeScannerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const scanIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Check if QR code is a USDC address (Ethereum-based chains)
-  const isUSDCAddress = (data: string): boolean => {
-    // Ethereum addresses start with 0x and are 42 characters
-    if (data.startsWith("0x") && data.length === 42) {
-      return /^0x[a-fA-F0-9]{40}$/.test(data);
-    }
-    // Solana addresses are base58 encoded, typically 32-44 characters
-    if (data.length >= 32 && data.length <= 44 && !data.includes("://")) {
-      // Basic check - could be Solana address
-      return /^[A-HJ-NP-Za-km-z1-9]+$/.test(data);
-    }
-    return false;
-  };
 
-  // Check if QR code is a payment link/request
-  const isFiatPayment = (data: string): boolean => {
-    // Check for common payment QR code formats
-    const paymentPatterns = [
-      /^https?:\/\/.*(pay|payment|invoice|checkout)/i,
-      /^upi:\/\//i, // UPI payment (India)
-      /^bitcoin:/i,
-      /^ethereum:/i,
-      /^amount=/i,
-      /^payment_request=/i,
-    ];
-    return paymentPatterns.some((pattern) => pattern.test(data));
-  };
-
-  // Parse QR code data
-  const parseQRCode = (data: string) => {
-    const trimmed = data.trim();
-
-    if (isUSDCAddress(trimmed)) {
-      return {
-        type: "usdc_address" as const,
-        address: trimmed,
-        rawData: data,
-      };
-    }
-
-    if (isFiatPayment(trimmed)) {
-      // Try to extract amount and currency from payment link
-      const amountMatch = trimmed.match(/amount[=:]([\d.]+)/i);
-      const currencyMatch = trimmed.match(/currency[=:]([A-Z]{3})/i);
-      
-      return {
-        type: "fiat_payment" as const,
-        amount: amountMatch?.[1],
-        currency: currencyMatch?.[1] || "USD",
-        rawData: data,
-      };
-    }
-
-    return {
-      type: "unknown" as const,
-      rawData: data,
-    };
-  };
-
-  // Start camera stream
-  const startCamera = async () => {
-    try {
-      setError(null);
-      setIsScanning(true);
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "environment", // Use back camera on mobile
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-      });
-
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-
-      // Start scanning for QR codes
-      startQRScanning();
-    } catch (err: any) {
-      console.error("[QRScanner] Camera error:", err);
-      setError(
-        err.name === "NotAllowedError"
-          ? "Camera permission denied. Please allow camera access."
-          : err.name === "NotFoundError"
-          ? "No camera found on this device."
-          : "Failed to access camera. Please try again."
-      );
-      setIsScanning(false);
-    }
-  };
 
   // Stop camera stream
-  const stopCamera = () => {
+  const stopCamera = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
@@ -143,10 +110,10 @@ export function QRCodeScanner({ isOpen, onClose, onScan }: QRCodeScannerProps) {
       scanIntervalRef.current = null;
     }
     setIsScanning(false);
-  };
+  }, []);
 
   // Start QR code scanning using canvas and image processing
-  const startQRScanning = () => {
+  const startQRScanning = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) return;
 
     const video = videoRef.current;
@@ -164,7 +131,7 @@ export function QRCodeScanner({ isOpen, onClose, onScan }: QRCodeScannerProps) {
     };
 
     // Load jsQR first, then start scanning
-    loadJsQR().then((jsQR) => {
+    loadJsQR().then((jsQR: any) => {
       // Scan for QR codes
       const scan = () => {
         if (video.readyState === video.HAVE_ENOUGH_DATA) {
@@ -194,12 +161,47 @@ export function QRCodeScanner({ isOpen, onClose, onScan }: QRCodeScannerProps) {
 
       // Scan every 100ms
       scanIntervalRef.current = setInterval(scan, 100);
-    }).catch((err) => {
+    }).catch((err: any) => {
       console.error("[QRScanner] Failed to load jsQR:", err);
       setError("Failed to load QR scanner. Please try again.");
       setIsScanning(false);
     });
-  };
+  }, [onScan, onClose, stopCamera]);
+
+  // Start camera stream
+  const startCamera = useCallback(async () => {
+    try {
+      setError(null);
+      setIsScanning(true);
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "environment", // Use back camera on mobile
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+      });
+
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+
+      // Start scanning for QR codes
+      startQRScanning();
+    } catch (err: any) {
+      console.error("[QRScanner] Camera error:", err);
+      setError(
+        err.name === "NotAllowedError"
+          ? "Camera permission denied. Please allow camera access."
+          : err.name === "NotFoundError"
+            ? "No camera found on this device."
+            : "Failed to access camera. Please try again."
+      );
+      setIsScanning(false);
+    }
+  }, [startQRScanning]);
 
   // Handle manual QR code input (fallback)
   const handleManualInput = () => {
@@ -221,7 +223,7 @@ export function QRCodeScanner({ isOpen, onClose, onScan }: QRCodeScannerProps) {
     return () => {
       stopCamera();
     };
-  }, [isOpen]);
+  }, [isOpen, startCamera, stopCamera]);
 
   if (!isOpen) return null;
 

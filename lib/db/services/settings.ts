@@ -32,15 +32,15 @@ export interface UserSettings {
   displayName: string | null;
   avatarUrl: string | null;
   walletAddress: string | null;
-  
+
   // Subscription
   plan: 'free' | 'pro';
-  
+
   // Preferences
   theme: 'light' | 'dark' | 'system';
   hapticFeedback: boolean;
   defaultFeeLevel: 'LOW' | 'MEDIUM' | 'HIGH';
-  
+
   // Capabilities
   capabilities: {
     voiceCommands: boolean;
@@ -50,11 +50,23 @@ export interface UserSettings {
     savingsGoals: boolean;
     multiTokenSupport: boolean;
   };
-  
+
   // Permissions
   autoApproveSmallTransactions: boolean;
   transactionLimit: number;
-  
+
+  // Notification Preferences
+  notificationPreferences: {
+    transactionNotifications: boolean;
+    balanceChangeNotifications: boolean;
+    securityAlerts: boolean;
+    systemNotifications: boolean;
+    minBalanceChange: string;
+    email: boolean;
+    push: boolean;
+    inApp: boolean;
+  };
+
   // Privacy
   analyticsEnabled: boolean;
   errorReportingEnabled: boolean;
@@ -80,7 +92,7 @@ export interface CreateSettingsData {
  */
 export async function createSettings(data: CreateSettingsData | { user_id: string; settings?: Partial<UserSettings> }): Promise<UserSettings> {
   const supabase = getSupabaseAdmin();
-  
+
   // If settings provided, use them; otherwise use defaults
   const defaultSettings: Partial<UserSettings> = {
     plan: 'free',
@@ -97,13 +109,23 @@ export async function createSettings(data: CreateSettingsData | { user_id: strin
     },
     autoApproveSmallTransactions: false,
     transactionLimit: 100,
+    notificationPreferences: {
+      transactionNotifications: true,
+      balanceChangeNotifications: true,
+      securityAlerts: true,
+      systemNotifications: true,
+      minBalanceChange: '10',
+      email: false,
+      push: false,
+      inApp: true,
+    },
     analyticsEnabled: true,
     errorReportingEnabled: true,
   };
-  
+
   const userSettings = 'settings' in data ? { ...defaultSettings, ...data.settings } : defaultSettings;
   const recordData = mapUserSettingsToRecord(data.user_id, userSettings);
-  
+
   const { data: settings, error } = await supabase
     .from('settings')
     .insert({
@@ -138,7 +160,7 @@ export async function createSettings(data: CreateSettingsData | { user_id: strin
  */
 export async function getUserSettings(user_id: string): Promise<UserSettings | null> {
   const supabase = getSupabaseClient();
-  
+
   const { data, error } = await supabase
     .from('settings')
     .select('*')
@@ -162,7 +184,7 @@ export async function getUserSettings(user_id: string): Promise<UserSettings | n
  */
 function mapSettingsRecordToUserSettings(record: SettingsRecord): UserSettings {
   const metadata = record.metadata || {};
-  
+
   return {
     email: metadata.email || null,
     displayName: metadata.displayName || null,
@@ -182,6 +204,16 @@ function mapSettingsRecordToUserSettings(record: SettingsRecord): UserSettings {
     },
     autoApproveSmallTransactions: record.auto_approve_payments || false,
     transactionLimit: parseInt(record.auto_approve_limit || '100', 10),
+    notificationPreferences: {
+      transactionNotifications: metadata.notificationPreferences?.transactionNotifications ?? true,
+      balanceChangeNotifications: metadata.notificationPreferences?.balanceChangeNotifications ?? true,
+      securityAlerts: metadata.notificationPreferences?.securityAlerts ?? true,
+      systemNotifications: metadata.notificationPreferences?.systemNotifications ?? true,
+      minBalanceChange: metadata.notificationPreferences?.minBalanceChange || '10',
+      email: metadata.notificationPreferences?.email ?? false,
+      push: metadata.notificationPreferences?.push ?? false,
+      inApp: metadata.notificationPreferences?.inApp ?? true,
+    },
     analyticsEnabled: metadata.analyticsEnabled ?? true,
     errorReportingEnabled: metadata.errorReportingEnabled ?? true,
   };
@@ -205,6 +237,7 @@ function mapUserSettingsToRecord(user_id: string, settings: Partial<UserSettings
       hapticFeedback: settings.hapticFeedback,
       defaultFeeLevel: settings.defaultFeeLevel,
       capabilities: settings.capabilities,
+      notificationPreferences: settings.notificationPreferences,
       analyticsEnabled: settings.analyticsEnabled,
       errorReportingEnabled: settings.errorReportingEnabled,
     },
@@ -231,17 +264,17 @@ export async function updateSettings(
   updates: Partial<UserSettings>
 ): Promise<UserSettings> {
   const supabase = getSupabaseAdmin();
-  
+
   // Ensure settings exist
   await getOrCreateSettings(user_id);
-  
+
   // Get existing settings to merge
   const existing = await getUserSettings(user_id);
   const merged = { ...existing, ...updates } as UserSettings;
-  
+
   // Convert to Supabase format
   const recordUpdates = mapUserSettingsToRecord(user_id, merged);
-  
+
   // Convert to Supabase record format
   const supabaseUpdates: Partial<SettingsRecord> = {
     theme: recordUpdates.theme,
@@ -250,7 +283,7 @@ export async function updateSettings(
     metadata: recordUpdates.metadata,
     updated_at: new Date().toISOString(),
   };
-  
+
   const { data, error } = await supabase
     .from('settings')
     .update(supabaseUpdates)
@@ -276,16 +309,16 @@ export async function updateCurrencyPreference(
 ): Promise<UserSettings> {
   const supabase = getSupabaseAdmin();
   const existing = await getUserSettings(user_id);
-  
+
   // Get existing metadata from Supabase record
   const { data: record } = await supabase
     .from('settings')
     .select('metadata')
     .eq('user_id', user_id)
     .single();
-  
+
   const metadata = record?.metadata || {};
-  
+
   // Update metadata in Supabase
   await supabase
     .from('settings')
@@ -294,7 +327,7 @@ export async function updateCurrencyPreference(
       updated_at: new Date().toISOString(),
     })
     .eq('user_id', user_id);
-  
+
   // Return updated settings
   return await getUserSettings(user_id) || await getOrCreateSettings(user_id);
 }
@@ -308,16 +341,16 @@ export async function updateLanguage(
   language: string
 ): Promise<UserSettings> {
   const supabase = getSupabaseAdmin();
-  
+
   // Get existing metadata from Supabase record
   const { data: record } = await supabase
     .from('settings')
     .select('metadata')
     .eq('user_id', user_id)
     .single();
-  
+
   const metadata = record?.metadata || {};
-  
+
   // Update metadata in Supabase
   await supabase
     .from('settings')
@@ -326,7 +359,7 @@ export async function updateLanguage(
       updated_at: new Date().toISOString(),
     })
     .eq('user_id', user_id);
-  
+
   // Return updated settings
   return await getUserSettings(user_id) || await getOrCreateSettings(user_id);
 }
@@ -350,16 +383,16 @@ export async function toggleNotifications(
   enabled: boolean
 ): Promise<UserSettings> {
   const supabase = getSupabaseAdmin();
-  
+
   // Get existing metadata from Supabase record
   const { data: record } = await supabase
     .from('settings')
     .select('metadata')
     .eq('user_id', user_id)
     .single();
-  
+
   const metadata = record?.metadata || {};
-  
+
   // Update metadata in Supabase
   await supabase
     .from('settings')
@@ -368,7 +401,7 @@ export async function toggleNotifications(
       updated_at: new Date().toISOString(),
     })
     .eq('user_id', user_id);
-  
+
   // Return updated settings
   return await getUserSettings(user_id) || await getOrCreateSettings(user_id);
 }
@@ -392,7 +425,7 @@ export async function toggleAutoApprovePayments(
  */
 export async function deleteSettings(user_id: string): Promise<boolean> {
   const supabase = getSupabaseAdmin();
-  
+
   const { error } = await supabase
     .from('settings')
     .delete()
