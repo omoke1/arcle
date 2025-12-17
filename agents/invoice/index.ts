@@ -4,11 +4,12 @@
  * Handles invoice creation, link generation, QR codes, and payment tracking
  */
 
+import type { AgentRequest, AgentResponse } from '@/core/routing/types';
+import type { IntentType } from '@/lib/ai/intent-classifier';
 import { createInvoiceLink, getInvoiceLink, generateInvoiceLinkUrl, getUserInvoiceLinks, cancelInvoice, processInvoicePayment } from './oneTimeLink';
 import { generateInvoiceQRCode, getInvoiceWithQR } from './qrGenerator';
 import { createDynamicInvoice } from './dynamicInvoices';
 import { trackInvoicePayment, getUserPayments, getPaymentStats } from './paymentTracking';
-import type { AgentRequest, AgentResponse } from '@/core/routing/types';
 import { toSmallestUnit } from '@/agents/inera/utils';
 import { sendInvoiceCreatedEmail } from '@/lib/notifications/email/invoice-emails';
 
@@ -238,9 +239,18 @@ class InvoiceAgent {
   /**
    * Check if Invoice Agent can handle a request
    */
-  canHandle(intent: string, entities: Record<string, any>): boolean {
-    const invoiceKeywords = ['invoice', 'bill', 'payment link', 'invoice link'];
-    const hasInvoiceIntent = invoiceKeywords.some((keyword) => intent.toLowerCase().includes(keyword));
+  canHandle(intent: string | IntentType, entities: Record<string, any>): boolean {
+    const intentStr = typeof intent === 'string' ? intent.toLowerCase() : intent;
+    
+    if (typeof intent === 'string' && !intent.includes(' ')) {
+      const invoiceIntents: IntentType[] = ['invoice', 'payment_roll'];
+      if (invoiceIntents.includes(intentStr as IntentType)) {
+        return true;
+      }
+    }
+    
+    const invoiceKeywords = ['invoice', 'bill', 'payment link', 'invoice link', 'payment roll'];
+    const hasInvoiceIntent = invoiceKeywords.some((keyword) => intentStr.includes(keyword));
     
     return hasInvoiceIntent;
   }

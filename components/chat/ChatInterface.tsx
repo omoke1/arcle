@@ -6,6 +6,7 @@ import { EmptyChatState } from "./EmptyChatState";
 import { TypingIndicator } from "./TypingIndicator";
 import { QRCodeDisplay } from "@/components/wallet/QRCodeDisplay";
 import { TransactionPreviewMessage } from "./TransactionPreviewMessage";
+import { DeliveryTrackingMap } from "@/components/maps/DeliveryTrackingMap";
 import type { ChatMessage as ChatMessageType } from "@/types";
 
 interface ChatInterfaceProps {
@@ -93,6 +94,13 @@ export function ChatInterface({
             
             // Check if message has transaction preview
             const hasTransactionPreview = message.transactionPreview;
+            
+            // Check if message has delivery tracking data
+            const deliveryData = (message as any).agentData?.data;
+            const hasDeliveryTracking = deliveryData?.hasLocationData && 
+                                      deliveryData?.deliveryLatitude && 
+                                      deliveryData?.deliveryLongitude &&
+                                      deliveryData?.action === 'track-delivery';
 
             const repliedMessage = getRepliedMessage(message.replyTo);
             
@@ -128,6 +136,21 @@ export function ChatInterface({
                       blocked={message.transactionPreview!.blocked}
                       onConfirm={onConfirmTransaction}
                       onCancel={onCancelTransaction}
+                    />
+                  </div>
+                )}
+                {hasDeliveryTracking && deliveryData && (
+                  <div className="mt-3 max-w-[85%] sm:max-w-[80%] md:max-w-[75%] lg:max-w-[70%]">
+                    <DeliveryTrackingMap
+                      pickupLatitude={parseFloat(deliveryData.order?.vendor?.latitude || '0')}
+                      pickupLongitude={parseFloat(deliveryData.order?.vendor?.longitude || '0')}
+                      deliveryLatitude={parseFloat(deliveryData.deliveryLatitude)}
+                      deliveryLongitude={parseFloat(deliveryData.deliveryLongitude)}
+                      currentLatitude={deliveryData.currentLatitude ? parseFloat(deliveryData.currentLatitude) : undefined}
+                      currentLongitude={deliveryData.currentLongitude ? parseFloat(deliveryData.currentLongitude) : undefined}
+                      dispatcherName={deliveryData.order?.dispatcher?.name}
+                      estimatedArrival={deliveryData.order?.estimated_delivery_time}
+                      height="350px"
                     />
                   </div>
                 )}

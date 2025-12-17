@@ -37,23 +37,92 @@ export async function executeCCTPTransfer(params: CCTPTransferParams): Promise<E
 
 /**
  * Track CCTP transfer status
+ * 
+ * Uses Circle's Transfer API to check CCTP transfer status
  */
-export async function trackCCTPTransfer(transactionHash: string): Promise<{
+export async function trackCCTPTransfer(transferIdOrHash: string): Promise<{
   status: 'pending' | 'attesting' | 'completed' | 'failed';
   fromChain: string;
   toChain: string;
   amount: string;
   transactionHash: string;
+  progress?: number;
+  estimatedTime?: string;
+  error?: string;
 }> {
-  // TODO: Implement CCTP transfer tracking
-  // This would query Circle's API or blockchain to check transfer status
-  
-  return {
-    status: 'pending',
-    fromChain: '',
-    toChain: '',
-    amount: '0',
-    transactionHash,
-  };
+  try {
+    // Import bridge status tracking (CCTP uses same API as bridge)
+    const { getBridgeStatus } = await import('@/lib/bridge/cctp-bridge');
+    
+    // Try to get status using transfer ID or transaction hash
+    const bridgeStatus = await getBridgeStatus(transferIdOrHash);
+    
+    // Map bridge status to CCTP status
+    const cctpStatus = bridgeStatus.status === 'completed' ? 'completed' :
+                      bridgeStatus.status === 'attesting' ? 'attesting' :
+                      bridgeStatus.status === 'failed' ? 'failed' :
+                      'pending';
+    
+    return {
+      status: cctpStatus,
+      fromChain: bridgeStatus.fromChain,
+      toChain: bridgeStatus.toChain,
+      amount: bridgeStatus.amount,
+      transactionHash: bridgeStatus.transactionHash || transferIdOrHash,
+      progress: bridgeStatus.progress,
+      estimatedTime: bridgeStatus.estimatedTime,
+      error: bridgeStatus.error,
+    };
+  } catch (error: any) {
+    // If transfer ID lookup fails, try alternative approach
+    // Check if it's a transaction hash and try to get status from Circle API directly
+    try {
+      const { circleApiRequest } = await import('@/lib/circle');
+      
+      // Try to get transfer by transaction hash
+      const response = await circleApiRequest<any>(
+        `/v1/w3s/transfers`,
+        {
+          method: 'GET',
+          // Note: Circle API might need transfer ID, not hash
+          // For now, return pending status if lookup fails
+        }
+      );
+      
+      // If we find the transfer, return its status
+      if (response.data && Array.isArray(response.data)) {
+        const transfer = response.data.find((t: any) => 
+          t.transactionHash === transferIdOrHash || t.id === transferIdOrHash
+        );
+        
+        if (transfer) {
+          const status = transfer.status === 'complete' ? 'completed' :
+                        transfer.status === 'pending' ? 'pending' :
+                        transfer.status === 'failed' ? 'failed' :
+                        'attesting';
+          
+          return {
+            status,
+            fromChain: transfer.source?.chain?.replace('-TESTNET', '').replace('-SEPOLIA', '') || '',
+            toChain: transfer.destination?.chain?.replace('-TESTNET', '').replace('-SEPOLIA', '') || '',
+            amount: transfer.amount?.amount ? (BigInt(transfer.amount.amount) / 1_000_000n).toString() : '0',
+            transactionHash: transfer.transactionHash || transferIdOrHash,
+          };
+        }
+      }
+    } catch (apiError) {
+      console.warn('[CCTP Tracking] Could not fetch transfer status:', apiError);
+    }
+    
+    // Fallback: Return pending status if we can't determine actual status
+    return {
+      status: 'pending',
+      fromChain: '',
+      toChain: '',
+      amount: '0',
+      transactionHash: transferIdOrHash,
+      error: 'Could not fetch transfer status. Transfer may still be processing.',
+    };
+  }
 }
 

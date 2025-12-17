@@ -18,7 +18,17 @@ export async function GET(request: NextRequest) {
     }
     
     if (action === "positions" && walletAddress) {
-      const positions = getActivePositions(walletAddress);
+      const walletId = searchParams.get("walletId");
+      const blockchain = searchParams.get("blockchain") || "ETH";
+      
+      if (!walletId) {
+        return NextResponse.json(
+          { success: false, error: "walletId is required for fetching positions" },
+          { status: 400 }
+        );
+      }
+      
+      const positions = await getActivePositions(walletAddress, walletId, blockchain);
       return NextResponse.json({ success: true, data: positions });
     }
     
@@ -31,15 +41,44 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, walletId, walletAddress, strategyId, amount, positionId } = body;
+    const { action, walletId, walletAddress, strategyId, amount, positionId, userId, userToken, blockchain } = body;
     
     if (action === "start" && walletId && walletAddress && strategyId && amount) {
-      const result = await startYieldFarming(walletId, walletAddress, strategyId, amount);
+      // userId and userToken are required for all strategies (real implementations only)
+      if (!userId || !userToken) {
+        return NextResponse.json(
+          { success: false, error: "userId and userToken are required for yield farming" },
+          { status: 400 }
+        );
+      }
+      
+      const result = await startYieldFarming(
+        walletId, 
+        walletAddress, 
+        strategyId, 
+        amount,
+        userId,
+        userToken
+      );
       return NextResponse.json({ success: result.success, data: result });
     }
     
     if (action === "withdraw" && walletId && positionId) {
-      const result = await withdrawYield(positionId, walletId);
+      // userId and userToken are required for all withdrawals (real implementations only)
+      if (!userId || !userToken) {
+        return NextResponse.json(
+          { success: false, error: "userId and userToken are required for yield withdrawals" },
+          { status: 400 }
+        );
+      }
+      
+      const result = await withdrawYield(
+        positionId, 
+        walletId,
+        userId,
+        userToken,
+        blockchain || "ETH"
+      );
       return NextResponse.json({ success: result.success, data: result });
     }
     

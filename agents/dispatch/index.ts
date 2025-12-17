@@ -18,6 +18,7 @@ import {
   updateVendorOrderStatus,
   type VendorOrder,
 } from '@/lib/db/services/vendors';
+import { parseLocationFromMessage } from '@/lib/utils/locationParser';
 
 class DispatchAgent {
   /**
@@ -172,6 +173,9 @@ class DispatchAgent {
       }
 
       if (order.status === 'dispatched' && order.dispatcher_id) {
+        // Check if we have location data for map display
+        const hasLocationData = order.delivery_latitude && order.delivery_longitude;
+        
         return {
           success: true,
           message: `🚚 Order ${order.order_number} is out for delivery!\n\n` +
@@ -182,7 +186,13 @@ class DispatchAgent {
             `You'll be notified when it arrives.`,
           agent: 'dispatch',
           action: 'track-delivery',
-          data: { order, status: 'in-transit' },
+          data: { 
+            order, 
+            status: 'in-transit',
+            hasLocationData,
+            deliveryLatitude: order.delivery_latitude,
+            deliveryLongitude: order.delivery_longitude,
+          },
         };
       }
 

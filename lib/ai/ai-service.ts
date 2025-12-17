@@ -2367,7 +2367,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
 
   private static async handleRemittanceIntent(
     intent: ParsedIntent,
-    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string }
+    context?: { hasWallet?: boolean; balance?: string; walletAddress?: string; walletId?: string; userId?: string }
   ): Promise<AIResponse> {
     if (!context?.hasWallet || !context?.walletId) {
       return {
@@ -2383,7 +2383,9 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
     if (lowerCommand.includes("list") || lowerCommand.includes("show")) {
       try {
         const { getAllRemittances } = await import("@/lib/remittances/remittance-service");
-        const remittances = getAllRemittances();
+        // Note: getAllRemittances now requires userId parameter
+        // Use Supabase user id from context if available
+        const remittances = context.userId ? await getAllRemittances(context.userId) : [];
 
         if (remittances.length === 0) {
           return {
@@ -2434,6 +2436,7 @@ Ready to get started? Just say "yes" or "let's do it" and I'll begin the setup p
       const { createRemittance } = await import("@/lib/remittances/remittance-service");
 
       const remittance = await createRemittance({
+        userId: context?.userId || '', // Supabase user id
         recipientName: recipient,
         recipientCountry: country,
         amount,

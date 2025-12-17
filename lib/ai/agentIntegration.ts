@@ -27,18 +27,28 @@ export async function processMessageWithAgents(
   message: string;
   intent: ParsedIntent;
   agent?: string;
+  action?: string;
   requiresConfirmation?: boolean;
   data?: any;
   useAgentRouter: boolean;
 }> {
   try {
-    // First, classify intent to extract entities
-    // IntentClassifier.classify is a static method
-    const intent = IntentClassifier.classify(message);
+    // First, try AI-based intent classification (context-aware)
+    let intent: ParsedIntent;
+    try {
+      const { classifyIntentWithContext } = await import('./context-aware-classifier');
+      intent = await classifyIntentWithContext(message, {
+        hasWallet: context.hasWallet,
+        recentMessages: [], // Could be enhanced with actual conversation history
+      });
+    } catch (error) {
+      // Fallback to rule-based classifier
+      intent = IntentClassifier.classify(message);
+    }
     
-    // Build agent request
+    // Build agent request with classified intent
     const agentRequest: AgentRequest = {
-      intent: message,
+      intent: message, // Keep original message for fallback
       entities: intent.entities || {},
       context: {
         walletId: context.walletId,
@@ -49,9 +59,11 @@ export async function processMessageWithAgents(
         walletAddress: context.walletAddress,
       },
       sessionId,
+      // Add classified intent for router to use
+      classifiedIntent: intent,
     };
 
-    // Route to agent
+    // Route to agent (router will use AI classification)
     const agentResponse = await routeToAgent(agentRequest);
 
     // If agent successfully handled it, return agent response
@@ -60,6 +72,7 @@ export async function processMessageWithAgents(
         message: agentResponse.message,
         intent,
         agent: agentResponse.agent,
+        action: agentResponse.action,
         requiresConfirmation: agentResponse.requiresConfirmation,
         data: agentResponse.data,
         useAgentRouter: true,

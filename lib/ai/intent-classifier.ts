@@ -28,6 +28,7 @@ export type IntentType =
   | "split_payment"
   | "batch"
   | "savings"
+  | "safelock"
   | "trade"
   | "limit_order"
   | "liquidity"
@@ -51,6 +52,26 @@ export type IntentType =
   | "help"
   | "location"
   | "bill_payment"
+  | "phone"
+  | "email"
+  | "merchant"
+  | "pos"
+  | "settlement"
+  | "compliance"
+  | "kyc"
+  | "verify"
+  | "risk"
+  | "fraud"
+  | "order"
+  | "purchase"
+  | "buy"
+  | "analytics"
+  | "report"
+  | "dashboard"
+  | "summary"
+  | "dispatch"
+  | "vendor"
+  | "local_account"
   | "unknown";
 
 export interface ParsedIntent {
@@ -270,6 +291,176 @@ export class IntentClassifier {
         intent: "savings",
         confidence: 0.9,
         entities: this.extractSavingsEntities(command, lowerCommand),
+        rawCommand: command,
+      };
+    }
+
+    // SafeLock intent
+    if (this.matchesSafeLock(lowerCommand)) {
+      return {
+        intent: "safelock",
+        confidence: 0.9,
+        entities: this.extractSafeLockEntities(command, lowerCommand),
+        rawCommand: command,
+      };
+    }
+
+    // Phone payment intent
+    if (this.matchesPhone(lowerCommand)) {
+      return {
+        intent: "phone",
+        confidence: 0.9,
+        entities: this.extractPhoneEntities(command, lowerCommand),
+        rawCommand: command,
+      };
+    }
+
+    // Email payment intent
+    if (this.matchesEmail(lowerCommand)) {
+      return {
+        intent: "email",
+        confidence: 0.9,
+        entities: this.extractEmailEntities(command, lowerCommand),
+        rawCommand: command,
+      };
+    }
+
+    // Merchant intent
+    if (this.matchesMerchant(lowerCommand)) {
+      return {
+        intent: "merchant",
+        confidence: 0.9,
+        entities: this.extractMerchantEntities(command, lowerCommand),
+        rawCommand: command,
+      };
+    }
+
+    // POS intent
+    if (this.matchesPOS(lowerCommand)) {
+      return {
+        intent: "pos",
+        confidence: 0.9,
+        entities: this.extractPOSEntities(command, lowerCommand),
+        rawCommand: command,
+      };
+    }
+
+    // Settlement intent
+    if (this.matchesSettlement(lowerCommand)) {
+      return {
+        intent: "settlement",
+        confidence: 0.9,
+        entities: {},
+        rawCommand: command,
+      };
+    }
+
+    // Compliance intent
+    if (this.matchesCompliance(lowerCommand)) {
+      return {
+        intent: "compliance",
+        confidence: 0.9,
+        entities: this.extractComplianceEntities(command, lowerCommand),
+        rawCommand: command,
+      };
+    }
+
+    // KYC intent
+    if (this.matchesKYC(lowerCommand)) {
+      return {
+        intent: "kyc",
+        confidence: 0.9,
+        entities: {},
+        rawCommand: command,
+      };
+    }
+
+    // Risk intent
+    if (this.matchesRisk(lowerCommand)) {
+      return {
+        intent: "risk",
+        confidence: 0.9,
+        entities: this.extractRiskEntities(command, lowerCommand),
+        rawCommand: command,
+      };
+    }
+
+    // Fraud intent
+    if (this.matchesFraud(lowerCommand)) {
+      return {
+        intent: "fraud",
+        confidence: 0.9,
+        entities: this.extractFraudEntities(command, lowerCommand),
+        rawCommand: command,
+      };
+    }
+
+    // Order intent (commerce)
+    if (this.matchesOrder(lowerCommand)) {
+      return {
+        intent: "order",
+        confidence: 0.9,
+        entities: this.extractOrderEntities(command, lowerCommand),
+        rawCommand: command,
+      };
+    }
+
+    // Purchase intent
+    if (this.matchesPurchase(lowerCommand)) {
+      return {
+        intent: "purchase",
+        confidence: 0.9,
+        entities: this.extractPurchaseEntities(command, lowerCommand),
+        rawCommand: command,
+      };
+    }
+
+    // Buy intent
+    if (this.matchesBuy(lowerCommand)) {
+      return {
+        intent: "buy",
+        confidence: 0.9,
+        entities: this.extractBuyEntities(command, lowerCommand),
+        rawCommand: command,
+      };
+    }
+
+    // Analytics intent
+    if (this.matchesAnalytics(lowerCommand)) {
+      return {
+        intent: "analytics",
+        confidence: 0.9,
+        entities: {},
+        rawCommand: command,
+      };
+    }
+
+    // Report intent
+    if (this.matchesReport(lowerCommand)) {
+      return {
+        intent: "report",
+        confidence: 0.9,
+        entities: {},
+        rawCommand: command,
+      };
+    }
+
+    // Dashboard intent
+    if (this.matchesDashboard(lowerCommand)) {
+      return {
+        intent: "dashboard",
+        confidence: 0.9,
+        entities: {},
+        rawCommand: command,
+      };
+    }
+
+    // Summary intent
+    if (this.matchesSummary(lowerCommand)) {
+      return {
+        intent: "summary",
+        confidence: 0.9,
+        entities: {},
         rawCommand: command,
       };
     }
@@ -1811,6 +2002,253 @@ export class IntentClassifier {
     }
 
     return entities;
+  }
+
+  /**
+   * Match SafeLock intent
+   */
+  private static matchesSafeLock(command: string): boolean {
+    const keywords = ["safelock", "safe lock", "fixed deposit", "lock funds", "lock money"];
+    return keywords.some(keyword => command.includes(keyword));
+  }
+
+  /**
+   * Extract SafeLock entities
+   */
+  private static extractSafeLockEntities(original: string, lower: string): ParsedIntent["entities"] {
+    const entities: ParsedIntent["entities"] = {};
+    const amountMatch = original.match(/\$?(\d+(?:\.\d+)?)/);
+    if (amountMatch) entities.amount = amountMatch[1];
+    const periodMatch = original.match(/(\d+)\s*(?:days?|months?|weeks?)/i);
+    if (periodMatch) entities.frequency = periodMatch[1];
+    return entities;
+  }
+
+  /**
+   * Match phone payment intent
+   */
+  private static matchesPhone(command: string): boolean {
+    const phonePattern = /\+?\d{10,15}|\bphone\b|\bcall\b|\btext\b|\bsms\b/i;
+    return phonePattern.test(command) && (command.includes("send") || command.includes("pay") || command.includes("transfer"));
+  }
+
+  /**
+   * Extract phone entities
+   */
+  private static extractPhoneEntities(original: string, lower: string): ParsedIntent["entities"] {
+    const entities: ParsedIntent["entities"] = {};
+    const phoneMatch = original.match(/(\+?\d{10,15})/);
+    if (phoneMatch) entities.recipient = phoneMatch[1];
+    const amountMatch = original.match(/\$?(\d+(?:\.\d+)?)/);
+    if (amountMatch) entities.amount = amountMatch[1];
+    return entities;
+  }
+
+  /**
+   * Match email payment intent
+   */
+  private static matchesEmail(command: string): boolean {
+    const emailPattern = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+    return emailPattern.test(command) && (command.includes("send") || command.includes("pay") || command.includes("transfer"));
+  }
+
+  /**
+   * Extract email entities
+   */
+  private static extractEmailEntities(original: string, lower: string): ParsedIntent["entities"] {
+    const entities: ParsedIntent["entities"] = {};
+    const emailMatch = original.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+    if (emailMatch) entities.recipient = emailMatch[1];
+    const amountMatch = original.match(/\$?(\d+(?:\.\d+)?)/);
+    if (amountMatch) entities.amount = amountMatch[1];
+    return entities;
+  }
+
+  /**
+   * Match merchant intent
+   */
+  private static matchesMerchant(command: string): boolean {
+    const keywords = ["merchant", "vendor", "store", "shop"];
+    return keywords.some(keyword => command.includes(keyword));
+  }
+
+  /**
+   * Extract merchant entities
+   */
+  private static extractMerchantEntities(original: string, lower: string): ParsedIntent["entities"] {
+    const entities: ParsedIntent["entities"] = {};
+    const merchantMatch = original.match(/(?:merchant|vendor|store|shop)\s+([a-zA-Z0-9\s]+)/i);
+    if (merchantMatch) entities.merchant = merchantMatch[1].trim();
+    return entities;
+  }
+
+  /**
+   * Match POS intent
+   */
+  private static matchesPOS(command: string): boolean {
+    const keywords = ["pos", "point of sale", "point-of-sale", "checkout", "register"];
+    return keywords.some(keyword => command.includes(keyword));
+  }
+
+  /**
+   * Extract POS entities
+   */
+  private static extractPOSEntities(original: string, lower: string): ParsedIntent["entities"] {
+    const entities: ParsedIntent["entities"] = {};
+    const amountMatch = original.match(/\$?(\d+(?:\.\d+)?)/);
+    if (amountMatch) entities.amount = amountMatch[1];
+    return entities;
+  }
+
+  /**
+   * Match settlement intent
+   */
+  private static matchesSettlement(command: string): boolean {
+    const keywords = ["settlement", "settle", "payout", "merchant payout"];
+    return keywords.some(keyword => command.includes(keyword));
+  }
+
+  /**
+   * Match compliance intent
+   */
+  private static matchesCompliance(command: string): boolean {
+    const keywords = ["compliance", "regulatory", "audit"];
+    return keywords.some(keyword => command.includes(keyword));
+  }
+
+  /**
+   * Extract compliance entities
+   */
+  private static extractComplianceEntities(original: string, lower: string): ParsedIntent["entities"] {
+    const entities: ParsedIntent["entities"] = {};
+    const addressMatch = original.match(/0x[a-fA-F0-9]{40}/);
+    if (addressMatch) entities.address = addressMatch[0];
+    return entities;
+  }
+
+  /**
+   * Match KYC intent
+   */
+  private static matchesKYC(command: string): boolean {
+    const keywords = ["kyc", "know your customer", "identity verification", "verify identity"];
+    return keywords.some(keyword => command.includes(keyword));
+  }
+
+  /**
+   * Match risk intent
+   */
+  private static matchesRisk(command: string): boolean {
+    const keywords = ["risk", "risk score", "check risk", "risk analysis", "safe", "scam"];
+    return keywords.some(keyword => command.includes(keyword));
+  }
+
+  /**
+   * Extract risk entities
+   */
+  private static extractRiskEntities(original: string, lower: string): ParsedIntent["entities"] {
+    const entities: ParsedIntent["entities"] = {};
+    const addressMatch = original.match(/0x[a-fA-F0-9]{40}/);
+    if (addressMatch) entities.address = addressMatch[0];
+    return entities;
+  }
+
+  /**
+   * Match fraud intent
+   */
+  private static matchesFraud(command: string): boolean {
+    const keywords = ["fraud", "fraudulent", "scam", "phishing", "malicious"];
+    return keywords.some(keyword => command.includes(keyword));
+  }
+
+  /**
+   * Extract fraud entities
+   */
+  private static extractFraudEntities(original: string, lower: string): ParsedIntent["entities"] {
+    const entities: ParsedIntent["entities"] = {};
+    const addressMatch = original.match(/0x[a-fA-F0-9]{40}/);
+    if (addressMatch) entities.address = addressMatch[0];
+    return entities;
+  }
+
+  /**
+   * Match order intent (commerce)
+   */
+  private static matchesOrder(command: string): boolean {
+    const keywords = ["order", "place order", "create order", "new order"];
+    return keywords.some(keyword => command.includes(keyword));
+  }
+
+  /**
+   * Extract order entities
+   */
+  private static extractOrderEntities(original: string, lower: string): ParsedIntent["entities"] {
+    const entities: ParsedIntent["entities"] = {};
+    const amountMatch = original.match(/\$?(\d+(?:\.\d+)?)/);
+    if (amountMatch) entities.amount = amountMatch[1];
+    const vendorMatch = original.match(/(?:from|vendor|store)\s+([a-zA-Z0-9\s]+)/i);
+    if (vendorMatch) entities.merchant = vendorMatch[1].trim();
+    return entities;
+  }
+
+  /**
+   * Match purchase intent
+   */
+  private static matchesPurchase(command: string): boolean {
+    const keywords = ["purchase", "buy", "acquire"];
+    return keywords.some(keyword => command.includes(keyword));
+  }
+
+  /**
+   * Extract purchase entities
+   */
+  private static extractPurchaseEntities(original: string, lower: string): ParsedIntent["entities"] {
+    return this.extractOrderEntities(original, lower);
+  }
+
+  /**
+   * Match buy intent
+   */
+  private static matchesBuy(command: string): boolean {
+    return command.includes("buy") || command.includes("purchase");
+  }
+
+  /**
+   * Extract buy entities
+   */
+  private static extractBuyEntities(original: string, lower: string): ParsedIntent["entities"] {
+    return this.extractOrderEntities(original, lower);
+  }
+
+  /**
+   * Match analytics intent
+   */
+  private static matchesAnalytics(command: string): boolean {
+    const keywords = ["analytics", "analyze", "analysis", "insights"];
+    return keywords.some(keyword => command.includes(keyword));
+  }
+
+  /**
+   * Match report intent
+   */
+  private static matchesReport(command: string): boolean {
+    const keywords = ["report", "generate report", "create report", "show report"];
+    return keywords.some(keyword => command.includes(keyword));
+  }
+
+  /**
+   * Match dashboard intent
+   */
+  private static matchesDashboard(command: string): boolean {
+    const keywords = ["dashboard", "overview", "main screen"];
+    return keywords.some(keyword => command.includes(keyword));
+  }
+
+  /**
+   * Match summary intent
+   */
+  private static matchesSummary(command: string): boolean {
+    const keywords = ["summary", "summarize", "overview", "summary of"];
+    return keywords.some(keyword => command.includes(keyword));
   }
 }
 

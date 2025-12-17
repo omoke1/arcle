@@ -82,12 +82,41 @@ AVAILABLE INTENTS:
 - "confirm": User is confirming/approving a pending action (e.g., "yes", "proceed", "confirm", "go ahead", "do it")
 - "cancel": User is canceling a pending action (e.g., "no", "cancel", "stop", "abort")
 - "send": Send USDC to an address
+- "pay": Make a payment
+- "phone": Send payment to phone number
+- "email": Send payment to email address
 - "bridge": Bridge USDC to another chain
+- "remittance": Cross-border payment
 - "balance": Check balance
 - "transaction_history": View transaction history
 - "convert": Convert between currencies (USDC/EURC)
+- "fx_rate": Get exchange rate
 - "schedule": Schedule a payment
+- "subscription": Create/manage subscription
 - "invoice": Create/manage invoices
+- "payment_roll": Payment roll/payroll
+- "yield": Start yield farming
+- "savings": Create savings goal
+- "safelock": Create fixed deposit
+- "trade": Execute trade/swap
+- "liquidity": Find best liquidity
+- "arbitrage": Find arbitrage opportunities
+- "rebalance": Rebalance portfolio
+- "order": Place order (commerce)
+- "purchase": Make purchase
+- "buy": Buy something
+- "merchant": Merchant operations
+- "pos": Point of sale
+- "settlement": Merchant settlement
+- "compliance": Compliance check
+- "kyc": KYC verification
+- "risk": Risk analysis
+- "fraud": Fraud detection
+- "analytics": Analytics/insights
+- "report": Generate report
+- "dashboard": Show dashboard
+- "summary": Show summary
+- "bill_payment": Pay bill
 - "help": User needs help
 - "greeting": Greeting message
 - "unknown": Can't determine intent
@@ -102,13 +131,16 @@ CRITICAL RULES:
 
 Return ONLY a JSON object with this exact format:
 {
-  "intent": "confirm" | "cancel" | "send" | "bridge" | "balance" | "transaction_history" | "convert" | "schedule" | "invoice" | "help" | "greeting" | "unknown",
+  "intent": "confirm" | "cancel" | "send" | "pay" | "phone" | "email" | "bridge" | "remittance" | "balance" | "transaction_history" | "convert" | "fx_rate" | "schedule" | "subscription" | "invoice" | "payment_roll" | "yield" | "savings" | "safelock" | "trade" | "liquidity" | "arbitrage" | "rebalance" | "order" | "purchase" | "buy" | "merchant" | "pos" | "settlement" | "compliance" | "kyc" | "risk" | "fraud" | "analytics" | "report" | "dashboard" | "summary" | "bill_payment" | "help" | "greeting" | "unknown",
   "confidence": 0.0-1.0,
   "entities": {
     "amount": "string or null",
     "address": "string or null",
     "recipient": "string or null",
-    "currency": "string or null"
+    "currency": "string or null",
+    "phone": "string or null",
+    "email": "string or null",
+    "merchant": "string or null"
   }
 }`;
 
