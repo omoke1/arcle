@@ -2,10 +2,23 @@
  * Remittance Service
  * 
  * Manages international money transfers with currency conversion
+ * Now uses Supabase database instead of localStorage
  */
 
-import crypto from "crypto";
 import { convertCurrency } from "@/lib/fx/fx-rates";
+import {
+  createRemittance as createRemittanceDb,
+  getAllRemittances as getAllRemittancesDb,
+  getRemittanceById as getRemittanceByIdDb,
+  updateRemittance as updateRemittanceDb,
+  markRemittanceAsCompleted as markRemittanceAsCompletedDb,
+  saveRemittanceRecipient as saveRemittanceRecipientDb,
+  getAllRemittanceRecipients as getAllRemittanceRecipientsDb,
+  getRemittanceRecipientByName as getRemittanceRecipientByNameDb,
+  type Remittance as RemittanceDb,
+  type RemittanceRecipient as RemittanceRecipientDb,
+} from "@/lib/db/services/remittances";
+import { getOrCreateSupabaseUser } from "@/lib/supabase-data";
 
 export interface Remittance {
   id: string;
@@ -40,9 +53,7 @@ export interface RemittanceRecipient {
   lastRemittanceDate?: string;
 }
 
-// Store remittances in localStorage
-const REMITTANCES_STORAGE_KEY = "arcle_remittances";
-const REMITTANCE_RECIPIENTS_STORAGE_KEY = "arcle_remittance_recipients";
+// Removed localStorage - now using Supabase database
 
 // Country to currency mapping
 const COUNTRY_CURRENCY_MAP: Record<string, string> = {
@@ -90,25 +101,16 @@ export function getCurrencyForCountry(country: string): string {
 export async function createRemittance(
   remittance: Omit<Remittance, "id" | "remittanceNumber" | "createdAt" | "status" | "convertedAmount" | "exchangeRate" | "fee" | "totalAmount" | "recipientCurrency"> & {
     recipientCurrency?: string;
+    userId: string; // Circle userId
   }
 ): Promise<Remittance> {
-  const remittances = getAllRemittances();
-  
-  // Generate remittance number
-  const remittanceNumber = `REM-${new Date().getFullYear()}-${String(remittances.length + 1).padStart(4, "0")}`;
+  // Get Supabase user_id from Circle userId
+  const supabaseUserId = await getOrCreateSupabaseUser(remittance.userId);
   
   // Determine target currency
   const targetCurrency = remittance.recipientCurrency || getCurrencyForCountry(remittance.recipientCountry);
   
-  // Ensure recipientCurrency is set
-  const remittanceWithCurrency = {
-    ...remittance,
-    recipientCurrency: targetCurrency,
-  };
-  
-  // Convert amount (USDC to target currency)
-  // Note: In production, this would use real FX rates
-  // For now, we'll use approximate rates
+  // Convert amount (USDC to target currency) using real FX rates
   const conversion = await convertCurrency(remittance.amount, "USDC", targetCurrency);
   
   if (!conversion.success || !conversion.convertedAmount || !conversion.rate) {
@@ -121,137 +123,242 @@ export async function createRemittance(
   const fee = (amountNum * feePercent).toFixed(6);
   const totalAmount = (amountNum + parseFloat(fee)).toFixed(6);
   
-  const newRemittance: Remittance = {
-    ...remittanceWithCurrency,
-    id: crypto.randomUUID(),
-    remittanceNumber,
-    convertedAmount: conversion.convertedAmount,
-    exchangeRate: conversion.rate,
+  // Create remittance in database
+  const dbRemittance = await createRemittanceDb({
+    user_id: supabaseUserId,
+    recipient_name: remittance.recipientName,
+    recipient_address: remittance.recipientAddress,
+    recipient_country: remittance.recipientCountry,
+    recipient_currency: targetCurrency,
+    amount: remittance.amount,
+    converted_amount: conversion.convertedAmount,
+    exchange_rate: conversion.rate,
     fee,
-    totalAmount,
-    status: "pending",
-    createdAt: new Date().toISOString(),
+    total_amount: totalAmount,
+    metadata: remittance.metadata,
+  });
+  
+  // Convert database format to service format
+  return {
+    id: dbRemittance.id,
+    remittanceNumber: dbRemittance.remittance_number,
+    recipientName: dbRemittance.recipient_name,
+    recipientAddress: dbRemittance.recipient_address,
+    recipientCountry: dbRemittance.recipient_country,
+    recipientCurrency: dbRemittance.recipient_currency,
+    amount: dbRemittance.amount,
+    convertedAmount: dbRemittance.converted_amount,
+    exchangeRate: dbRemittance.exchange_rate,
+    fee: dbRemittance.fee,
+    totalAmount: dbRemittance.total_amount,
+    status: dbRemittance.status,
+    transactionHash: dbRemittance.transaction_hash,
+    metadata: dbRemittance.metadata,
+    createdAt: dbRemittance.created_at,
+    completedAt: dbRemittance.completed_at,
   };
-  
-  remittances.push(newRemittance);
-  saveRemittances(remittances);
-  
-  return newRemittance;
 }
 
 /**
- * Get all remittances
+ * Get all remittances for a user
  */
-export function getAllRemittances(): Remittance[] {
-  if (typeof window === "undefined") {
-    return [];
-  }
+export async function getAllRemittances(userId: string): Promise<Remittance[]> {
+  const supabaseUserId = await getOrCreateSupabaseUser(userId);
+  const dbRemittances = await getAllRemittancesDb(supabaseUserId);
   
-  try {
-    const stored = localStorage.getItem(REMITTANCES_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch {
-    return [];
-  }
+  // Convert database format to service format
+  return dbRemittances.map(db => ({
+    id: db.id,
+    remittanceNumber: db.remittance_number,
+    recipientName: db.recipient_name,
+    recipientAddress: db.recipient_address,
+    recipientCountry: db.recipient_country,
+    recipientCurrency: db.recipient_currency,
+    amount: db.amount,
+    convertedAmount: db.converted_amount,
+    exchangeRate: db.exchange_rate,
+    fee: db.fee,
+    totalAmount: db.total_amount,
+    status: db.status,
+    transactionHash: db.transaction_hash,
+    metadata: db.metadata,
+    createdAt: db.created_at,
+    completedAt: db.completed_at,
+  }));
 }
 
 /**
  * Get remittance by ID
  */
-export function getRemittanceById(id: string): Remittance | null {
-  const remittances = getAllRemittances();
-  return remittances.find(rem => rem.id === id) || null;
+export async function getRemittanceById(id: string): Promise<Remittance | null> {
+  const dbRemittance = await getRemittanceByIdDb(id);
+  
+  if (!dbRemittance) {
+    return null;
+  }
+  
+  // Convert database format to service format
+  return {
+    id: dbRemittance.id,
+    remittanceNumber: dbRemittance.remittance_number,
+    recipientName: dbRemittance.recipient_name,
+    recipientAddress: dbRemittance.recipient_address,
+    recipientCountry: dbRemittance.recipient_country,
+    recipientCurrency: dbRemittance.recipient_currency,
+    amount: dbRemittance.amount,
+    convertedAmount: dbRemittance.converted_amount,
+    exchangeRate: dbRemittance.exchange_rate,
+    fee: dbRemittance.fee,
+    totalAmount: dbRemittance.total_amount,
+    status: dbRemittance.status,
+    transactionHash: dbRemittance.transaction_hash,
+    metadata: dbRemittance.metadata,
+    createdAt: dbRemittance.created_at,
+    completedAt: dbRemittance.completed_at,
+  };
 }
 
 /**
  * Update remittance
  */
-export function updateRemittance(id: string, updates: Partial<Remittance>): Remittance | null {
-  const remittances = getAllRemittances();
-  const index = remittances.findIndex(rem => rem.id === id);
+export async function updateRemittance(id: string, updates: Partial<Remittance>): Promise<Remittance | null> {
+  // Convert service format to database format
+  const dbUpdates: any = {};
+  if (updates.status) dbUpdates.status = updates.status;
+  if (updates.transactionHash) dbUpdates.transaction_hash = updates.transactionHash;
+  if (updates.completedAt) dbUpdates.completed_at = updates.completedAt;
+  if (updates.metadata) dbUpdates.metadata = updates.metadata;
   
-  if (index === -1) {
+  const dbRemittance = await updateRemittanceDb(id, dbUpdates);
+  
+  if (!dbRemittance) {
     return null;
   }
   
-  remittances[index] = { ...remittances[index], ...updates };
-  saveRemittances(remittances);
-  
-  return remittances[index];
+  // Convert database format to service format
+  return {
+    id: dbRemittance.id,
+    remittanceNumber: dbRemittance.remittance_number,
+    recipientName: dbRemittance.recipient_name,
+    recipientAddress: dbRemittance.recipient_address,
+    recipientCountry: dbRemittance.recipient_country,
+    recipientCurrency: dbRemittance.recipient_currency,
+    amount: dbRemittance.amount,
+    convertedAmount: dbRemittance.converted_amount,
+    exchangeRate: dbRemittance.exchange_rate,
+    fee: dbRemittance.fee,
+    totalAmount: dbRemittance.total_amount,
+    status: dbRemittance.status,
+    transactionHash: dbRemittance.transaction_hash,
+    metadata: dbRemittance.metadata,
+    createdAt: dbRemittance.created_at,
+    completedAt: dbRemittance.completed_at,
+  };
 }
 
 /**
  * Mark remittance as completed
  */
-export function markRemittanceAsCompleted(id: string, transactionHash: string): Remittance | null {
-  return updateRemittance(id, {
-    status: "completed",
-    completedAt: new Date().toISOString(),
-    transactionHash,
-  });
+export async function markRemittanceAsCompleted(id: string, transactionHash: string): Promise<Remittance | null> {
+  const dbRemittance = await markRemittanceAsCompletedDb(id, transactionHash);
+  
+  if (!dbRemittance) {
+    return null;
+  }
+  
+  // Convert database format to service format
+  return {
+    id: dbRemittance.id,
+    remittanceNumber: dbRemittance.remittance_number,
+    recipientName: dbRemittance.recipient_name,
+    recipientAddress: dbRemittance.recipient_address,
+    recipientCountry: dbRemittance.recipient_country,
+    recipientCurrency: dbRemittance.recipient_currency,
+    amount: dbRemittance.amount,
+    convertedAmount: dbRemittance.converted_amount,
+    exchangeRate: dbRemittance.exchange_rate,
+    fee: dbRemittance.fee,
+    totalAmount: dbRemittance.total_amount,
+    status: dbRemittance.status,
+    transactionHash: dbRemittance.transaction_hash,
+    metadata: dbRemittance.metadata,
+    createdAt: dbRemittance.created_at,
+    completedAt: dbRemittance.completed_at,
+  };
 }
 
 /**
  * Save remittance recipient
  */
-export function saveRemittanceRecipient(recipient: RemittanceRecipient): RemittanceRecipient {
-  const recipients = getAllRemittanceRecipients();
-  const existing = recipients.find(r => r.id === recipient.id);
+export async function saveRemittanceRecipient(
+  userId: string,
+  recipient: Omit<RemittanceRecipient, "id" | "lastRemittanceDate">
+): Promise<RemittanceRecipient> {
+  const supabaseUserId = await getOrCreateSupabaseUser(userId);
   
-  if (existing) {
-    const index = recipients.findIndex(r => r.id === recipient.id);
-    recipients[index] = { ...recipient, lastRemittanceDate: new Date().toISOString() };
-  } else {
-    recipients.push({ ...recipient, lastRemittanceDate: new Date().toISOString() });
-  }
+  const dbRecipient = await saveRemittanceRecipientDb(supabaseUserId, {
+    name: recipient.name,
+    address: recipient.address,
+    country: recipient.country,
+    currency: recipient.currency,
+    preferred_currency: recipient.preferredCurrency,
+  });
   
-  saveRemittanceRecipients(recipients);
-  return recipient;
+  // Convert database format to service format
+  return {
+    id: dbRecipient.id,
+    name: dbRecipient.name,
+    address: dbRecipient.address,
+    country: dbRecipient.country,
+    currency: dbRecipient.currency,
+    preferredCurrency: dbRecipient.preferred_currency,
+    lastRemittanceDate: dbRecipient.last_remittance_date,
+  };
 }
 
 /**
- * Get all remittance recipients
+ * Get all remittance recipients for a user
  */
-export function getAllRemittanceRecipients(): RemittanceRecipient[] {
-  if (typeof window === "undefined") {
-    return [];
+export async function getAllRemittanceRecipients(userId: string): Promise<RemittanceRecipient[]> {
+  const supabaseUserId = await getOrCreateSupabaseUser(userId);
+  const dbRecipients = await getAllRemittanceRecipientsDb(supabaseUserId);
+  
+  // Convert database format to service format
+  return dbRecipients.map(db => ({
+    id: db.id,
+    name: db.name,
+    address: db.address,
+    country: db.country,
+    currency: db.currency,
+    preferredCurrency: db.preferred_currency,
+    lastRemittanceDate: db.last_remittance_date,
+  }));
+}
+
+/**
+ * Get recipient by name
+ */
+export async function getRemittanceRecipientByName(
+  userId: string,
+  name: string
+): Promise<RemittanceRecipient | null> {
+  const supabaseUserId = await getOrCreateSupabaseUser(userId);
+  const dbRecipient = await getRemittanceRecipientByNameDb(supabaseUserId, name);
+  
+  if (!dbRecipient) {
+    return null;
   }
   
-  try {
-    const stored = localStorage.getItem(REMITTANCE_RECIPIENTS_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Get recipient by name or address
- */
-export function getRemittanceRecipientByName(name: string): RemittanceRecipient | null {
-  const recipients = getAllRemittanceRecipients();
-  return recipients.find(r => r.name.toLowerCase() === name.toLowerCase()) || null;
-}
-
-/**
- * Save functions
- */
-function saveRemittances(remittances: Remittance[]): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(REMITTANCES_STORAGE_KEY, JSON.stringify(remittances));
-  } catch (error) {
-    console.error("Error saving remittances:", error);
-  }
-}
-
-function saveRemittanceRecipients(recipients: RemittanceRecipient[]): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(REMITTANCE_RECIPIENTS_STORAGE_KEY, JSON.stringify(recipients));
-  } catch (error) {
-    console.error("Error saving remittance recipients:", error);
-  }
+  // Convert database format to service format
+  return {
+    id: dbRecipient.id,
+    name: dbRecipient.name,
+    address: dbRecipient.address,
+    country: dbRecipient.country,
+    currency: dbRecipient.currency,
+    preferredCurrency: dbRecipient.preferred_currency,
+    lastRemittanceDate: dbRecipient.last_remittance_date,
+  };
 }
 
 /**

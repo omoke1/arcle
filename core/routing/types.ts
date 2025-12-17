@@ -2,8 +2,10 @@
  * Agent Routing Type Definitions
  */
 
+import type { ParsedIntent } from '@/lib/ai/intent-classifier';
+
 export interface AgentRequest {
-  intent: string;
+  intent: string; // Original message text
   entities: Record<string, any>;
   context?: {
     walletId?: string;
@@ -14,6 +16,7 @@ export interface AgentRequest {
     walletAddress?: string;
   };
   sessionId?: string;
+  classifiedIntent?: ParsedIntent; // AI-classified intent (optional, added by router)
 }
 
 export interface AgentResponse {
@@ -33,9 +36,12 @@ export interface AgentRoute {
   condition?: (request: AgentRequest) => boolean;
 }
 
+import type { IntentType } from '@/lib/ai/intent-classifier';
+
 export interface Agent {
   name: string;
   execute(action: string, params: Record<string, any>): Promise<any>;
-  canHandle(intent: string, entities: Record<string, any>): boolean;
+  canHandle(intent: string | IntentType, entities: Record<string, any>): boolean;
+  handle(request: AgentRequest): Promise<AgentResponse>;
 }
 

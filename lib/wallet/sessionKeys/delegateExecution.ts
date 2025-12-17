@@ -41,6 +41,9 @@ export interface ExecutionResult {
   transactionHash?: string;
   error?: string;
   message?: string;
+  data?: {
+    [key: string]: any; // Additional data (e.g., pendingPaymentId, claimCode, status)
+  };
 }
 
 /**

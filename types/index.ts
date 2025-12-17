@@ -34,6 +34,11 @@ export interface ChatMessage {
     blocked?: boolean;
     isNewWallet?: boolean;
   };
+  agentData?: {
+    agent: string;
+    action?: string;
+    data?: any;
+  };
 }
 
 // Risk scoring

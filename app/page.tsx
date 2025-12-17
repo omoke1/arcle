@@ -368,17 +368,8 @@ export default function Home() {
                 Sign up
               </h2>
               <p className="text-sm text-white/60">
-                Already have an account?{" "}
-                <button
-                  onClick={() => {
-                    // For now, just close and reopen - you can add login state later
-                    setShowGoogleAuth(false);
-                    setTimeout(() => setShowGoogleAuth(true), 100);
-                  }}
-                  className="text-aurora hover:text-aurora/80 transition-colors font-medium"
-                >
-                  Log in
-                </button>
+                Already have an account? Use the same email or Google account to
+                continue.
               </p>
             </div>
 
@@ -505,7 +496,7 @@ export default function Home() {
               <p className="text-xs text-white/50">
                 By continuing, you agree to our{" "}
                 <a
-                  href="https://x.com/ArcleAI"
+                  href="/terms"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-aurora hover:text-aurora/80 transition-colors"
@@ -514,7 +505,7 @@ export default function Home() {
                 </a>
                 {" & "}
                 <a
-                  href="https://x.com/ArcleAI"
+                  href="/privacy"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-aurora hover:text-aurora/80 transition-colors"

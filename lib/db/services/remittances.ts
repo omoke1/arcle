@@ -1,14 +1,14 @@
 /**
- * Remittances Service
+ * Remittances Database Service
  * 
- * Manages cross-border payments with currency conversion
+ * Manages remittances and remittance recipients in Supabase
  */
 
 import { getSupabaseAdmin, getSupabaseClient } from '../supabase';
 
 export interface Remittance {
   id: string;
-  user_id: string;
+  user_id: string; // UUID as string
   remittance_number: string;
   recipient_name: string;
   recipient_address?: string;
@@ -21,9 +21,26 @@ export interface Remittance {
   total_amount: string;
   status: 'pending' | 'processing' | 'completed' | 'failed';
   transaction_hash?: string;
-  metadata?: any;
+  metadata?: {
+    purpose?: string;
+    notes?: string;
+    complianceChecked?: boolean;
+  };
   created_at: string;
   completed_at?: string;
+  updated_at: string;
+}
+
+export interface RemittanceRecipient {
+  id: string;
+  user_id: string;
+  name: string;
+  address?: string;
+  country: string;
+  currency: string;
+  preferred_currency?: string;
+  last_remittance_date?: string;
+  created_at: string;
   updated_at: string;
 }
 
@@ -38,7 +55,11 @@ export interface CreateRemittanceData {
   exchange_rate: number;
   fee: string;
   total_amount: string;
-  metadata?: any;
+  metadata?: {
+    purpose?: string;
+    notes?: string;
+    complianceChecked?: boolean;
+  };
 }
 
 /**
@@ -46,8 +67,8 @@ export interface CreateRemittanceData {
  */
 function generateRemittanceNumber(userId: string, existingCount: number): string {
   const year = new Date().getFullYear();
-  const count = existingCount + 1;
-  return `REM-${year}-${String(count).padStart(4, '0')}`;
+  const sequence = String(existingCount + 1).padStart(4, '0');
+  return `REM-${year}-${sequence}`;
 }
 
 /**
@@ -56,7 +77,7 @@ function generateRemittanceNumber(userId: string, existingCount: number): string
 export async function createRemittance(data: CreateRemittanceData): Promise<Remittance> {
   const supabase = getSupabaseAdmin();
   
-  // Get existing remittance count for this user
+  // Get count of existing remittances for this user to generate number
   const { count } = await supabase
     .from('remittances')
     .select('*', { count: 'exact', head: true })
@@ -67,21 +88,49 @@ export async function createRemittance(data: CreateRemittanceData): Promise<Remi
   const { data: remittance, error } = await supabase
     .from('remittances')
     .insert({
-      ...data,
+      user_id: data.user_id,
       remittance_number: remittanceNumber,
+      recipient_name: data.recipient_name,
+      recipient_address: data.recipient_address,
+      recipient_country: data.recipient_country,
+      recipient_currency: data.recipient_currency,
+      amount: data.amount,
+      converted_amount: data.converted_amount,
+      exchange_rate: data.exchange_rate,
+      fee: data.fee,
+      total_amount: data.total_amount,
       status: 'pending',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      metadata: data.metadata || {},
     })
     .select()
     .single();
-
+  
   if (error) {
     console.error('[Remittances Service] Error creating remittance:', error);
     throw new Error(`Failed to create remittance: ${error.message}`);
   }
-
+  
   return remittance;
+}
+
+/**
+ * Get all remittances for a user
+ */
+export async function getAllRemittances(userId: string): Promise<Remittance[]> {
+  const supabase = getSupabaseClient();
+  
+  const { data, error } = await supabase
+    .from('remittances')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+  
+  if (error) {
+    console.error('[Remittances Service] Error getting remittances:', error);
+    return [];
+  }
+  
+  return data || [];
 }
 
 /**
@@ -95,7 +144,7 @@ export async function getRemittanceById(id: string): Promise<Remittance | null> 
     .select('*')
     .eq('id', id)
     .single();
-
+  
   if (error) {
     if (error.code === 'PGRST116') {
       return null;
@@ -103,80 +152,31 @@ export async function getRemittanceById(id: string): Promise<Remittance | null> 
     console.error('[Remittances Service] Error getting remittance:', error);
     return null;
   }
-
+  
   return data;
 }
 
 /**
  * Get remittance by remittance number
  */
-export async function getRemittanceByNumber(remittance_number: string): Promise<Remittance | null> {
+export async function getRemittanceByNumber(remittanceNumber: string): Promise<Remittance | null> {
   const supabase = getSupabaseClient();
   
   const { data, error } = await supabase
     .from('remittances')
     .select('*')
-    .eq('remittance_number', remittance_number)
+    .eq('remittance_number', remittanceNumber)
     .single();
-
+  
   if (error) {
     if (error.code === 'PGRST116') {
       return null;
     }
-    console.error('[Remittances Service] Error getting remittance:', error);
+    console.error('[Remittances Service] Error getting remittance by number:', error);
     return null;
   }
-
+  
   return data;
-}
-
-/**
- * Get all remittances for a user
- */
-export async function getUserRemittances(
-  user_id: string,
-  limit: number = 50,
-  offset: number = 0
-): Promise<Remittance[]> {
-  const supabase = getSupabaseClient();
-  
-  const { data, error } = await supabase
-    .from('remittances')
-    .select('*')
-    .eq('user_id', user_id)
-    .order('created_at', { ascending: false })
-    .range(offset, offset + limit - 1);
-
-  if (error) {
-    console.error('[Remittances Service] Error getting user remittances:', error);
-    return [];
-  }
-
-  return data || [];
-}
-
-/**
- * Get remittances by status
- */
-export async function getRemittancesByStatus(
-  user_id: string,
-  status: Remittance['status']
-): Promise<Remittance[]> {
-  const supabase = getSupabaseClient();
-  
-  const { data, error } = await supabase
-    .from('remittances')
-    .select('*')
-    .eq('user_id', user_id)
-    .eq('status', status)
-    .order('created_at', { ascending: false });
-
-  if (error) {
-    console.error('[Remittances Service] Error getting remittances by status:', error);
-    return [];
-  }
-
-  return data || [];
 }
 
 /**
@@ -184,29 +184,22 @@ export async function getRemittancesByStatus(
  */
 export async function updateRemittance(
   id: string,
-  updates: Partial<CreateRemittanceData> & { 
-    status?: Remittance['status'];
-    completed_at?: string;
-    transaction_hash?: string;
-  }
+  updates: Partial<Remittance>
 ): Promise<Remittance> {
   const supabase = getSupabaseAdmin();
   
   const { data, error } = await supabase
     .from('remittances')
-    .update({
-      ...updates,
-      updated_at: new Date().toISOString(),
-    })
+    .update(updates)
     .eq('id', id)
     .select()
     .single();
-
+  
   if (error) {
     console.error('[Remittances Service] Error updating remittance:', error);
     throw new Error(`Failed to update remittance: ${error.message}`);
   }
-
+  
   return data;
 }
 
@@ -215,31 +208,114 @@ export async function updateRemittance(
  */
 export async function markRemittanceAsCompleted(
   id: string,
-  transaction_hash: string
+  transactionHash: string
 ): Promise<Remittance> {
   return await updateRemittance(id, {
     status: 'completed',
     completed_at: new Date().toISOString(),
-    transaction_hash,
+    transaction_hash: transactionHash,
   });
 }
 
 /**
- * Delete remittance
+ * Create or update remittance recipient
  */
-export async function deleteRemittance(id: string): Promise<boolean> {
+export async function saveRemittanceRecipient(
+  userId: string,
+  recipient: Omit<RemittanceRecipient, 'id' | 'user_id' | 'created_at' | 'updated_at'>
+): Promise<RemittanceRecipient> {
   const supabase = getSupabaseAdmin();
   
-  const { error } = await supabase
-    .from('remittances')
-    .delete()
-    .eq('id', id);
-
-  if (error) {
-    console.error('[Remittances Service] Error deleting remittance:', error);
-    return false;
+  // Check if recipient exists (by name and user_id)
+  const { data: existing } = await supabase
+    .from('remittance_recipients')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('name', recipient.name)
+    .single();
+  
+  if (existing) {
+    // Update existing
+    const { data, error } = await supabase
+      .from('remittance_recipients')
+      .update({
+        ...recipient,
+        last_remittance_date: new Date().toISOString(),
+      })
+      .eq('id', existing.id)
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('[Remittances Service] Error updating recipient:', error);
+      throw new Error(`Failed to update recipient: ${error.message}`);
+    }
+    
+    return data;
   }
-
-  return true;
+  
+  // Create new
+  const { data, error } = await supabase
+    .from('remittance_recipients')
+    .insert({
+      user_id: userId,
+      ...recipient,
+      last_remittance_date: new Date().toISOString(),
+    })
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('[Remittances Service] Error creating recipient:', error);
+    throw new Error(`Failed to create recipient: ${error.message}`);
+  }
+  
+  return data;
 }
 
+/**
+ * Get all remittance recipients for a user
+ */
+export async function getAllRemittanceRecipients(userId: string): Promise<RemittanceRecipient[]> {
+  const supabase = getSupabaseClient();
+  
+  const { data, error } = await supabase
+    .from('remittance_recipients')
+    .select('*')
+    .eq('user_id', userId)
+    .order('last_remittance_date', { ascending: false, nullsFirst: false });
+  
+  if (error) {
+    console.error('[Remittances Service] Error getting recipients:', error);
+    return [];
+  }
+  
+  return data || [];
+}
+
+/**
+ * Get recipient by name
+ */
+export async function getRemittanceRecipientByName(
+  userId: string,
+  name: string
+): Promise<RemittanceRecipient | null> {
+  const supabase = getSupabaseClient();
+  
+  const { data, error } = await supabase
+    .from('remittance_recipients')
+    .select('*')
+    .eq('user_id', userId)
+    .ilike('name', name)
+    .single();
+  
+  if (error) {
+    if (error.code === 'PGRST116') {
+      return null;
+    }
+    console.error('[Remittances Service] Error getting recipient:', error);
+    return null;
+  }
+  
+  return data;
+}

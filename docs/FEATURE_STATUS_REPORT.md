@@ -1,6 +1,9 @@
 # Arcle Platform Feature Status Report
 *Generated: 2025-11-24*  
+*Last Updated: 2025-01-XX*  
 *Comprehensive audit of all platform features*
+
+**⚠️ NOTE**: This report is outdated. See `docs/COMPREHENSIVE_FEATURE_AUDIT.md` for the latest status.
 
 ---
 
@@ -227,11 +230,12 @@
    - **Impact**: Data lost on browser clear
    - **Note**: Production-ready code exists in `lib/defi/safelock-db.ts` but not activated
 
-8. ⚠️ **Yield Farming** (`lib/defi/yield-farming.ts`)
-   - **Status**: Mock implementation only
-   - **Issue**: Not connected to real DeFi protocols
-   - **Impact**: Users cannot actually earn yield
-   - **Recommendation**: Add "DEMO MODE" warning or integrate real protocols
+8. ✅ **Yield Farming** (`lib/defi/yield-farming.ts`)
+   - **Status**: Fully real - USYC only, no mock strategies
+   - **Implementation**: USYC (Circle's yield token) on Ethereum and Arbitrum - fully functional
+   - **All strategies**: Real on-chain implementations only
+   - **Impact**: Users earn actual yield via Circle USYC
+   - **Note**: All strategies require userId/userToken for authentication
 
 9. ⚠️ **Trading** (`lib/defi/trading-execution.ts`)
    - **Status**: Placeholder

@@ -1,12 +1,25 @@
 /**
  * Yield Farming Service
  * 
- * Automated yield optimization across multiple DeFi protocols
- * Supports: Lending, Staking, Liquidity Provision
+ * REAL IMPLEMENTATIONS ONLY - No mock or demo strategies
+ * 
+ * Uses Circle's USYC (yield-bearing token) for actual on-chain yield
+ * Available on: Ethereum, Arbitrum
+ * 
+ * All strategies require userId and userToken for authentication
+ * All positions are tracked on-chain via Circle USYC
  */
 
 import { getArcClient } from "@/lib/arc";
 import { circleApiRequest } from "@/lib/circle";
+import { 
+  subscribeToUSYC, 
+  redeemUSYC, 
+  getUSYCPosition,
+  isUSYCAvailable,
+  getAvailableBlockchains,
+  type YieldPosition as USYCPosition
+} from "@/lib/defi/yield-savings-usyc-user";
 
 export interface YieldStrategy {
   id: string;
@@ -40,64 +53,74 @@ export interface YieldFarmingResult {
 }
 
 /**
- * Available yield strategies (in production, this would query DeFi protocols)
+ * Available yield strategies
+ * 
+ * REAL IMPLEMENTATIONS ONLY:
+ * - USYC: Circle's yield-bearing token (real on-chain implementation)
+ * 
+ * All strategies use real DeFi protocols and earn actual yield.
  */
 const YIELD_STRATEGIES: YieldStrategy[] = [
+  // USYC on Ethereum
   {
-    id: "usdc-lending-arc",
-    name: "USDC Lending on Arc",
-    protocol: "Arc Lending",
-    chain: "ARC",
-    apy: 4.5,
+    id: "usyc-ethereum",
+    name: "USYC on Ethereum",
+    protocol: "Circle USYC",
+    chain: "ETH",
+    apy: 5.25, // Overnight federal funds rate (approximate)
     riskLevel: "low",
-    minAmount: "100",
+    minAmount: "1",
     autoCompound: true,
   },
+  // USYC on Arbitrum
   {
-    id: "usdc-lending-base",
-    name: "USDC Lending on Base",
-    protocol: "Aave Base",
-    chain: "BASE",
-    apy: 5.2,
-    riskLevel: "low",
-    minAmount: "100",
-    autoCompound: true,
-  },
-  {
-    id: "usdc-lending-arbitrum",
-    name: "USDC Lending on Arbitrum",
-    protocol: "Aave Arbitrum",
+    id: "usyc-arbitrum",
+    name: "USYC on Arbitrum",
+    protocol: "Circle USYC",
     chain: "ARBITRUM",
-    apy: 5.8,
+    apy: 5.25,
     riskLevel: "low",
-    minAmount: "100",
-    autoCompound: true,
-  },
-  {
-    id: "usdc-staking-arc",
-    name: "USDC Staking on Arc",
-    protocol: "Arc Staking",
-    chain: "ARC",
-    apy: 3.2,
-    riskLevel: "low",
-    minAmount: "50",
-    lockPeriod: 30,
+    minAmount: "1",
     autoCompound: true,
   },
 ];
 
 /**
  * Get available yield strategies
+ * Returns only real implementations (USYC)
  */
 export async function getAvailableStrategies(
   chain?: "ARC" | "BASE" | "ARBITRUM" | "ETH" | "POLYGON" | "AVALANCHE"
 ): Promise<YieldStrategy[]> {
-  // In production, this would query real DeFi protocols
-  // For now, return mock strategies
+  let strategies = YIELD_STRATEGIES;
+  
   if (chain) {
-    return YIELD_STRATEGIES.filter(s => s.chain === chain);
+    // Map chain names to USYC blockchain format
+    const chainMap: Record<string, string> = {
+      "ETH": "ETH",
+      "ARBITRUM": "ARB",
+    };
+    
+    const usycChain = chainMap[chain];
+    strategies = YIELD_STRATEGIES.filter(s => {
+      if (s.chain === chain) return true;
+      // Only return strategies where USYC is actually available
+      if (usycChain && isUSYCAvailable(usycChain)) {
+        return s.id.includes("usyc") && (s.chain === "ETH" || s.chain === "ARBITRUM");
+      }
+      return false;
+    });
   }
-  return YIELD_STRATEGIES;
+  
+  // Filter to only strategies where USYC is available on that chain
+  return strategies.filter(s => {
+    const chainMap: Record<string, string> = {
+      "ETH": "ETH",
+      "ARBITRUM": "ARB",
+    };
+    const usycChain = chainMap[s.chain];
+    return usycChain ? isUSYCAvailable(usycChain) : false;
+  });
 }
 
 /**
@@ -129,12 +152,16 @@ export async function getBestYieldStrategy(
 
 /**
  * Start yield farming position
+ * 
+ * REAL IMPLEMENTATION ONLY: Uses Circle USYC for actual on-chain yield
  */
 export async function startYieldFarming(
   walletId: string,
   walletAddress: string,
   strategyId: string,
-  amount: string
+  amount: string,
+  userId: string,
+  userToken: string
 ): Promise<YieldFarmingResult> {
   try {
     const strategy = YIELD_STRATEGIES.find(s => s.id === strategyId);
@@ -142,7 +169,16 @@ export async function startYieldFarming(
       return {
         success: false,
         estimatedAPY: 0,
-        message: "Yield strategy not found",
+        message: "Yield strategy not found. Available strategies: " + YIELD_STRATEGIES.map(s => s.name).join(", "),
+      };
+    }
+    
+    // All strategies require authentication
+    if (!userId || !userToken) {
+      return {
+        success: false,
+        estimatedAPY: strategy.apy,
+        message: "userId and userToken are required for yield farming",
       };
     }
     
@@ -157,40 +193,49 @@ export async function startYieldFarming(
       };
     }
     
-    // In production, this would:
-    // 1. Approve USDC spending to protocol
-    // 2. Deposit to lending/staking protocol
-    // 3. Track position
-    
-    // For now, create a mock position
-    const positionId = crypto.randomUUID();
-    
-    // Store position (in production, this would be in a database)
-    const position: YieldPosition = {
-      id: positionId,
-      strategyId,
-      amount,
-      apy: strategy.apy,
-      earned: "0",
-      startDate: new Date(),
-      chain: strategy.chain,
-      protocol: strategy.protocol,
-      status: "active",
-    };
-    
-    // Save to localStorage (in production, use database)
-    if (typeof window !== "undefined") {
-      const positions = getStoredPositions();
-      positions.push(position);
-      localStorage.setItem("arcle_yield_positions", JSON.stringify(positions));
+    // All strategies use USYC
+    if (!strategy.id.startsWith("usyc")) {
+      return {
+        success: false,
+        estimatedAPY: 0,
+        message: "Only USYC strategies are available. Strategy must start with 'usyc'",
+      };
     }
     
-    return {
-      success: true,
-      positionId,
-      estimatedAPY: strategy.apy,
-      message: `Started yield farming ${amount} USDC on ${strategy.protocol} (${strategy.apy}% APY)`,
+    // Map chain to USYC blockchain format
+    const chainMap: Record<string, string> = {
+      "ETH": "ETH",
+      "ARBITRUM": "ARB",
     };
+    const blockchain = chainMap[strategy.chain] || strategy.chain;
+    
+    if (!isUSYCAvailable(blockchain)) {
+      return {
+        success: false,
+        estimatedAPY: strategy.apy,
+        message: `USYC not available on ${blockchain}. Available on: ${getAvailableBlockchains().join(', ')}`,
+      };
+    }
+    
+    // Use real USYC implementation
+    const result = await subscribeToUSYC(userId, userToken, walletId, amount, blockchain);
+    
+    if (result.success) {
+      return {
+        success: true,
+        positionId: result.challengeId || crypto.randomUUID(),
+        estimatedAPY: strategy.apy,
+        message: result.step === 'approve' 
+          ? `Started USYC subscription. Please complete the approval challenge first.`
+          : `Started yield farming ${amount} USDC on ${strategy.protocol} (${strategy.apy}% APY)`,
+      };
+    } else {
+      return {
+        success: false,
+        estimatedAPY: strategy.apy,
+        message: result.error || "Failed to subscribe to USYC",
+      };
+    }
   } catch (error: any) {
     return {
       success: false,
@@ -202,67 +247,109 @@ export async function startYieldFarming(
 
 /**
  * Get active yield positions
+ * REAL IMPLEMENTATION ONLY: Returns actual USYC positions from on-chain data
  */
-export function getActivePositions(walletAddress: string): YieldPosition[] {
-  if (typeof window === "undefined") {
-    return [];
+export async function getActivePositions(
+  walletAddress: string,
+  walletId: string,
+  blockchain: string = "ETH"
+): Promise<YieldPosition[]> {
+  const positions: YieldPosition[] = [];
+  
+  if (!walletId) {
+    return positions;
   }
   
-  const positions = getStoredPositions();
-  return positions.filter(p => p.status === "active");
-}
-
-/**
- * Calculate earned yield for a position
- */
-export function calculateEarnedYield(position: YieldPosition): string {
-  const daysSinceStart = Math.floor(
-    (Date.now() - position.startDate.getTime()) / (1000 * 60 * 60 * 24)
-  );
-  const amount = parseFloat(position.amount);
-  const dailyRate = position.apy / 365 / 100;
-  const earned = amount * dailyRate * daysSinceStart;
-  return earned.toFixed(6);
+  // Get real USYC positions
+  if (isUSYCAvailable(blockchain)) {
+    try {
+      const usycPosition = await getUSYCPosition(walletAddress, walletId, blockchain);
+      if (usycPosition && parseFloat(usycPosition.usycBalance) > 0) {
+        // Convert USYC position to YieldPosition format
+        const strategy = YIELD_STRATEGIES.find(s => 
+          s.id.includes("usyc") && 
+          (blockchain === "ETH" ? s.chain === "ETH" : blockchain === "ARB" && s.chain === "ARBITRUM")
+        );
+        
+        if (strategy) {
+          positions.push({
+            id: `usyc-${blockchain}-${walletId}`,
+            strategyId: strategy.id,
+            amount: usycPosition.initialInvestment || usycPosition.usdcValue,
+            apy: parseFloat(usycPosition.apy || "5.25"),
+            earned: usycPosition.currentYield || "0",
+            startDate: new Date(), // USYC doesn't track start date, use current
+            chain: strategy.chain,
+            protocol: strategy.protocol,
+            status: "active",
+          });
+        }
+      }
+    } catch (error) {
+      console.error("[YieldFarming] Error fetching USYC position:", error);
+    }
+  }
+  
+  return positions;
 }
 
 /**
  * Withdraw from yield position
+ * 
+ * REAL IMPLEMENTATION ONLY: Uses actual Circle USYC redemption
  */
 export async function withdrawYield(
   positionId: string,
-  walletId: string
+  walletId: string,
+  userId: string,
+  userToken: string,
+  blockchain: string = "ETH"
 ): Promise<{ success: boolean; message: string; amount?: string }> {
   try {
-    const positions = getStoredPositions();
-    const position = positions.find(p => p.id === positionId);
-    
-    if (!position) {
-      return { success: false, message: "Position not found" };
+    if (!userId || !userToken) {
+      return { 
+        success: false, 
+        message: "userId and userToken are required for yield withdrawals" 
+      };
     }
     
-    if (position.status !== "active") {
-      return { success: false, message: "Position is not active" };
+    // All positions are USYC
+    if (!positionId.startsWith("usyc-")) {
+      return { 
+        success: false, 
+        message: "Invalid position. Only USYC positions are supported." 
+      };
     }
     
-    // Calculate total (principal + earned)
-    const earned = parseFloat(calculateEarnedYield(position));
-    const total = parseFloat(position.amount) + earned;
-    
-    // In production, this would:
-    // 1. Withdraw from protocol
-    // 2. Transfer back to wallet
-    
-    // Update position status
-    position.status = "withdrawn";
-    if (typeof window !== "undefined") {
-      localStorage.setItem("arcle_yield_positions", JSON.stringify(positions));
+    // Get current USYC position
+    const usycPosition = await getUSYCPosition("", walletId, blockchain);
+    if (!usycPosition || parseFloat(usycPosition.usycBalance) === 0) {
+      return { success: false, message: "No active USYC position found" };
     }
     
-    return {
-      success: true,
-      message: `Withdrew ${total.toFixed(6)} USDC (${position.amount} principal + ${earned.toFixed(6)} earned)`,
-      amount: total.toFixed(6),
-    };
+    // Redeem all USYC
+    const result = await redeemUSYC(
+      userId,
+      userToken,
+      walletId,
+      usycPosition.usycBalance,
+      blockchain
+    );
+    
+    if (result.success) {
+      return {
+        success: true,
+        message: result.step === 'approve'
+          ? "Please complete the approval challenge first, then the redemption will proceed."
+          : `Redeeming ${usycPosition.usycBalance} USYC. Estimated USDC: ${result.estimatedUSDC}`,
+        amount: result.estimatedUSDC,
+      };
+    } else {
+      return {
+        success: false,
+        message: result.error || "Failed to redeem USYC",
+      };
+    }
   } catch (error: any) {
     return {
       success: false,
@@ -271,27 +358,4 @@ export async function withdrawYield(
   }
 }
 
-/**
- * Get stored yield positions from localStorage
- */
-function getStoredPositions(): YieldPosition[] {
-  if (typeof window === "undefined") {
-    return [];
-  }
-  
-  try {
-    const stored = localStorage.getItem("arcle_yield_positions");
-    if (stored) {
-      const positions = JSON.parse(stored) as any[];
-      return positions.map(p => ({
-        ...p,
-        startDate: new Date(p.startDate),
-      }));
-    }
-  } catch (error) {
-    console.error("Error loading yield positions:", error);
-  }
-  
-  return [];
-}
 

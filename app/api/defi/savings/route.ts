@@ -1,6 +1,7 @@
 /**
  * Savings API Routes
  * Handles goal-based savings creation, contributions, and withdrawals
+ * Uses Supabase for persistence (production-ready)
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -15,7 +16,7 @@ import {
   formatSavingsGoal,
   formatAllSavingsGoals,
   type SavingsFrequency,
-} from "@/lib/defi/goal-based-savings";
+} from "@/lib/defi/goal-based-savings-db";
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,7 +26,7 @@ export async function GET(request: NextRequest) {
 
     if (goalId) {
       // Get single goal
-      const goal = getSavingsGoal(goalId);
+      const goal = await getSavingsGoal(goalId);
       
       if (!goal) {
         return NextResponse.json(
@@ -49,7 +50,7 @@ export async function GET(request: NextRequest) {
 
     if (userId) {
       // Get all goals for user
-      const goals = getSavingsGoalsByUser(userId);
+      const goals = await getSavingsGoalsByUser(userId);
       const formatted = formatAllSavingsGoals(goals);
 
       return NextResponse.json({
@@ -104,7 +105,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const goal = createSavingsGoal({
+      const goal = await createSavingsGoal({
         userId,
         walletId,
         goalName,
@@ -139,7 +140,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const result = addContribution(goalId, amount);
+      const result = await addContribution(goalId, amount);
 
       if (!result.success) {
         return NextResponse.json(
@@ -148,7 +149,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const goal = getSavingsGoal(goalId);
+      const goal = await getSavingsGoal(goalId);
       const breakdown = goal ? calculateSavingsBreakdown(goal) : null;
 
       return NextResponse.json({
@@ -170,7 +171,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const breakdown = breakSavingsEarly(goalId);
+      const breakdown = await breakSavingsEarly(goalId);
 
       if (!breakdown) {
         return NextResponse.json(
@@ -197,7 +198,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const breakdown = matureSavingsGoal(goalId);
+      const breakdown = await matureSavingsGoal(goalId);
 
       if (!breakdown) {
         return NextResponse.json(

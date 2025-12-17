@@ -7,7 +7,9 @@
  */
 
 import type { AgentRequest, AgentResponse } from '@/core/routing/types';
+import type { IntentType } from '@/lib/ai/intent-classifier';
 import { getActiveVendors, createVendorOrder, type Vendor } from '@/lib/db/services/vendors';
+import { parseLocationFromMessage } from '@/lib/utils/locationParser';
 
 type CommerceCategory = "food" | "shopping" | "services";
 
@@ -133,10 +135,16 @@ class CommerceAgent {
         );
       }
 
+      // Extract location coordinates from message if present
+      const locationData = parseLocationFromMessage(request.intent);
+      const deliveryLatitude = locationData?.latitude || (entities as any).deliveryLatitude || (entities as any).latitude;
+      const deliveryLongitude = locationData?.longitude || (entities as any).deliveryLongitude || (entities as any).longitude;
+      const deliveryAddress = locationData?.address || (entities as any).deliveryAddress || (entities as any).delivery_location;
+
       // Check if we have enough info to create an order
       const hasVendor = merchant || (entities as any).vendorId || (entities as any).vendor_id;
       const hasItems = (entities as any).items || (entities as any).orderItems;
-      const hasDeliveryLocation = (entities as any).deliveryAddress || (entities as any).delivery_location;
+      const hasDeliveryLocation = deliveryAddress || (deliveryLatitude && deliveryLongitude);
       const userId = (context as any)?.userId;
 
       if (amount && hasVendor && userId) {
@@ -162,7 +170,9 @@ class CommerceAgent {
             merchant: merchant || hasVendor,
             vendorId: (entities as any).vendorId || (entities as any).vendor_id,
             items: hasItems || [{ name: 'Order', quantity: 1, price: amount }],
-            deliveryAddress: hasDeliveryLocation,
+            deliveryAddress: deliveryAddress,
+            deliveryLatitude: deliveryLatitude,
+            deliveryLongitude: deliveryLongitude,
             userId: userId,
             rawEntities: entities,
           },
@@ -222,7 +232,16 @@ class CommerceAgent {
    * Quick filter used by `canAgentHandle` helper –
    * helps avoid loading this agent for unrelated intents.
    */
-  canHandle(intent: string, entities: Record<string, any>): boolean {
+  canHandle(intent: string | IntentType, entities: Record<string, any>): boolean {
+    const intentStr = typeof intent === 'string' ? intent.toLowerCase() : intent;
+    
+    if (typeof intent === 'string' && !intent.includes(' ')) {
+      const commerceIntents: IntentType[] = ['order', 'purchase', 'buy'];
+      if (commerceIntents.includes(intentStr as IntentType)) {
+        return true;
+      }
+    }
+    
     const commerceKeywords = [
       "order",
       "purchase",

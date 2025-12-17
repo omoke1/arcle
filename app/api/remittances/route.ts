@@ -24,16 +24,24 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     const recipients = searchParams.get("recipients") === "true";
+    const userId = searchParams.get("userId") || request.headers.get("x-user-id");
+    
+    if (!userId) {
+      return NextResponse.json(
+        { success: false, error: "userId is required" },
+        { status: 400 }
+      );
+    }
     
     // Get recipients
     if (recipients) {
-      const recipientList = getAllRemittanceRecipients();
+      const recipientList = await getAllRemittanceRecipients(userId);
       return NextResponse.json({ success: true, data: recipientList });
     }
     
     // Get single remittance
     if (id) {
-      const remittance = getRemittanceById(id);
+      const remittance = await getRemittanceById(id);
       if (!remittance) {
         return NextResponse.json(
           { success: false, error: "Remittance not found" },
@@ -44,7 +52,7 @@ export async function GET(request: NextRequest) {
     }
     
     // Get all remittances
-    const remittances = getAllRemittances();
+    const remittances = await getAllRemittances(userId);
     return NextResponse.json({ success: true, data: remittances });
   } catch (error) {
     console.error("Error fetching remittances:", error);
@@ -61,6 +69,14 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    const userId = body.userId || request.headers.get("x-user-id");
+    
+    if (!userId) {
+      return NextResponse.json(
+        { success: false, error: "userId is required" },
+        { status: 400 }
+      );
+    }
     
     // Check if it's a natural language request
     if (body.text) {
@@ -76,6 +92,7 @@ export async function POST(request: NextRequest) {
       
       // Create remittance with parsed data
       const remittance = await createRemittance({
+        userId,
         recipientName: parsed.recipientName!,
         recipientAddress: parsed.recipientAddress,
         recipientCountry: parsed.recipientCountry!,
@@ -98,6 +115,7 @@ export async function POST(request: NextRequest) {
     }
     
     const remittance = await createRemittance({
+      userId,
       recipientName,
       recipientAddress,
       recipientCountry,
@@ -135,7 +153,7 @@ export async function PUT(request: NextRequest) {
     
     // Special handling for marking as completed
     if (body.markAsCompleted && body.transactionHash) {
-      const remittance = markRemittanceAsCompleted(id, body.transactionHash);
+      const remittance = await markRemittanceAsCompleted(id, body.transactionHash);
       if (!remittance) {
         return NextResponse.json(
           { success: false, error: "Remittance not found" },
@@ -145,7 +163,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ success: true, data: remittance });
     }
     
-    const remittance = updateRemittance(id, body);
+    const remittance = await updateRemittance(id, body);
     if (!remittance) {
       return NextResponse.json(
         { success: false, error: "Remittance not found" },

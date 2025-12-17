@@ -118,13 +118,13 @@ async function isContract(address: string): Promise<boolean> {
 
 /**
  * Check contract age (days since deployment)
- * In production, would query contract creation block
+ * Uses ArcScan API via contract analysis
  */
 async function getContractAge(address: string): Promise<number | null> {
   try {
-    // TODO: Query contract creation block from blockchain
-    // For MVP, return null (unknown)
-    return null;
+    const { analyzeContract } = await import("./contract-analysis");
+    const analysis = await analyzeContract(address);
+    return analysis.age ?? null;
   } catch (error) {
     console.error("Error getting contract age:", error);
     return null;
@@ -132,14 +132,14 @@ async function getContractAge(address: string): Promise<number | null> {
 }
 
 /**
- * Check if contract is verified (simplified)
- * In production, would query ArcScan or similar explorer API
+ * Check if contract is verified
+ * Uses ArcScan API via contract analysis
  */
 async function isContractVerified(address: string): Promise<boolean> {
   try {
-    // TODO: Query ArcScan API for verification status
-    // For MVP, return false (assume unverified)
-    return false;
+    const { analyzeContract } = await import("./contract-analysis");
+    const analysis = await analyzeContract(address);
+    return analysis.verified;
   } catch (error) {
     console.error("Error checking contract verification:", error);
     return false;
@@ -352,17 +352,89 @@ export async function calculateRiskScore(
 }
 
 /**
- * Get transaction count for an address (simplified - would use proper RPC in production)
+ * Get transaction count for an address
+ * Uses ArcScan API to get the actual transaction count
  */
 async function getTransactionCount(address: string): Promise<number> {
   try {
-    const client = getArcClient();
-    // Note: Viem doesn't have a direct transaction count method
-    // In production, you'd query the blockchain or use an indexer
-    // For now, return 0 as a placeholder
-    return 0;
+    const normalizedAddress = address.toLowerCase();
+    
+    // Use ArcScan API to get transaction count
+    const ARCSCAN_API_URL = process.env.NEXT_PUBLIC_ARCSCAN_API_URL || 
+      (process.env.NEXT_PUBLIC_ENV === "production" 
+        ? "https://arcscan.app/api" 
+        : "https://testnet.arcscan.app/api");
+    
+    // ArcScan API: GET /api?module=proxy&action=eth_getTransactionCount&address={address}&tag=latest
+    const response = await fetch(
+      `${ARCSCAN_API_URL}?module=proxy&action=eth_getTransactionCount&address=${normalizedAddress}&tag=latest`,
+      {
+        method: "GET",
+        headers: {
+          "Accept": "application/json",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      console.warn(`[RiskScoring] ArcScan API error for transaction count: ${response.status}`);
+      // Fallback: try alternative endpoint
+      return await getTransactionCountFallback(normalizedAddress);
+    }
+
+    const data = await response.json();
+    
+    if (data.status === "1" && data.result) {
+      // Convert hex to decimal
+      const count = parseInt(data.result, 16);
+      return count;
+    }
+
+    // Fallback to alternative method
+    return await getTransactionCountFallback(normalizedAddress);
   } catch (error) {
     console.error("Error getting transaction count:", error);
+    // Fallback to alternative method
+    return await getTransactionCountFallback(address.toLowerCase());
+  }
+}
+
+/**
+ * Fallback method: Get transaction count from ArcScan account txlist endpoint
+ * This counts actual transactions, not just nonce
+ */
+async function getTransactionCountFallback(address: string): Promise<number> {
+  try {
+    const ARCSCAN_API_URL = process.env.NEXT_PUBLIC_ARCSCAN_API_URL || 
+      (process.env.NEXT_PUBLIC_ENV === "production" 
+        ? "https://arcscan.app/api" 
+        : "https://testnet.arcscan.app/api");
+    
+    // ArcScan API: GET /api?module=account&action=txlist&address={address}&startblock=0&endblock=99999999&sort=asc&page=1&offset=1
+    // We only need the count, so we use offset=1 to minimize data transfer
+    const response = await fetch(
+      `${ARCSCAN_API_URL}?module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&sort=asc&page=1&offset=1`,
+      {
+        method: "GET",
+        headers: {
+          "Accept": "application/json",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      return 0;
+    }
+
+    const data = await response.json();
+    
+    if (data.status === "1" && Array.isArray(data.result)) {
+      return data.result.length;
+    }
+
+    return 0;
+  } catch (error) {
+    console.error("Error getting transaction count (fallback):", error);
     return 0;
   }
 }

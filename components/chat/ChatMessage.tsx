@@ -4,6 +4,8 @@ import { cn } from "@/lib/utils";
 import { Check, CheckCheck, Reply } from "lucide-react";
 import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { SpeechBubbleIcon } from "@/components/ui/SpeechBubbleIcon";
+import { LocationMap } from "@/components/maps/LocationMap";
+import { parseLocationFromMessage } from "@/lib/utils/locationParser";
 import React, { useRef, useState, useEffect } from "react";
 
 interface ChatMessageProps {
@@ -254,6 +256,9 @@ export function ChatMessage({
     return parts.length > 0 ? parts : text;
   };
 
+  // Check if message contains location data
+  const locationData = parseLocationFromMessage(content);
+
   return (
     <div
       className={cn(
@@ -396,6 +401,18 @@ export function ChatMessage({
             }}
           />
         </div>
+
+        {/* Location Map - Show if location data is detected */}
+        {locationData && locationData.isValid && (
+          <div className="mt-3 w-full max-w-[85%] sm:max-w-[80%] md:max-w-[75%] lg:max-w-[70%]">
+            <LocationMap
+              latitude={locationData.latitude}
+              longitude={locationData.longitude}
+              address={locationData.address}
+              height="250px"
+            />
+          </div>
+        )}
 
         {/* Children (transaction previews, QR codes, etc.) */}
         {children && (

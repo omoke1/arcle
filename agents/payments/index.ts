@@ -12,6 +12,7 @@ import { createRecurringPayment, executeRecurringPayment } from './recurringPaym
 import { executeBillPayment, validateBillerDetails, SUPPORTED_BILLERS, BillType } from './billPayments';
 import type { ExecutionResult } from '@/lib/wallet/sessionKeys/delegateExecution';
 import type { AgentRequest, AgentResponse } from '@/core/routing/types';
+import type { IntentType } from '@/lib/ai/intent-classifier';
 import { toSmallestUnit } from '@/agents/inera/utils';
 
 export interface PaymentParams {
@@ -162,6 +163,17 @@ class PaymentsAgent {
     identifier: string;
     amount: string;
   }) {
+    // Validate biller details before executing payment
+    const validation = await validateBillerDetails(
+      params.billType,
+      params.provider,
+      params.identifier,
+    );
+
+    if (!validation.isValid) {
+      throw new Error(validation.error || 'Invalid biller details provided');
+    }
+
     return await executeBillPayment({
       walletId: params.walletId,
       userId: params.userId,
@@ -169,7 +181,7 @@ class PaymentsAgent {
       billType: params.billType,
       provider: params.provider,
       identifier: params.identifier,
-      amount: params.amount,
+      amount: toSmallestUnit(params.amount),
     });
   }
 
@@ -286,10 +298,16 @@ class PaymentsAgent {
           amount: amount || '0',
         });
 
+        // Check if this is a pending payment or immediate execution
+        const isPending = result.data?.status === 'pending' && result.data?.claimCode;
+        const claimCode = result.data?.claimCode;
+        
         return {
           success: result.success,
           message: result.success
-            ? `✅ Payment of $${amount} sent to ${phone}.\n\nThis goes directly to the wallet address saved on that phone contact. The recipient just needs to open Arcle with that wallet to see the funds—there's nothing for them to manually claim.`
+            ? isPending && claimCode
+              ? `✅ Pending payment created for ${phone}!\n\n**Amount:** $${amount} USDC\n**Claim Code:** ${claimCode}\n\nI've created a pending payment. The recipient will receive a notification with instructions to claim it. They can claim it by:\n1. Opening Arcle\n2. Using claim code: **${claimCode}**\n3. Linking their phone number to their wallet\n\nThe payment expires in 30 days if not claimed.`
+              : `✅ Payment of $${amount} sent to ${phone}.\n\nThis goes directly to the wallet address saved on that phone contact. The recipient just needs to open Arcle with that wallet to see the funds—there's nothing for them to manually claim.`
             : `❌ Failed to send payment: ${result.error}`,
           agent: 'payments',
           action: 'sendToPhone',
@@ -317,10 +335,16 @@ class PaymentsAgent {
           amount: amount || '0',
         });
 
+        // Check if this is a pending payment or immediate execution
+        const isPending = result.data?.status === 'pending' && result.data?.claimCode;
+        const claimCode = result.data?.claimCode;
+        
         return {
           success: result.success,
           message: result.success
-            ? `✅ Payment of $${amount} sent to ${email}.\n\nThis goes directly to the wallet address saved on that email contact. When the recipient signs into Arcle with that wallet, the money is already there—no separate claim step needed.`
+            ? isPending && claimCode
+              ? `✅ Pending payment created for ${email}!\n\n**Amount:** $${amount} USDC\n**Claim Code:** ${claimCode}\n\nI've created a pending payment. The recipient will receive an email with instructions to claim it. They can claim it by:\n1. Opening Arcle\n2. Using claim code: **${claimCode}**\n3. Linking their email to their wallet\n\nThe payment expires in 30 days if not claimed.`
+              : `✅ Payment of $${amount} sent to ${email}.\n\nThis goes directly to the wallet address saved on that email contact. When the recipient signs into Arcle with that wallet, the money is already there—no separate claim step needed.`
             : `❌ Failed to send payment: ${result.error}`,
           agent: 'payments',
           action: 'sendToEmail',
@@ -383,9 +407,21 @@ class PaymentsAgent {
   /**
    * Check if Payments Agent can handle a request
    */
-  canHandle(intent: string, entities: Record<string, any>): boolean {
-    const paymentKeywords = ['send', 'pay', 'transfer', 'payment'];
-    const hasPaymentIntent = paymentKeywords.some((keyword) => intent.toLowerCase().includes(keyword));
+  canHandle(intent: string | IntentType, entities: Record<string, any>): boolean {
+    // Support both string (raw message) and IntentType (classified)
+    const intentStr = typeof intent === 'string' ? intent.toLowerCase() : intent;
+    
+    // Check if it's a classified intent type
+    if (typeof intent === 'string' && !intent.includes(' ')) {
+      const paymentIntents: IntentType[] = ['send', 'pay', 'phone', 'email', 'bill_payment'];
+      if (paymentIntents.includes(intentStr as IntentType)) {
+        return true;
+      }
+    }
+    
+    // Fallback to keyword matching
+    const paymentKeywords = ['send', 'pay', 'transfer', 'payment', 'phone', 'email'];
+    const hasPaymentIntent = paymentKeywords.some((keyword) => intentStr.includes(keyword));
     const hasAmount = entities.amount !== undefined;
     const hasDestination = entities.address !== undefined || entities.recipient !== undefined || entities.phone !== undefined || entities.email !== undefined;
 

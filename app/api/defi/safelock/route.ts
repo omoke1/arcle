@@ -1,6 +1,7 @@
 /**
  * SafeLock API Routes
  * Handles fixed deposit creation, early breaks, and maturity
+ * Uses Supabase for persistence (production-ready)
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -16,7 +17,7 @@ import {
   getAvailableLockPeriods,
   formatAvailableLockPeriods,
   type SafeLockStatus,
-} from "@/lib/defi/safelock";
+} from "@/lib/defi/safelock-db";
 
 export async function GET(request: NextRequest) {
   try {
@@ -42,7 +43,7 @@ export async function GET(request: NextRequest) {
 
     // Get single SafeLock
     if (safelockId) {
-      const safelock = getSafeLock(safelockId);
+      const safelock = await getSafeLock(safelockId);
 
       if (!safelock) {
         return NextResponse.json(
@@ -66,7 +67,7 @@ export async function GET(request: NextRequest) {
 
     // Get all SafeLocks for user
     if (userId) {
-      const safelocks = getSafeLocksByUser(userId, status || undefined);
+      const safelocks = await getSafeLocksByUser(userId, status || undefined);
       const formatted = formatAllSafeLocks(safelocks);
 
       return NextResponse.json({
@@ -113,10 +114,15 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const safelock = createSafeLock(userId, walletId, amount, lockPeriod);
+      const safelock = await createSafeLock({
+        userId,
+        walletId,
+        amount,
+        lockPeriod,
+      });
       const breakdown = calculateSafeLockBreakdown(safelock);
 
-      const maturityDate = new Date(safelock.maturityDate).toLocaleDateString();
+      const maturityDate = new Date(safelock.maturity_date).toLocaleDateString();
 
       return NextResponse.json({
         success: true,
@@ -137,7 +143,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const breakdown = breakSafeLock(safelockId);
+      const breakdown = await breakSafeLock(safelockId);
 
       if (!breakdown) {
         return NextResponse.json(
@@ -164,7 +170,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const breakdown = matureSafeLock(safelockId);
+      const breakdown = await matureSafeLock(safelockId);
 
       if (!breakdown) {
         return NextResponse.json(

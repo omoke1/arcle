@@ -642,6 +642,11 @@ export default function ChatPage() {
             role: "assistant",
             content: agentResponse.message,
             timestamp: new Date(),
+            agentData: {
+              agent: agentResponse.agent,
+              action: agentResponse.action,
+              data: agentResponse.data,
+            },
           };
 
           // If agent requires confirmation, handle it
