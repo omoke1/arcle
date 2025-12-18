@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
       messages: formattedMessages,
       temperature: 0.3,
       maxTokens: 1000,
-      onFinish: async (event) => {
+      onFinish: async (event: { text: string }) => {
         try {
           if (event.text) {
             await addMessageToHistory(currentSessionId, "assistant", event.text, userId);

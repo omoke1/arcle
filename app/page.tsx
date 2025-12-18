@@ -6,11 +6,8 @@ import { Loader2, CheckCircle2, XCircle, X, Mail } from "lucide-react";
 import { BorderBeamDemo } from "@/components/ui/border-beam-demo";
 import { BorderBeam } from "@/components/ui/border-beam";
 import { hasValidAccess, grantAccess } from "@/lib/auth/invite-codes";
-import { loadWalletData, loadUserCredentials, saveUserCredentials, saveWalletData } from "@/lib/supabase-data";
-import { CircleGoogleAuth } from "@/components/auth/CircleGoogleAuth";
-import { CircleEmailWidget } from "@/components/wallet/CircleEmailWidget";
-import { circleConfig } from "@/lib/circle";
-// Wallet creation moved to API route to avoid client-side SDK issues
+import { loadWalletData, saveUserCredentials, loadUserCredentials } from "@/lib/supabase-data";
+import { getSupabaseClient } from "@/lib/supabase";
 
 const designTokens = {
   aurora: "#E9F28E",
@@ -37,323 +34,7 @@ export default function Home() {
   const [isVerifying, setIsVerifying] = useState(false);
   const [verificationStatus, setVerificationStatus] = useState<"idle" | "success" | "error">("idle");
 
-  // Circle Auth State
-  const [showGoogleAuth, setShowGoogleAuth] = useState(false);
-  const [showEmailOTP, setShowEmailOTP] = useState(false);
-  const [isSendingOTP, setIsSendingOTP] = useState(false);
-  const [circleAuthData, setCircleAuthData] = useState<{
-    userId: string;
-    userToken: string;
-    encryptionKey: string;
-  } | null>(null);
-  const [emailAuthData, setEmailAuthData] = useState<{
-    email: string;
-    deviceId: string;
-    otpToken: string;
-  } | null>(null);
-
-  const handleGetAccess = async () => {
-    const hasAccess = await hasValidAccess();
-    if (hasAccess) {
-      setIsCreating(true);
-      router.push("/chat");
-    } else {
-      // Show Google auth first, then invite code
-      setShowGoogleAuth(true);
-    }
-  };
-
-  const handleGoogleAuthSuccess = (result: {
-    userId: string;
-    userToken: string;
-    encryptionKey: string;
-  }) => {
-    console.log("Social login successful, showing invite code modal...");
-    setCircleAuthData(result);
-    setShowGoogleAuth(false);
-    setShowInviteModal(true);
-  };
-
-  const handleGoogleAuthError = (error: any) => {
-    console.error("Social login error:", error);
-    setErrorMessage(error.message || "Failed to authenticate with social provider");
-    setShowGoogleAuth(false);
-  };
-
-  const handleEmailSignUp = async () => {
-    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setErrorMessage("Please enter a valid email address");
-      return;
-    }
-
-    setIsSendingOTP(true);
-    setErrorMessage("");
-
-    try {
-      const response = await fetch("/api/circle/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "email-login",
-          email: email.trim(),
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success && data.data) {
-        setEmailAuthData(data.data);
-        setShowEmailOTP(true);
-        console.log("OTP sent to email:", email);
-      } else {
-        setErrorMessage(data.error || "Failed to send verification code");
-      }
-    } catch (error) {
-      setErrorMessage("Connection error. Please try again.");
-    } finally {
-      setIsSendingOTP(false);
-    }
-  };
-
-  const handleEmailOTPSuccess = (result: any) => {
-    console.log("Email OTP verified successfully:", result);
-
-    // Extract user credentials from the W3S SDK result
-    // The SDK should return userId, userToken, and encryptionKey after successful OTP verification
-    if (result && result.userId) {
-      setCircleAuthData({
-        userId: result.userId,
-        userToken: result.userToken,
-        encryptionKey: result.encryptionKey,
-      });
-      setShowGoogleAuth(false);
-      setShowEmailOTP(false);
-      setShowInviteModal(true);
-    } else {
-      setErrorMessage("Failed to retrieve user credentials from Circle");
-    }
-  };
-
-  const handleEmailOTPError = (error: any) => {
-    console.error("Email OTP error:", error);
-    setErrorMessage(error.message || "Failed to verify email");
-  };
-
-  const handleResendOTP = async () => {
-    try {
-      const response = await fetch("/api/circle/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "resend-otp",
-          email: emailAuthData.email,
-          deviceId: emailAuthData.deviceId,
-          otpToken: emailAuthData.otpToken,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        console.log("OTP resent successfully");
-        // Update the otpToken if a new one is returned
-        if (data.data?.otpToken) {
-          setEmailAuthData({
-            ...emailAuthData,
-            otpToken: data.data.otpToken,
-          });
-        }
-      } else {
-        setErrorMessage(data.error || "Failed to resend OTP");
-      }
-    } catch (error) {
-      setErrorMessage("Connection error. Please try again.");
-    }
-  };
-
-  const handleVerifyCode = async () => {
-    if (!inviteCode.trim()) {
-      setVerificationStatus('error');
-      setErrorMessage("Please enter an invite code");
-      return;
-    }
-
-    setIsVerifying(true);
-    setVerificationStatus('idle');
-    setErrorMessage("");
-
-    try {
-      const response = await fetch('/api/auth/verify-invite', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code: inviteCode.trim(),
-          circleUserId: circleAuthData?.userId,
-          circleUserToken: circleAuthData?.userToken,
-          circleEncryptionKey: circleAuthData?.encryptionKey,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.valid) {
-        setVerificationStatus('success');
-        await grantAccess(inviteCode.trim());
-
-        // Save Circle credentials to Supabase and localStorage
-        if (circleAuthData) {
-          try {
-            // Save to Supabase
-            await saveUserCredentials(circleAuthData.userId, {
-              userToken: circleAuthData.userToken,
-              encryptionKey: circleAuthData.encryptionKey,
-            });
-            console.log("Circle credentials saved to Supabase");
-
-            // Save to localStorage for chat page
-            if (typeof window !== 'undefined') {
-              localStorage.setItem("arcle_user_id", circleAuthData.userId);
-              localStorage.setItem("arcle_user_token", circleAuthData.userToken);
-              if (circleAuthData.encryptionKey) {
-                localStorage.setItem("arcle_encryption_key", circleAuthData.encryptionKey);
-              }
-            }
-
-            // Ensure wallet exists after signup (non-blocking - don't wait for it)
-            // Wallet creation will happen in background, or in chat page if needed
-            // Use API route instead of direct client-side call to avoid SDK issues
-            console.log("Ensuring wallet exists after signup...");
-            fetch("/api/circle/wallets/ensure-after-signup", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                userId: circleAuthData.userId,
-                userToken: circleAuthData.userToken,
-                encryptionKey: circleAuthData.encryptionKey,
-                blockchain: "ARC-TESTNET",
-              }),
-            })
-              .then((res) => res.json())
-              .then((walletResult) => {
-                if (walletResult.success) {
-                  if (walletResult.walletId && walletResult.walletAddress) {
-                    // Wallet created successfully
-                    console.log("Wallet created/verified after signup:", {
-                      walletId: walletResult.walletId,
-                      address: walletResult.walletAddress.substring(0, 10) + "...",
-                    });
-
-                    // Save wallet to localStorage
-                    if (typeof window !== 'undefined') {
-                      localStorage.setItem("arcle_wallet_id", walletResult.walletId);
-                      localStorage.setItem("arcle_wallet_address", walletResult.walletAddress);
-                    }
-                  } else if (walletResult.challengeId) {
-                    // Wallet creation requires PIN setup
-                    console.log("Wallet creation requires PIN setup, challengeId:", walletResult.challengeId);
-                    // Note: PIN setup will be handled in chat page when user first interacts
-                    // For now, just redirect - chat page will detect missing wallet and prompt for PIN
-                  }
-                } else {
-                  console.warn("Wallet creation after signup failed:", walletResult.error);
-                  // Continue anyway - wallet can be created in chat
-                }
-              })
-              .catch((error) => {
-                console.error("Error ensuring wallet after signup:", error);
-                // Don't block - wallet can be created in chat page
-              });
-          } catch (error) {
-            console.error("Failed to save Circle credentials or create wallet:", error);
-            // Continue anyway - user can still proceed to chat
-          }
-        }
-
-        // Redirect after short delay
-        setTimeout(() => {
-          setShowInviteModal(false);
-          setIsCreating(true);
-          router.push("/chat");
-        }, 1000);
-      } else {
-        setVerificationStatus('error');
-        setErrorMessage(data.message || "Invalid invite code");
-      }
-    } catch (error) {
-      setVerificationStatus('error');
-      setErrorMessage("Connection error. Please try again.");
-    } finally {
-      setIsVerifying(false);
-    }
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !isVerifying) {
-      handleVerifyCode();
-    }
-  };
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const checkAutoLogin = async () => {
-        const hasAccess = await hasValidAccess();
-
-        // Try to load wallet data from Supabase
-        try {
-          // Try to get userId from credentials first
-          const credentials = await loadUserCredentials("current").catch(() => null);
-          let userId: string | null = null;
-
-          if (credentials) {
-            // Try to get current user ID from a preference
-            const { loadPreference } = await import("@/lib/supabase-data");
-            const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
-            userId = currentUserPref?.value || null;
-          }
-
-          // Migration fallback: try localStorage
-          if (!userId) {
-            const legacyUserId = localStorage.getItem('arcle_user_id');
-            if (legacyUserId) {
-              userId = legacyUserId;
-            }
-          }
-
-          if (userId) {
-            const walletData = await loadWalletData(userId);
-            if (walletData && walletData.walletId && walletData.walletAddress) {
-              // Wallet exists in Supabase, auto-login
-              if (hasAccess) {
-                router.push("/chat");
-                return;
-              }
-            }
-          }
-
-          // Migration fallback: check localStorage
-          const storedWalletId = localStorage.getItem('arcle_wallet_id');
-          const storedWalletAddress = localStorage.getItem('arcle_wallet_address');
-
-          // If user has access and wallet exists, auto-login
-          if (hasAccess && storedWalletId && storedWalletAddress) {
-            router.push("/chat");
-          }
-        } catch (error) {
-          console.error("[Home] Error checking auto-login:", error);
-          // Fallback to localStorage check
-          const storedWalletId = localStorage.getItem('arcle_wallet_id');
-          const storedWalletAddress = localStorage.getItem('arcle_wallet_address');
-          const hasAccess = await hasValidAccess();
-
-          if (hasAccess && storedWalletId && storedWalletAddress) {
-            router.push("/chat");
-          }
-        }
-      };
-
-      checkAutoLogin();
-    }
-  }, [router]);
+  const [authenticatedUser, setAuthenticatedUser] = useState<any>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setStartVisible(true), 2000);
@@ -365,6 +46,199 @@ export default function Home() {
     return () => clearTimeout(timer);
   }, []);
 
+  // Check for existing session
+  useEffect(() => {
+    const checkSession = async () => {
+      const supabase = getSupabaseClient();
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (session?.user) {
+        console.log("Found existing session:", session.user.id);
+        await handleAuthSuccess(session.user);
+      } else {
+        // Legacy local storage check
+        const legacyId = localStorage.getItem('arcle_user_id');
+        if (legacyId) {
+          // If we have a legacy ID but no Supabase session, we might want to prompt login?
+          // For now, let's just let them stay on landing page
+        }
+      }
+    };
+    checkSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleGetAccess = async () => {
+    const supabase = getSupabaseClient();
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (session?.user) {
+      await handleAuthSuccess(session.user);
+    } else {
+      setShowAuthModal(true);
+    }
+  };
+
+  const handleAuthSuccess = async (user: any) => {
+    setAuthenticatedUser(user);
+    setShowAuthModal(false);
+
+    try {
+      setIsCreating(true);
+
+      // 1. Ensure Circle User exists / Get Tokens
+      // We pass the Supabase User ID as the 'userId' to our API
+      console.log("Syncing with Circle for user:", user.id);
+      const response = await fetch("/api/circle/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.id })
+      });
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || "Failed to sync with Circle");
+      }
+
+      const { userToken, encryptionKey } = data.data;
+
+      // 2. Save Credentials locally/supabase
+      await saveUserCredentials(user.id, {
+        userToken,
+        encryptionKey
+      });
+
+      // 3. Check Access
+      const hasAccess = await hasValidAccess(user.id);
+
+      if (hasAccess) {
+        // 4. Check Wallet (Optional: could duplicate logic effectively)
+        const walletData = await loadWalletData(user.id);
+        if (!walletData.walletId) {
+          // No wallet yet? We'll let Chat page handle creation
+          // or we could force creation here. 
+          // Existing flow does it in Chat page usually.
+        }
+
+        router.push("/chat");
+      } else {
+        setIsCreating(false);
+        setShowInviteModal(true);
+      }
+
+    } catch (err: any) {
+      console.error("Auth success provisioning failed:", err);
+      setErrorMessage(err.message || "Failed to setup account");
+      setIsCreating(false);
+      setShowAuthModal(true); // Show modal again to show error?
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setErrorMessage("");
+    const supabase = getSupabaseClient();
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback` // We need to make sure this route exists or handle on page load
+      }
+    });
+    if (error) setErrorMessage(error.message);
+  };
+
+  const handleEmailAuth = async () => {
+    if (!email || !password) {
+      setErrorMessage("Please enter email and password");
+      return;
+    }
+
+    setIsAuthenticating(true);
+    setErrorMessage("");
+    const supabase = getSupabaseClient();
+
+    try {
+      if (authMode === 'signup') {
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+        });
+        if (error) throw error;
+        if (data.user) {
+          // If email confirmation is off, we are logged in.
+          // If on, we need to show message. Assuming off/auto-confirm for beta.
+          await handleAuthSuccess(data.user);
+        } else {
+          setErrorMessage("Check your email for confirmation link.");
+        }
+      } else {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        if (error) throw error;
+        if (data.user) {
+          await handleAuthSuccess(data.user);
+        }
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message);
+      setIsAuthenticating(false);
+    }
+  };
+
+  const handleVerifyCode = async () => {
+    if (!inviteCode.trim() || !authenticatedUser) return;
+
+    setIsVerifying(true);
+    setVerificationStatus('idle');
+
+    try {
+      // Get Supabase session token for authentication
+      const supabase = getSupabaseClient();
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (!session?.access_token) {
+        setVerificationStatus('error');
+        setErrorMessage("Please sign in to verify an invite code");
+        setIsVerifying(false);
+        return;
+      }
+
+      // Server-side verify with authenticated session
+      const response = await fetch('/api/auth/verify-invite', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          code: inviteCode.trim(),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.valid) {
+        setVerificationStatus('success');
+        // Grant access linked to the authenticated user
+        await grantAccess(inviteCode.trim(), authenticatedUser.id);
+
+        setTimeout(() => {
+          setShowInviteModal(false);
+          setIsCreating(true);
+          router.push("/chat");
+        }, 1000);
+      } else {
+        setVerificationStatus('error');
+        setErrorMessage(data.message || "Invalid code");
+      }
+    } catch (error) {
+      setVerificationStatus('error');
+    } finally {
+      setIsVerifying(false);
+    }
+  };
   return (
     <div
       className="min-h-screen text-white flex flex-col items-center justify-center px-4 py-12"
@@ -510,6 +384,7 @@ export default function Home() {
           </div>
         </div>
       )}
+
 
       {showInviteModal && (
         <div

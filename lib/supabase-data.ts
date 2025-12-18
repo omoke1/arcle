@@ -218,13 +218,12 @@ export async function updateSession(sessionId: string, agentState: Record<string
 export async function getLastSessionForUser(userId: string): Promise<SupabaseSession | null> {
   const supabase = typeof window === "undefined" ? getSupabaseAdmin() : getSupabaseClient();
 
-  // Resolve Supabase UUID
+  // Resolve Supabase UUID (read-only, no creation)
   let supabaseUserId = userId;
   const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
   if (!isUUID) {
     try {
-      // Re-use getOrCreate to resolve ID comfortably
-      supabaseUserId = await getOrCreateSupabaseUser(userId);
+      supabaseUserId = await resolveSupabaseUserId(userId);
     } catch (e) {
       console.warn("[Supabase] Failed to resolve user for session lookup:", e);
       return null;
@@ -284,6 +283,37 @@ export async function loadMessages(sessionId: string, options: { limit?: number 
 }
 
 /**
+ * Resolve a Supabase user ID from a Circle userId (read-only, no creation)
+ * This maps Circle's string userId to Supabase's UUID user_id
+ * Returns the Supabase user ID if found, throws an error if not found
+ */
+export async function resolveSupabaseUserId(userId: string): Promise<string> {
+  // If already a UUID, return it
+  const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
+  if (isUUID) {
+    return userId;
+  }
+
+  // Query by Circle user ID
+  const supabase = typeof window === "undefined" ? getSupabaseAdmin() : getSupabaseClient();
+  const { data: existingUser, error } = await supabase
+    .from("users")
+    .select("id")
+    .eq("circle_user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`[Supabase] Failed to resolve user ID: ${error.message}`);
+  }
+
+  if (!existingUser) {
+    throw new Error(`[Supabase] User not found for Circle userId: ${userId}`);
+  }
+
+  return existingUser.id;
+}
+
+/**
  * Get or create a Supabase user record from a Circle userId
  * This maps Circle's string userId to Supabase's UUID user_id
  * 
@@ -310,7 +340,7 @@ export async function getOrCreateSupabaseUser(
       }, { onConflict: 'id' });
 
     if (error) {
-      console.error("[Supabase] Failed to link Auth User to Public User:", error);
+      throw new Error(`[Supabase] Failed to link Auth User to Public User: ${error.message}`);
     }
     return authUserId;
   }
@@ -514,7 +544,11 @@ export async function saveUserCredentials(userId: string, credentials: { userTok
   let supabaseUserId: string;
 
   if (!isUUID) {
-    supabaseUserId = await getOrCreateSupabaseUser(userId, walletAddress);
+    try {
+      supabaseUserId = await getOrCreateSupabaseUser(userId, walletAddress);
+    } catch (error) {
+      throw new Error(`[Supabase] Failed to get/create user for credentials: ${error instanceof Error ? error.message : "unknown error"}`);
+    }
   } else {
     supabaseUserId = userId;
   }
@@ -559,8 +593,8 @@ export async function saveWalletData(userId: string, data: { walletId: string; w
     try {
       supabaseUserId = await getOrCreateSupabaseUser(userId);
     } catch (e) {
-      console.error("[Supabase] Failed to resolve UUID for saveWalletData:", e);
-      return; // Abort if we can't find the user
+      const errorMessage = e instanceof Error ? e.message : "unknown error";
+      throw new Error(`[Supabase] Failed to resolve UUID for saveWalletData: ${errorMessage}`);
     }
   }
 
@@ -600,10 +634,18 @@ export async function loadWalletData(userId: string): Promise<{ walletId: string
     try {
       supabaseUserId = await getOrCreateSupabaseUser(userId);
     } catch (e) {
-      console.error("[Supabase] Failed to resolve UUID for loadWalletData:", e);
-      // Fallback to legacy behavior if user lookup fails
-      supabaseUserId = userId;
+      const errorMessage = e instanceof Error ? e.message : "unknown error";
+      console.error(`[Supabase] Failed to resolve UUID for loadWalletData (userId: ${userId}):`, errorMessage);
+      console.warn("[Supabase] UUID resolution failed - returning empty result without querying database");
+      return { walletId: null, walletAddress: null };
     }
+  }
+
+  // Validate that supabaseUserId is a UUID before querying
+  const isValidUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(supabaseUserId);
+  if (!isValidUUID) {
+    console.error(`[Supabase] Invalid UUID after resolution (userId: ${userId}, supabaseUserId: ${supabaseUserId}) - returning empty result without querying database`);
+    return { walletId: null, walletAddress: null };
   }
 
   const { data: wallet } = await supabase
@@ -623,10 +665,15 @@ export async function loadWalletData(userId: string): Promise<{ walletId: string
     const legacyData = legacyPref.value;
 
     // Perform Migration
-    await saveWalletData(userId, {
-      walletId: legacyData.walletId,
-      walletAddress: legacyData.walletAddress
-    });
+    try {
+      await saveWalletData(userId, {
+        walletId: legacyData.walletId,
+        walletAddress: legacyData.walletAddress
+      });
+    } catch (error) {
+      console.warn(`[Migration] Failed to migrate wallet data for user ${userId}:`, error);
+      // Continue and return legacy data even if migration fails
+    }
 
     return { walletId: legacyData.walletId, walletAddress: legacyData.walletAddress };
   }
@@ -658,11 +705,26 @@ export async function clearWalletData(userId: string): Promise<void> {
     }
   }
 
-  await supabase
+  // Delete from wallets table
+  const { error: walletsError } = await supabase
+    .from("wallets")
+    .delete()
+    .eq("user_id", supabaseUserId);
+
+  if (walletsError) {
+    console.error("[Supabase] Failed to delete wallet from wallets table:", walletsError);
+  }
+
+  // Delete from preferences table (legacy data)
+  const { error: preferencesError } = await supabase
     .from("preferences")
     .delete()
     .eq("user_id", supabaseUserId)
     .in("key", ["wallet_id", "wallet_address"]);
+
+  if (preferencesError) {
+    console.error("[Supabase] Failed to delete wallet preferences:", preferencesError);
+  }
 }
 
 // Helper function for session ID (stored in session's agent_state or as a preference)
