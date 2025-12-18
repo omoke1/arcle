@@ -10,18 +10,20 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 export const supabase = supabaseUrl && supabaseAnonKey
   ? createClient(supabaseUrl, supabaseAnonKey, {
-      auth: {
-        persistSession: false,
-      },
-    })
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  })
   : null;
 
 export const supabaseAdmin = supabaseUrl && supabaseServiceKey
   ? createClient(supabaseUrl, supabaseServiceKey, {
-      auth: {
-        persistSession: false,
-      },
-    })
+    auth: {
+      persistSession: false,
+    },
+  })
   : null;
 
 export function isSupabaseConfigured(): boolean {

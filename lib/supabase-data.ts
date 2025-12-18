@@ -151,12 +151,12 @@ export async function createSession(input: {
   agentState?: Record<string, any> | null;
 }): Promise<SupabaseSession> {
   const supabase = typeof window === "undefined" ? getSupabaseAdmin() : getSupabaseClient();
-  
+
   // Convert Circle user ID to Supabase UUID if needed
   // UUID format: 8-4-4-4-12 hex characters
   const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.userId);
   let supabaseUserId = input.userId;
-  
+
   if (!isUUID) {
     // This is a Circle user ID, convert it to Supabase UUID
     try {
@@ -166,7 +166,7 @@ export async function createSession(input: {
       throw new Error(`[Supabase] Failed to resolve user ID: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
   }
-  
+
   const { data, error } = await supabase
     .from("sessions")
     .insert({
@@ -215,6 +215,38 @@ export async function updateSession(sessionId: string, agentState: Record<string
   return mapSession(data);
 }
 
+export async function getLastSessionForUser(userId: string): Promise<SupabaseSession | null> {
+  const supabase = typeof window === "undefined" ? getSupabaseAdmin() : getSupabaseClient();
+
+  // Resolve Supabase UUID
+  let supabaseUserId = userId;
+  const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
+  if (!isUUID) {
+    try {
+      // Re-use getOrCreate to resolve ID comfortably
+      supabaseUserId = await getOrCreateSupabaseUser(userId);
+    } catch (e) {
+      console.warn("[Supabase] Failed to resolve user for session lookup:", e);
+      return null;
+    }
+  }
+
+  const { data, error } = await supabase
+    .from("sessions")
+    .select("*")
+    .eq("user_id", supabaseUserId)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.warn(`[Supabase] Failed to load last session: ${error.message}`);
+    return null;
+  }
+
+  return data ? mapSession(data) : null;
+}
+
 export async function saveMessage(input: { sessionId: string; role: string; content: string }): Promise<SupabaseMessage> {
   const supabase = typeof window === "undefined" ? getSupabaseAdmin() : getSupabaseClient();
   const { data, error } = await supabase
@@ -257,85 +289,44 @@ export async function loadMessages(sessionId: string, options: { limit?: number 
  * 
  * Note: User creation must go through an API route to bypass RLS, or we use admin client
  */
-export async function getOrCreateSupabaseUser(circleUserId: string, walletAddress?: string): Promise<string> {
-  // Always use API route for user creation to bypass RLS (secure)
-  if (typeof window !== "undefined") {
-    // Client-side: use API route to create user (bypasses RLS)
-    const response = await fetch("/api/supabase/create-user", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ circleUserId, walletAddress }),
-    });
-    
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || "Failed to create user");
+export async function getOrCreateSupabaseUser(
+  circleUserId: string,
+  walletAddress?: string,
+  authUserId?: string,
+  email?: string
+): Promise<string> {
+  const supabase = typeof window === "undefined" ? getSupabaseAdmin() : getSupabaseClient();
+
+  // 1. If we have an authenticated Supabase User ID (from Auth), use it to link
+  if (authUserId) {
+    const { error } = await supabase
+      .from("users")
+      .upsert({
+        id: authUserId, // Link to Auth User
+        circle_user_id: circleUserId,
+        wallet_address: walletAddress || null,
+        email: email || null,
+        created_at: new Date().toISOString()
+      }, { onConflict: 'id' });
+
+    if (error) {
+      console.error("[Supabase] Failed to link Auth User to Public User:", error);
     }
-    
-    const data = await response.json();
-    return data.userId;
+    return authUserId;
   }
-  
-  // Server-side: use admin client directly
-  const supabase = getSupabaseAdmin();
-  
-  // First, try to find existing user by circle_user_id directly (if column exists)
-  const { data: existingUserByCircleId } = await supabase
+
+  // 2. Legacy/Fallback: Find by Circle ID
+  const { data: existingUser } = await supabase
     .from("users")
     .select("id")
     .eq("circle_user_id", circleUserId)
     .maybeSingle();
-  
-  if (existingUserByCircleId?.id) {
-    return existingUserByCircleId.id;
-  }
-  
-  // Fallback: try to find by preferences (for backwards compatibility)
-  const { data: allPrefs } = await supabase
-    .from("preferences")
-    .select("user_id, value")
-    .eq("key", "circle_user_id");
-  
-  // Filter in JavaScript since JSONB eq doesn't work for string values
-  const matching = allPrefs?.find(p => {
-    // value is JSONB, so it might be stored as a string or JSON
-    const val = typeof p.value === 'string' ? p.value : JSON.stringify(p.value);
-    // Remove quotes if JSON stringified
-    const cleanVal = val.replace(/^"|"$/g, '');
-    return cleanVal === circleUserId;
-  });
-  
-  if (matching?.user_id) {
-    return matching.user_id;
-  }
-  
-  // If we have a wallet address, try to find user by wallet_address
-  if (walletAddress) {
-    const { data: existingUser } = await supabase
-      .from("users")
-      .select("id")
-      .eq("wallet_address", walletAddress.toLowerCase())
-      .maybeSingle();
-    
-    if (existingUser?.id) {
-      // Store circle_user_id preference for future lookups
-      await supabase
-        .from("preferences")
-        .upsert({
-          user_id: existingUser.id,
-          key: "circle_user_id",
-          value: circleUserId,
-        }, {
-          onConflict: "user_id,key"
-        });
-      return existingUser.id;
-    }
-  }
-  
-  // Create new user record using admin client (bypasses RLS)
-  // The users table has circle_user_id as NOT NULL, so we must include it
+
+  if (existingUser) return existingUser.id;
+
+  // 3. Create new unlinked user
   const placeholderAddress = walletAddress || `pending-${circleUserId}`;
-  const { data: newUser, error: createError } = await supabase
+  const { data: newUser, error } = await supabase
     .from("users")
     .insert({
       circle_user_id: circleUserId,
@@ -344,42 +335,40 @@ export async function getOrCreateSupabaseUser(circleUserId: string, walletAddres
     })
     .select("id")
     .single();
-  
-  if (createError || !newUser) {
-    throw new Error(`[Supabase] Failed to create user: ${createError?.message ?? "unknown error"}`);
+
+  if (error || !newUser) {
+    throw new Error("Failed to create user record: " + (error?.message || "Unknown error"));
   }
-  
-  // Store circle_user_id preference for future lookups
+
+  // Store circle_user_id preference for future lookups (Backward Compat)
   await supabase
     .from("preferences")
     .upsert({
       user_id: newUser.id,
       key: "circle_user_id",
       value: circleUserId,
-    }, {
-      onConflict: "user_id,key"
-    });
-  
+    }, { onConflict: "user_id,key" });
+
   return newUser.id;
 }
 
 export async function savePreference(input: { userId: string; key: string; value: any }): Promise<SupabasePreference> {
   const supabase = typeof window === "undefined" ? getSupabaseAdmin() : getSupabaseClient();
-  
+
   // Handle special case: "current" userId - this requires a system user or we skip the user_id requirement
   // For now, we'll create a system user with a special UUID or handle it differently
   if (input.userId === "current") {
     // For "current", we need a system user ID - create one if it doesn't exist
     // We'll use a fixed system user UUID or create one
     const SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000001";
-    
+
     // Try to ensure system user exists
     const { data: sysUser } = await supabase
       .from("users")
       .select("id")
       .eq("id", SYSTEM_USER_ID)
       .maybeSingle();
-    
+
     if (!sysUser) {
       // Create system user
       // The users table has circle_user_id as NOT NULL, so we must include it
@@ -392,7 +381,7 @@ export async function savePreference(input: { userId: string; key: string; value
           email: null,
         });
     }
-    
+
     const { data, error } = await supabase
       .from("preferences")
       .upsert({
@@ -411,12 +400,12 @@ export async function savePreference(input: { userId: string; key: string; value
 
     return mapPreference(data);
   }
-  
+
   // Check if userId is a UUID (valid UUID format)
   const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.userId);
-  
+
   let supabaseUserId: string;
-  
+
   if (isUUID) {
     // Already a UUID, use it directly
     supabaseUserId = input.userId;
@@ -432,7 +421,7 @@ export async function savePreference(input: { userId: string; key: string; value
       throw new Error(`[Supabase] Failed to get/create user for Circle userId ${input.userId}: ${error instanceof Error ? error.message : "unknown error"}`);
     }
   }
-  
+
   // Use upsert with conflict resolution on the unique constraint (user_id, key)
   const { data, error } = await supabase
     .from("preferences")
@@ -455,7 +444,7 @@ export async function savePreference(input: { userId: string; key: string; value
 
 export async function loadPreference(filters: { userId: string; key: string }): Promise<SupabasePreference | null> {
   const supabase = typeof window === "undefined" ? getSupabaseAdmin() : getSupabaseClient();
-  
+
   // Handle special case: "current" userId - this is used for system-wide preferences
   if (filters.userId === "current") {
     // For "current", we'll try to find it directly (this is a special system preference)
@@ -464,19 +453,19 @@ export async function loadPreference(filters: { userId: string; key: string }): 
       .select("*")
       .eq("key", filters.key)
       .maybeSingle();
-    
+
     if (error && error.code !== 'PGRST116') { // PGRST116 = no rows
       throw new Error(`[Supabase] Failed to load preference: ${error.message}`);
     }
-    
+
     return data ? mapPreference(data) : null;
   }
-  
+
   // Check if userId is a UUID
   const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(filters.userId);
-  
+
   let supabaseUserId: string;
-  
+
   if (isUUID) {
     supabaseUserId = filters.userId;
   } else {
@@ -486,7 +475,7 @@ export async function loadPreference(filters: { userId: string; key: string }): 
       .from("preferences")
       .select("user_id, value")
       .eq("key", "circle_user_id");
-    
+
     // Filter in JavaScript since JSONB eq doesn't work for string values
     const matching = allPrefs?.find(p => {
       // value is JSONB, so it might be stored as a string or JSON
@@ -495,15 +484,15 @@ export async function loadPreference(filters: { userId: string; key: string }): 
       const cleanVal = val.replace(/^"|"$/g, '');
       return cleanVal === filters.userId;
     });
-    
+
     if (!matching?.user_id) {
       // User doesn't exist yet, return null
       return null;
     }
-    
+
     supabaseUserId = matching.user_id;
   }
-  
+
   const { data, error } = await supabase
     .from("preferences")
     .select("*")
@@ -523,13 +512,13 @@ export async function saveUserCredentials(userId: string, credentials: { userTok
   // Get or create Supabase user for this Circle userId
   const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
   let supabaseUserId: string;
-  
+
   if (!isUUID) {
     supabaseUserId = await getOrCreateSupabaseUser(userId, walletAddress);
   } else {
     supabaseUserId = userId;
   }
-  
+
   await savePreference({ userId: supabaseUserId, key: "user_token", value: credentials.userToken });
   if (credentials.encryptionKey) {
     await savePreference({ userId: supabaseUserId, key: "encryption_key", value: credentials.encryptionKey });
@@ -557,55 +546,122 @@ export async function clearUserCredentials(userId: string): Promise<void> {
 }
 
 // Helper functions for wallet data (walletId, walletAddress)
-export async function saveWalletData(userId: string, walletData: { walletId: string; walletAddress: string }): Promise<void> {
-  // Get or create Supabase user for this Circle userId, and update wallet_address if needed
+// --- Wallets (Migrated to public.wallets) ---
+
+export async function saveWalletData(userId: string, data: { walletId: string; walletAddress: string }): Promise<void> {
+  // Use client-side auth when on client, admin when on server
+  const supabase = typeof window === "undefined" ? getSupabaseAdmin() : getSupabaseClient();
+
+  // Resolve UUID if necessary
+  let supabaseUserId = userId;
   const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
-  let supabaseUserId: string;
-  
   if (!isUUID) {
-    supabaseUserId = await getOrCreateSupabaseUser(userId, walletData.walletAddress);
-    
-    // Update user's wallet_address if it was a placeholder
-    const supabase = typeof window === "undefined" ? getSupabaseAdmin() : getSupabaseClient();
-    const { data: user } = await supabase
-      .from("users")
-      .select("wallet_address")
-      .eq("id", supabaseUserId)
-      .single();
-    
-    if (user && user.wallet_address && user.wallet_address.startsWith("pending-")) {
-      await supabase
-        .from("users")
-        .update({ wallet_address: walletData.walletAddress.toLowerCase() })
-        .eq("id", supabaseUserId);
+    try {
+      supabaseUserId = await getOrCreateSupabaseUser(userId);
+    } catch (e) {
+      console.error("[Supabase] Failed to resolve UUID for saveWalletData:", e);
+      return; // Abort if we can't find the user
     }
-  } else {
-    supabaseUserId = userId;
   }
-  
-  await Promise.all([
-    savePreference({ userId: supabaseUserId, key: "wallet_id", value: walletData.walletId }),
-    savePreference({ userId: supabaseUserId, key: "wallet_address", value: walletData.walletAddress }),
-  ]);
+
+  // 1. Save to new 'wallets' table
+  const { error } = await supabase
+    .from("wallets")
+    .upsert({
+      user_id: supabaseUserId,
+      wallet_id: data.walletId,
+      address: data.walletAddress,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id' });
+
+  if (error) {
+    console.error("[Supabase] Failed to save to wallets table:", error);
+    // Fallback? No, we want to enforce new table usage. But maybe log and try preference as backup?
+    // Let's stick to new table as primary.
+  }
+
+  // 2. Legacy Sync: Update users table wallet_address (for backward compat)
+  await supabase
+    .from("users")
+    .update({ wallet_address: data.walletAddress })
+    .eq("id", supabaseUserId);
+
+  // 3. Legacy Sync: Save as preference (Double write for safety during migration)
+  await savePreference({ userId, key: "wallet_data", value: data });
 }
 
 export async function loadWalletData(userId: string): Promise<{ walletId: string | null; walletAddress: string | null }> {
+  const supabase = typeof window === "undefined" ? getSupabaseAdmin() : getSupabaseClient();
+
+  // 1. Try new 'wallets' table
+  let supabaseUserId = userId;
+  const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
+  if (!isUUID) {
+    try {
+      supabaseUserId = await getOrCreateSupabaseUser(userId);
+    } catch (e) {
+      console.error("[Supabase] Failed to resolve UUID for loadWalletData:", e);
+      // Fallback to legacy behavior if user lookup fails
+      supabaseUserId = userId;
+    }
+  }
+
+  const { data: wallet } = await supabase
+    .from("wallets")
+    .select("wallet_id, address")
+    .eq("user_id", supabaseUserId)
+    .maybeSingle();
+
+  if (wallet) {
+    return { walletId: wallet.wallet_id, walletAddress: wallet.address };
+  }
+
+  // 2. Migration: Check legacy preferences
+  const legacyPref = await loadPreference({ userId, key: "wallet_data" });
+  if (legacyPref?.value && legacyPref.value.walletId) {
+    console.log(`[Migration] Found legacy wallet for user ${userId}, migrating to 'wallets' table...`);
+    const legacyData = legacyPref.value;
+
+    // Perform Migration
+    await saveWalletData(userId, {
+      walletId: legacyData.walletId,
+      walletAddress: legacyData.walletAddress
+    });
+
+    return { walletId: legacyData.walletId, walletAddress: legacyData.walletAddress };
+  }
+
+  // 3. Fallback: Check older individual keys
   const [idPref, addressPref] = await Promise.all([
     loadPreference({ userId, key: "wallet_id" }),
     loadPreference({ userId, key: "wallet_address" }),
   ]);
-  return {
-    walletId: idPref?.value ?? null,
-    walletAddress: addressPref?.value ?? null,
-  };
+
+  if (idPref?.value && addressPref?.value) {
+    return { walletId: idPref.value, walletAddress: addressPref.value };
+  }
+
+  return { walletId: null, walletAddress: null };
 }
 
 export async function clearWalletData(userId: string): Promise<void> {
   const supabase = typeof window === "undefined" ? getSupabaseAdmin() : getSupabaseClient();
+
+  let supabaseUserId = userId;
+  const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
+  if (!isUUID) {
+    try {
+      supabaseUserId = await getOrCreateSupabaseUser(userId);
+    } catch (e) {
+      console.error("[Supabase] Failed to resolve UUID for clearWalletData:", e);
+      return;
+    }
+  }
+
   await supabase
     .from("preferences")
     .delete()
-    .eq("user_id", userId)
+    .eq("user_id", supabaseUserId)
     .in("key", ["wallet_id", "wallet_address"]);
 }
 
@@ -616,7 +672,7 @@ export async function getOrCreateSessionId(userId: string): Promise<string> {
   if (sessionPref?.value) {
     return sessionPref.value;
   }
-  
+
   // Create new session ID
   const newSessionId = crypto.randomUUID();
   await savePreference({ userId, key: "session_id", value: newSessionId });

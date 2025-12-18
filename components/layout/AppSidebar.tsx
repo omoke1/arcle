@@ -59,11 +59,17 @@ export function AppSidebar({
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   // Use initialView only as the initial state; avoid syncing it on every render to prevent loops
   const [currentView, setCurrentView] = useState<SidebarView>(initialView);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   // User profile (display real details when available)
   const { settings } = useSettings(userId || "current");
   const [profileEmail, setProfileEmail] = useState<string | null>(null);
 
+  useEffect(() => {
+    setCurrentView(initialView);
+  }, [initialView]);
+
+  // Fetch profile email
   useEffect(() => {
     let cancelled = false;
 
@@ -100,6 +106,24 @@ export function AppSidebar({
     onViewChange?.(currentView);
   }, [currentView, onViewChange]);
 
+  // Fetch real user email
+  useEffect(() => {
+    const fetchUser = async () => {
+      if (typeof window === 'undefined') return;
+      try {
+        const { getSupabaseClient } = await import("@/lib/supabase");
+        const supabase = getSupabaseClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user?.email) {
+          setUserEmail(user.email);
+        }
+      } catch (error) {
+        console.error("Failed to fetch user email", error);
+      }
+    };
+    fetchUser();
+  }, [userId]);
+
   const handleItemClick = (callback?: () => void) => {
     // If sidebar is collapsed, first expand it and do nothing else.
     // This ensures icons don't change views until the sidebar is open.
@@ -119,6 +143,9 @@ export function AppSidebar({
       onToggle();
     }
   };
+
+  const displayName = userEmail ? userEmail.split('@')[0] : "User";
+  const initial = userEmail ? userEmail[0].toUpperCase() : "U";
 
   return (
     <>
@@ -268,7 +295,7 @@ export function AppSidebar({
                         {displayName}
                       </p>
                       <p className="text-xs text-soft-mist/60 truncate">
-                        {email || "No email set"}
+                        {email || userEmail || "No email set"}
                       </p>
                     </div>
                     {onLogout && (
@@ -394,4 +421,3 @@ function SidebarItem({ icon: Icon, label, active, badge, onClick, isCollapsed = 
     </button>
   );
 }
-

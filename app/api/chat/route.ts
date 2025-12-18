@@ -47,10 +47,10 @@ export async function POST(req: NextRequest) {
 
     // Get or create session ID
     const currentSessionId = sessionId || `session_${Date.now()}`;
-    
+
     // Get conversation history for context
     const conversationHistory = await getConversationSummary(currentSessionId, 5, userId);
-    
+
     // Build agent context
     const agentContext: AgentContext = {
       hasWallet: context?.hasWallet,
@@ -106,6 +106,15 @@ export async function POST(req: NextRequest) {
       messages: formattedMessages,
       temperature: 0.3,
       maxTokens: 1000,
+      onFinish: async (event) => {
+        try {
+          if (event.text) {
+            await addMessageToHistory(currentSessionId, "assistant", event.text, userId);
+          }
+        } catch (err) {
+          console.error("[Chat API] Failed to save assistant message:", err);
+        }
+      },
     } as any); // Type assertion needed due to Groq provider type differences
 
     // Return streaming response

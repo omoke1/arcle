@@ -7,23 +7,53 @@
 
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { Ratelimit } from '@upstash/ratelimit';
+import { kv } from '@vercel/kv';
 
-export function middleware(request: NextRequest) {
+// Initialize rate limit middleware
+// Use dummy KV if env vars missing (dev mode) to prevent crash
+const ratelimit = new Ratelimit({
+  redis: kv || {
+    // Mock for build/dev without KV
+    sadd: async () => 0,
+    eval: async () => [1, '10'],
+  } as any,
+  // 10 requests from the same IP in 10 seconds
+  limiter: Ratelimit.slidingWindow(10, '10 s'),
+  analytics: true,
+  prefix: '@upstash/ratelimit',
+});
+
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Routes that require invite verification
-  const protectedRoutes = ['/chat'];
+  // 1. Rate Limiting for API routes
+  if (pathname.startsWith('/api/') && process.env.KV_REST_API_URL) {
+    const ip = request.ip ?? '127.0.0.1';
+    try {
+      const { success, limit, reset, remaining } = await ratelimit.limit(ip);
 
-  // Check if current route is protected
+      if (!success) {
+        return new NextResponse('Too Many Requests', {
+          status: 429,
+          headers: {
+            'X-RateLimit-Limit': limit.toString(),
+            'X-RateLimit-Remaining': remaining.toString(),
+            'X-RateLimit-Reset': reset.toString(),
+          },
+        });
+      }
+    } catch (error) {
+      console.warn('Rate limit failed, failing open:', error);
+    }
+  }
+
+  // 2. Protected Routes (Invite Verification)
+  const protectedRoutes = ['/chat'];
   const isProtectedRoute = protectedRoutes.some(route => pathname.startsWith(route));
 
   if (isProtectedRoute) {
-    // Check if user has verified invite code (stored in cookie or we'll check client-side)
-    // Since we're using localStorage for verification, we'll rely on client-side redirect
-    // This middleware is a secondary layer of protection
-
-    // For now, allow through - client-side will handle redirect if no access
-    // In the future, you could use cookies for server-side verification
+    // Client-side verification is primary, this is just a stub
     return NextResponse.next();
   }
 
@@ -34,6 +64,7 @@ export function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     '/chat/:path*',
+    '/api/:path*',
     // Add other protected routes here
   ],
 };
