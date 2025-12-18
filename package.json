@@ -48,6 +48,7 @@
     "@radix-ui/react-slot": "^1.2.4",
     "@react-google-maps/api": "^2.20.8",
     "@supabase/supabase-js": "^2.84.0",
+    "@upstash/ratelimit": "^2.0.7",
     "@vercel/kv": "^3.0.0",
     "ai": "^5.0.104",
     "class-variance-authority": "^0.7.1",

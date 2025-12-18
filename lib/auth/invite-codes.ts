@@ -90,13 +90,7 @@ export function isValidInviteCode(code: string): boolean {
     return false;
   }
 
-  // Enforce batch-level expiry (24h from INVITE_BATCH_CREATED_AT)
-  if (isInviteBatchExpired()) {
-    if (process.env.NODE_ENV === 'development' || process.env.DEBUG_INVITE_CODES === 'true') {
-      console.log("[Invite Codes] Current batch has expired; no codes are valid anymore.");
-    }
-    return false;
-  }
+  // NOTE: Expiration logic removed for permanent access.
 
   const trimmedCode = code.toUpperCase().trim();
   if (!trimmedCode || trimmedCode.length !== 8) {
@@ -105,14 +99,6 @@ export function isValidInviteCode(code: string): boolean {
 
   const validCodes = getInviteCodes();
   const isValid = validCodes.includes(trimmedCode);
-
-  // Log for debugging (only in development or when explicitly enabled)
-  if (process.env.NODE_ENV === 'development' || process.env.DEBUG_INVITE_CODES === 'true') {
-    console.log(`[Invite Code Validation] Code: ${trimmedCode}, Valid: ${isValid}, Total codes: ${validCodes.length}`);
-    if (!isValid) {
-      console.log(`[Invite Code Validation] Code not found. First 5 codes: ${validCodes.slice(0, 5).join(', ')}`);
-    }
-  }
 
   return isValid;
 }
@@ -131,7 +117,6 @@ export async function getUsedCodes(userId?: string): Promise<string[]> {
 
   // Try to get userId if not provided
   if (!userId) {
-    // Try to get from a "current_user_id" preference
     try {
       const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
       if (currentUserPref?.value) {
@@ -232,36 +217,40 @@ export async function hasValidAccess(userId?: string): Promise<boolean> {
     }
   }
 
-  // Try Supabase first
   if (userId) {
+    // 1. Check strict 'user_access' table
+    try {
+      const { getSupabaseClient } = await import('@/lib/supabase');
+      const supabase = getSupabaseClient();
+      const { data } = await supabase
+        .from('user_access')
+        .select('access_code')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (data) return true;
+    } catch (e) {
+      console.warn("Failed to check user_access table", e);
+    }
+
+    // 2. Fallback: Check legacy Supabase preference
     try {
       const pref = await loadPreference({ userId, key: "invite_verified" });
       if (pref?.value === true || pref?.value === "true") {
         return true;
       }
     } catch (error) {
-      console.warn("[InviteCodes] Failed to load from Supabase, trying localStorage migration:", error);
+      console.warn("[InviteCodes] Failed to load from Supabase preference:", error);
     }
   }
 
-  // Migration fallback: try localStorage
+  // 3. Fallback: Check localStorage (Migration)
   const stored = localStorage.getItem('arcle_invite_verified');
   if (stored === 'true') {
     // Migrate to Supabase if userId is available
     if (userId) {
-      try {
-        await savePreference({ userId, key: "invite_verified", value: true });
-        const code = localStorage.getItem('arcle_invite_code_used');
-        const grantedAt = localStorage.getItem('arcle_access_granted_at');
-        if (code) {
-          await savePreference({ userId, key: "invite_code_used", value: code });
-        }
-        if (grantedAt) {
-          await savePreference({ userId, key: "access_granted_at", value: grantedAt });
-        }
-      } catch (error) {
-        console.error("[InviteCodes] Failed to migrate invite verification to Supabase:", error);
-      }
+      const code = localStorage.getItem('arcle_invite_code_used') || 'MIGRATE';
+      await grantAccess(code, userId); // This triggers the DB save
     }
     return true;
   }
@@ -275,14 +264,8 @@ export async function grantAccess(code: string, userId?: string): Promise<void> 
 
   // Try to get userId if not provided
   if (!userId) {
-    try {
-      const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
-      if (currentUserPref?.value) {
-        userId = currentUserPref.value;
-      }
-    } catch (error) {
-      // Ignore
-    }
+    const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
+    userId = currentUserPref?.value;
   }
 
   const upperCode = code.toUpperCase().trim();
@@ -290,21 +273,30 @@ export async function grantAccess(code: string, userId?: string): Promise<void> 
   // Save to Supabase if userId is available
   if (userId) {
     try {
+      const { getSupabaseClient } = await import('@/lib/supabase');
+      const supabase = getSupabaseClient();
+
+      // 1. Insert into persistent user_access table
+      await supabase.from('user_access').upsert({
+        user_id: userId,
+        access_code: upperCode,
+        granted_at: new Date().toISOString()
+      }, { onConflict: 'user_id' });
+
+      // 2. Set Preferences for legacy compat
       await savePreference({ userId, key: "invite_verified", value: true });
       await savePreference({ userId, key: "invite_code_used", value: upperCode });
-      await savePreference({ userId, key: "access_granted_at", value: new Date().toISOString() });
+
     } catch (error) {
-      console.error("[InviteCodes] Failed to save to Supabase, using localStorage fallback:", error);
-      // Migration fallback
+      console.error("[InviteCodes] Failed to save to user_access/preferences:", error);
+      // LocalStorage fallback
       localStorage.setItem('arcle_invite_verified', 'true');
       localStorage.setItem('arcle_invite_code_used', upperCode);
-      localStorage.setItem('arcle_access_granted_at', new Date().toISOString());
     }
   } else {
     // No userId - use localStorage only
     localStorage.setItem('arcle_invite_verified', 'true');
     localStorage.setItem('arcle_invite_code_used', upperCode);
-    localStorage.setItem('arcle_access_granted_at', new Date().toISOString());
   }
 
   await markCodeAsUsed(code, userId);

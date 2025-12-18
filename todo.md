@@ -77,16 +77,20 @@ Based on comprehensive feature audit (docs/FEATURE_STATUS_REPORT.md):
   - Add intelligent polling frequency management
 
 ### Phase 3: Fix Security Placeholder Implementations (High Priority)
-- [ ] **3.1** Fix Risk Scoring Placeholders
-  - **Issue**: Contract verification always returns `false`, age returns `null`, transaction count returns `0`
-  - **Fix**: Integrate ArcScan API for actual blockchain data
-  - Replace all placeholder implementations with real data queries
+- [x] **3.1** Fix Risk Scoring Placeholders
+  - [x] **Issue**: Transaction count returns `0`
+  - [x] **Fix**: Integrate ArcScan API/RPC for actual blockchain data
+  - [x] Replace all placeholder implementations with real data queries
 
-- [ ] **3.2** Add Missing Security Infrastructure
-  - **Issue**: No rate limiting, CORS, or request size limits exist
-  - **Fix**: Implement rate limiting middleware to prevent DoS attacks
-  - Add CORS configuration (any origin can currently call APIs)
-  - Add request size limits to prevent memory issues
+- [x] **3.2** Secure Session Keys
+  - [x] **Issue**: Stored in plain text
+  - [x] **Fix**: Implemented AES-256 encryption
+
+- [x] **3.4** Add Missing Security Infrastructure
+  - [x] **Issue**: No rate limiting, CORS, or request size limits exist
+  - [x] **Fix**: Implement rate limiting middleware to prevent DoS attacks
+  - [x] Add CORS configuration (any origin can currently call APIs)
+  - [x] Add request size limits to prevent memory issues
 
 ### Phase 4: Complete Scaffolded Agent Implementations (Medium Priority)
 - [ ] **4.1** Complete DeFi Agent

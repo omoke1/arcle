@@ -56,18 +56,35 @@ export function AppSidebar({
 }: AppSidebarProps) {
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [currentView, setCurrentView] = useState<SidebarView>(initialView);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   // Update view when initialView prop changes
   useEffect(() => {
-    if (initialView !== currentView) {
-      setCurrentView(initialView);
-    }
-  }, [initialView, currentView]);
+    setCurrentView(initialView);
+  }, [initialView]);
 
   // Notify parent of view changes
   useEffect(() => {
     onViewChange?.(currentView);
   }, [currentView, onViewChange]);
+
+  // Fetch real user email
+  useEffect(() => {
+    const fetchUser = async () => {
+      if (typeof window === 'undefined') return;
+      try {
+        const { getSupabaseClient } = await import("@/lib/supabase");
+        const supabase = getSupabaseClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user?.email) {
+          setUserEmail(user.email);
+        }
+      } catch (error) {
+        console.error("Failed to fetch user email", error);
+      }
+    };
+    fetchUser();
+  }, [userId]);
 
   const handleItemClick = (callback?: () => void) => {
     if (callback) {
@@ -78,6 +95,9 @@ export function AppSidebar({
       onToggle();
     }
   };
+
+  const displayName = userEmail ? userEmail.split('@')[0] : "User";
+  const initial = userEmail ? userEmail[0].toUpperCase() : "U";
 
   return (
     <>
@@ -204,13 +224,13 @@ export function AppSidebar({
                 !isOpen && "justify-center"
               )}>
                 <div className="w-8 h-8 rounded-full bg-aurora/20 border border-aurora/30 flex items-center justify-center flex-shrink-0">
-                  <span className="text-xs font-semibold text-aurora">U</span>
+                  <span className="text-xs font-semibold text-aurora">{initial}</span>
                 </div>
                 {isOpen && (
                   <>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-signal-white truncate">User</p>
-                      <p className="text-xs text-soft-mist/60 truncate">user@arcle.com</p>
+                      <p className="text-sm font-medium text-signal-white truncate">{displayName}</p>
+                      <p className="text-xs text-soft-mist/60 truncate">{userEmail || "Loading..."}</p>
                     </div>
                     {onLogout && (
                       <button
@@ -333,4 +353,3 @@ function SidebarItem({ icon: Icon, label, active, badge, onClick, isCollapsed = 
     </button>
   );
 }
-
