@@ -262,11 +262,10 @@ export function ChatInput({
                 "scrollbar-hide" // Hide scrollbar
               )}
               style={{ 
-                fontSize: '16px',
+                fontSize: '16px', // Prevent iOS zoom on focus
                 scrollbarWidth: 'none', // Firefox
                 msOverflowStyle: 'none' // IE/Edge
               }}
-              style={{ fontSize: '16px' }} // Prevent iOS zoom on focus
             />
 
             {/* Camera Icon (when empty) or Send Icon (when user has typed) */}
