@@ -15,11 +15,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isValidInviteCode } from "@/lib/auth/invite-codes";
 import { isCodeUsedOnServer, markCodeAsUsedOnServer } from "@/lib/auth/used-codes-store";
+import { getSupabaseAdmin } from "@/lib/supabase";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { code } = body;
+    const { code, userId } = body;
 
     if (!code || typeof code !== 'string') {
       return NextResponse.json(
@@ -34,18 +35,6 @@ export async function POST(request: NextRequest) {
     const isValid = isValidInviteCode(trimmedCode);
 
     if (!isValid) {
-      // Log more details for debugging
-      const { getInviteCodes } = await import("@/lib/auth/invite-codes");
-      const allCodes = getInviteCodes();
-      console.log(`[Invite] Invalid code attempt: ${trimmedCode}`);
-      console.log(`[Invite] Total valid codes: ${allCodes.length}`);
-      console.log(`[Invite] Code format check: length=${trimmedCode.length}, matches pattern=${/^[A-Z0-9]{8}$/.test(trimmedCode)}`);
-      
-      // In development, show first few codes for debugging
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`[Invite] First 5 valid codes: ${allCodes.slice(0, 5).join(', ')}`);
-      }
-      
       return NextResponse.json({
         valid: false,
         message: "Invalid invite code. Please check and try again.",
@@ -56,32 +45,40 @@ export async function POST(request: NextRequest) {
     const alreadyUsed = await isCodeUsedOnServer(trimmedCode);
 
     if (alreadyUsed) {
-      // Get more details for debugging
-      const { getAllUsedCodes } = await import("@/lib/auth/used-codes-store");
-      const allUsed = await getAllUsedCodes();
-      const usedEntry = allUsed.find(e => e.code.toUpperCase() === trimmedCode);
-      
-      console.log(`[Invite] Code already used: ${trimmedCode}`);
-      console.log(`[Invite] Used at: ${usedEntry?.usedAt || 'Unknown'}`);
-      console.log(`[Invite] Total codes in used list: ${allUsed.length}`);
-      
-      // In development, show which codes are used
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`[Invite] First 5 used codes: ${allUsed.slice(0, 5).map(e => e.code).join(', ')}`);
-      }
-      
       return NextResponse.json({
         valid: false,
         message: "This invite code has already been used. Each code can only be used once.",
       });
     }
 
-    // Step 3: Mark code as used (server-side permanent tracking)
+    // Step 3: Grant Access (Database Write via Admin)
+    if (userId) {
+      try {
+        const supabaseAdmin = getSupabaseAdmin();
+        const { error } = await supabaseAdmin.from('user_access').upsert({
+          user_id: userId,
+          access_code: trimmedCode,
+          granted_at: new Date().toISOString()
+        }, { onConflict: 'user_id' });
+
+        if (error) {
+          console.error("[Invite] DB Insert Error:", error);
+          throw new Error("Failed to save access record");
+        }
+      } catch (dbError) {
+        console.error("[Invite] Critical DB error:", dbError);
+        return NextResponse.json(
+          { valid: false, message: "Database errror granting access." },
+          { status: 500 }
+        );
+      }
+    }
+
+    // Step 4: Mark code as used (server-side permanent tracking)
     try {
-      // Get IP and user agent for audit trail
-      const ipAddress = request.headers.get('x-forwarded-for') || 
-                       request.headers.get('x-real-ip') || 
-                       'unknown';
+      const ipAddress = request.headers.get('x-forwarded-for') ||
+        request.headers.get('x-real-ip') ||
+        'unknown';
       const userAgent = request.headers.get('user-agent') || 'unknown';
 
       await markCodeAsUsedOnServer(trimmedCode, {
@@ -89,18 +86,17 @@ export async function POST(request: NextRequest) {
         userAgent,
       });
 
-      console.log(`[Invite] ✅ Code ${trimmedCode} successfully verified and marked as used`);
+      console.log(`[Invite] ✅ Code ${trimmedCode} used by user ${userId || 'anon'}`);
 
       return NextResponse.json({
         valid: true,
         message: "Access granted! Welcome to Arcle.",
       });
     } catch (markError: any) {
-      // This could happen if there's a race condition (two requests at the same time)
       console.error(`[Invite] Error marking code as used: ${markError.message}`);
       return NextResponse.json({
         valid: false,
-        message: "This invite code has already been used. Each code can only be used once.",
+        message: "This invite code has already been used.",
       });
     }
   } catch (error) {

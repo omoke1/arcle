@@ -48,7 +48,18 @@ export default function ChatPage() {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const checkAccess = async () => {
-        const hasAccess = await hasValidAccess();
+        const { getSupabaseClient } = await import('@/lib/supabase');
+        const supabase = getSupabaseClient();
+        const { data: { user } } = await supabase.auth.getUser();
+
+        // If no user, we might be loading or unauthenticated. 
+        // But for safety, let's let Supabase Auth handling in getSupabaseClient deal with it or redirect.
+        if (!user) {
+          router.push('/');
+          return;
+        }
+
+        const hasAccess = await hasValidAccess(user.id);
         if (!hasAccess) {
           // User doesn't have valid access, redirect to landing page
           router.push('/');
@@ -146,6 +157,8 @@ export default function ChatPage() {
     };
     initSessionId();
   }, [userId]);
+
+
 
   const creatingRef = useRef(false);
   const processingChallengeRef = useRef(false);
@@ -3208,8 +3221,11 @@ If the issue persists, the encryption key might not be returned from Circle's AP
       content: errorMessage,
       timestamp: new Date(),
     };
+
     setMessages((prev) => [...prev, errorMsg]);
   };
+
+
 
   return (
     <>

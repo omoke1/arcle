@@ -42,6 +42,21 @@ export function Sidebar({
   const [newWalletAddress, setNewWalletAddress] = useState<string | null>(null);
   const [editingWalletId, setEditingWalletId] = useState<string | null>(null);
   const [editingWalletAddress, setEditingWalletAddress] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  // Fetch user email
+  useEffect(() => {
+    if (isOpen) {
+      import("@/lib/supabase").then(({ getSupabaseClient }) => {
+        const supabase = getSupabaseClient();
+        supabase.auth.getUser().then(({ data: { user } }) => {
+          if (user?.email) {
+            setUserEmail(user.email);
+          }
+        });
+      });
+    }
+  }, [isOpen]);
 
   // Reset view when sidebar closes
   useEffect(() => {
@@ -126,7 +141,14 @@ export function Sidebar({
           <>
             {/* Header */}
             <div className="px-6 py-4 border-b border-dark-grey/50 flex items-center justify-between">
-              <h1 className="text-2xl font-bold text-white">ARCLE</h1>
+              <div>
+                <h1 className="text-2xl font-bold text-white">ARCLE</h1>
+                {userEmail && (
+                  <p className="text-xs text-casper mt-0.5 truncate max-w-[180px]" title={userEmail}>
+                    {userEmail}
+                  </p>
+                )}
+              </div>
               <button
                 onClick={onClose}
                 className="text-casper hover:text-white transition-colors"
@@ -195,7 +217,10 @@ export function Sidebar({
             <div className="px-4 py-4 border-t border-dark-grey/50">
               {onLogout && (
                 <button
-                  onClick={() => {
+                  onClick={async () => {
+                    const { getSupabaseClient } = await import("@/lib/supabase");
+                    const supabase = getSupabaseClient();
+                    await supabase.auth.signOut();
                     onLogout();
                     onClose();
                   }}
@@ -208,13 +233,13 @@ export function Sidebar({
             </div>
           </>
         ) : currentView === "settings" ? (
-          <SettingsPage 
-            onBack={handleBack} 
+          <SettingsPage
+            onBack={handleBack}
             onLogout={onLogout}
           />
         ) : currentView === "wallet" ? (
-          <WalletSettingsPage 
-            onBack={handleBack} 
+          <WalletSettingsPage
+            onBack={handleBack}
             walletAddress={walletAddress}
             walletId={walletId}
             onCreateWallet={() => setCurrentView("create-subaccount")}
@@ -230,8 +255,8 @@ export function Sidebar({
         ) : currentView === "help" ? (
           <HelpPage onBack={handleBack} />
         ) : currentView === "create-wallet" ? (
-          <CreateWalletPage 
-            onBack={handleBack} 
+          <CreateWalletPage
+            onBack={handleBack}
             onWalletCreated={handleWalletCreated}
           />
         ) : currentView === "create-subaccount" && walletId && walletAddress ? (
@@ -251,13 +276,13 @@ export function Sidebar({
         ) : currentView === "scan-reports" ? (
           <ScanReportsPage onBack={handleBack} />
         ) : currentView === "transaction-history" ? (
-          <TransactionHistoryPage 
-            onBack={handleBack} 
+          <TransactionHistoryPage
+            onBack={handleBack}
             walletId={walletId}
             walletAddress={walletAddress}
           />
         ) : currentView === "agent-permissions" ? (
-          <AgentPermissionsPage 
+          <AgentPermissionsPage
             onBack={handleBack}
             walletId={newWalletId || editingWalletId || walletId}
             onComplete={() => {
