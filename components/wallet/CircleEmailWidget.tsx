@@ -86,10 +86,18 @@ export function CircleEmailWidget({
   }, [appId, deviceToken, deviceEncryptionKey, email, onError]);
 
   const handleVerifyOTP = async () => {
-    if (!otpCode || otpCode.length !== 6) {
-      setError("Please enter a valid 6-digit code");
+    // Extract numeric part from OTP code
+    // Circle sends codes like "XB6-727832" or just "727832"
+    // We need to extract just the numeric digits (typically 6 digits)
+    const numericCode = otpCode.replace(/\D/g, "");
+    
+    if (!numericCode || numericCode.length < 6) {
+      setError("Please enter a valid code (at least 6 digits)");
       return;
     }
+
+    // Use the last 6 digits if code is longer (handles cases like "6727832" -> "727832")
+    const codeToVerify = numericCode.length >= 6 ? numericCode.slice(-6) : numericCode;
 
     try {
       setIsLoading(true);
@@ -99,14 +107,40 @@ export function CircleEmailWidget({
         throw new Error("SDK not initialized");
       }
 
-      console.log("Verifying OTP code...");
+      console.log("Verifying OTP code...", {
+        originalCode: otpCode,
+        extractedCode: codeToVerify,
+        codeLength: codeToVerify.length,
+        hasOtpToken: !!otpToken,
+        otpTokenPreview: otpToken ? otpToken.substring(0, 20) + "..." : "none",
+        deviceTokenPreview: deviceToken ? deviceToken.substring(0, 20) + "..." : "none",
+      });
 
       // Execute OTP verification challenge
-      // The SDK will handle the OTP verification and wallet creation
-      sdkRef.current.execute(otpCode, (executionError: any, result: any) => {
+      // The SDK expects just the numeric part of the OTP code (6 digits)
+      // Note: The Web SDK's execute() method handles OTP verification internally
+      // It uses the deviceToken set via setAuthentication() to authenticate the request
+      sdkRef.current.execute(codeToVerify, (executionError: any, result: any) => {
         if (executionError) {
           console.error("OTP verification error:", executionError);
-          setError(executionError.message || "Invalid OTP code");
+          // Check for specific Circle error codes
+          const errorCode = executionError.code || executionError.errorCode;
+          let errorMessage = executionError.message || "Invalid OTP code";
+          
+          // Map Circle error codes to user-friendly messages
+          if (errorCode === 155131 || errorCode === 155133) {
+            errorMessage = "Invalid OTP code. Please check the code and try again.";
+          } else if (errorCode === 155132) {
+            errorMessage = "OTP code not found. Please request a new code.";
+          } else if (errorCode === 155134) {
+            errorMessage = "OTP code doesn't match. Please check the code from your email.";
+          } else if (errorCode === 155130) {
+            errorMessage = "OTP code has expired. Please request a new code.";
+          } else if (executionError.message?.includes("Invalid credentials") || executionError.code === 401) {
+            errorMessage = "Invalid OTP code. Make sure you're entering the 6-digit number from your email (e.g., if code is 'XB6-727832', enter '727832').";
+          }
+          
+          setError(errorMessage);
           setIsLoading(false);
           onError(executionError);
           return;
@@ -126,15 +160,15 @@ export function CircleEmailWidget({
   if (error && !isLoading) {
     return (
       <div className="space-y-4">
-        <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-red-800 font-medium">❌ {error}</p>
+        <div className="p-4 bg-red-950/30 border border-red-500/50 rounded-lg backdrop-blur-sm">
+          <p className="text-red-400 font-medium">❌ {error}</p>
         </div>
         <button
           onClick={() => {
             setError(null);
             setOtpCode("");
           }}
-          className="w-full px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+          className="w-full px-4 py-2 bg-white/10 text-white rounded-lg hover:bg-white/20 border border-white/20 transition-colors"
         >
           Try Again
         </button>
@@ -143,56 +177,94 @@ export function CircleEmailWidget({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {isLoading && (
         <div className="flex items-center justify-center space-x-3 py-4">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
-          <p className="text-gray-700">Setting up verification...</p>
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-[#E9F28E]"></div>
+          <p className="text-white/80">Setting up verification...</p>
         </div>
       )}
 
       {!isLoading && (
         <>
           <div className="text-center space-y-2">
-            <p className="text-gray-700">
+            <p className="text-white/70 text-sm">
               We sent a 6-digit code to:
             </p>
-            <p className="font-semibold text-gray-900">{email}</p>
-            <p className="text-sm text-gray-600">
+            <p className="font-semibold text-[#E9F28E] text-lg">{email}</p>
+            <p className="text-xs text-white/50">
               Check your inbox and spam folder
             </p>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+          <div className="space-y-3">
+            <label className="block text-sm font-medium text-white/90 mb-3 text-center">
               Enter OTP Code
             </label>
-            <input
-              type="text"
-              maxLength={6}
-              value={otpCode}
-              onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
-              placeholder="000000"
-              className="w-full px-4 py-3 text-center text-2xl font-mono tracking-widest border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              disabled={isLoading}
-            />
+            <div className="relative">
+              <input
+                type="text"
+                maxLength={15}
+                value={otpCode}
+                onChange={(e) => {
+                  // Allow alphanumeric and hyphens (for codes like "XB6-727832")
+                  // But extract and show just the numeric part for display
+                  const input = e.target.value;
+                  // Allow full format but extract numeric part
+                  const numeric = input.replace(/\D/g, "");
+                  setOtpCode(input); // Store full input to allow user to paste full code
+                }}
+                placeholder="000000"
+                className="w-full px-6 py-4 text-center text-3xl font-mono tracking-[0.3em] 
+                  bg-white/5 border-2 border-white/20 rounded-xl 
+                  text-white placeholder-white/30
+                  focus:outline-none focus:ring-2 focus:ring-[#E9F28E]/50 focus:border-[#E9F28E]/50
+                  transition-all duration-200
+                  backdrop-blur-sm
+                  disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={isLoading}
+                autoFocus
+              />
+              {/* Glow effect on focus */}
+              <div className="absolute inset-0 rounded-xl bg-[#E9F28E]/10 opacity-0 focus-within:opacity-100 transition-opacity pointer-events-none blur-xl"></div>
+            </div>
+            <p className="text-xs text-white/50 mt-2 text-center">
+              Enter the 6-digit number from your email
+              <br />
+              <span className="text-white/40">(e.g., if code is &quot;XB6-727832&quot;, enter &quot;727832&quot;)</span>
+            </p>
           </div>
 
           <button
             onClick={handleVerifyOTP}
-            disabled={otpCode.length !== 6 || isLoading}
-            className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+            disabled={otpCode.replace(/\D/g, "").length < 6 || isLoading}
+            className="w-full px-6 py-4 
+              bg-[#E9F28E] text-[#0D0D0C] 
+              rounded-xl font-semibold text-base
+              hover:bg-[#E9F28E]/90 
+              active:scale-[0.98]
+              disabled:bg-white/10 disabled:text-white/30 disabled:cursor-not-allowed
+              transition-all duration-200
+              border border-[#E9F28E]/20
+              shadow-lg shadow-[#E9F28E]/20"
           >
-            {isLoading ? "Verifying..." : "Verify & Create Wallet"}
+            {isLoading ? (
+              <span className="flex items-center justify-center gap-2">
+                <div className="animate-spin rounded-full h-4 w-4 border-2 border-[#0D0D0C] border-t-transparent"></div>
+                Verifying...
+              </span>
+            ) : (
+              "Verify & Create Wallet"
+            )}
           </button>
 
-          <div className="text-center">
+          <div className="text-center pt-2">
             <button
               onClick={onResendOTP}
-              className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+              className="text-[#E9F28E] hover:text-[#E9F28E]/80 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={isLoading}
             >
-              Didn&apos;t receive it? Resend OTP
+              Didn&apos;t receive it? <span className="underline">Resend OTP</span>
             </button>
           </div>
         </>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useState, useCallback } from "react";
-import { X, Camera, AlertCircle } from "lucide-react";
+import { X, Camera, AlertCircle, Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Dynamic import for jsQR to handle CommonJS module
@@ -83,19 +83,23 @@ interface QRCodeScannerProps {
     currency?: string;
     rawData: string;
   }) => void;
+  onPhotoCapture?: (imageDataUrl: string) => void; // Callback for photo capture
 }
 
 /**
- * QR Code Scanner Component
- * Uses browser camera API to scan QR codes
+ * QR Code Scanner Component with Photo Capture
+ * Uses browser camera API to scan QR codes and capture photos
  */
-export function QRCodeScanner({ isOpen, onClose, onScan }: QRCodeScannerProps) {
+export function QRCodeScanner({ isOpen, onClose, onScan, onPhotoCapture }: QRCodeScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+  const [showManualInput, setShowManualInput] = useState(false);
+  const [manualInputValue, setManualInputValue] = useState("");
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const scanIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
 
 
@@ -203,14 +207,52 @@ export function QRCodeScanner({ isOpen, onClose, onScan }: QRCodeScannerProps) {
     }
   }, [startQRScanning]);
 
-  // Handle manual QR code input (fallback)
-  const handleManualInput = () => {
-    const input = prompt("Enter QR code data manually:");
-    if (input) {
-      const parsed = parseQRCode(input);
-      onScan(parsed);
+  // Capture photo from video stream
+  const capturePhoto = useCallback(() => {
+    if (!videoRef.current || !canvasRef.current) return;
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const context = canvas.getContext("2d");
+
+    if (!context) return;
+
+    // Set canvas size to match video
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    // Draw current video frame to canvas
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Convert canvas to data URL (base64 image)
+    const imageDataUrl = canvas.toDataURL("image/jpeg", 0.9);
+
+    // Call the photo capture callback
+    if (onPhotoCapture) {
+      onPhotoCapture(imageDataUrl);
+      stopCamera();
       onClose();
     }
+  }, [onPhotoCapture, stopCamera, onClose]);
+
+  // Handle manual QR code input (fallback)
+  const handleManualInput = () => {
+    setShowManualInput(true);
+  };
+
+  const handleManualInputSubmit = () => {
+    if (manualInputValue.trim()) {
+      const parsed = parseQRCode(manualInputValue.trim());
+      onScan(parsed);
+      setManualInputValue("");
+      setShowManualInput(false);
+      onClose();
+    }
+  };
+
+  const handleRetryCamera = () => {
+    setError(null);
+    startCamera();
   };
 
   useEffect(() => {
@@ -224,6 +266,13 @@ export function QRCodeScanner({ isOpen, onClose, onScan }: QRCodeScannerProps) {
       stopCamera();
     };
   }, [isOpen, startCamera, stopCamera]);
+
+  // Auto-focus input when manual input modal opens
+  useEffect(() => {
+    if (showManualInput && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [showManualInput]);
 
   if (!isOpen) return null;
 
@@ -246,13 +295,23 @@ export function QRCodeScanner({ isOpen, onClose, onScan }: QRCodeScannerProps) {
           {error ? (
             <div className="flex flex-col items-center justify-center h-full p-6">
               <AlertCircle className="w-12 h-12 text-soft-mist/50 mb-3" />
-              <p className="text-sm text-soft-mist/70 text-center">{error}</p>
-              <button
-                onClick={handleManualInput}
-                className="mt-4 px-4 py-2 bg-aurora text-carbon rounded-lg text-sm font-medium hover:bg-aurora/90 transition-colors"
-              >
-                Enter Manually
-              </button>
+              <p className="text-sm text-soft-mist/70 text-center mb-4">{error}</p>
+              <div className="flex flex-col gap-2 w-full max-w-xs">
+                {error.includes("Permission denied") && (
+                  <button
+                    onClick={handleRetryCamera}
+                    className="px-4 py-2 bg-aurora text-carbon rounded-lg text-sm font-medium hover:bg-aurora/90 transition-colors"
+                  >
+                    Retry Camera Access
+                  </button>
+                )}
+                <button
+                  onClick={handleManualInput}
+                  className="px-4 py-2 bg-graphite/80 text-signal-white rounded-lg text-sm font-medium hover:bg-graphite transition-colors border border-graphite/60"
+                >
+                  Enter QR Code Manually
+                </button>
+              </div>
             </div>
           ) : (
             <>
@@ -277,19 +336,90 @@ export function QRCodeScanner({ isOpen, onClose, onScan }: QRCodeScannerProps) {
           )}
         </div>
 
-        {/* Instructions */}
-        <div className="text-center">
-          <p className="text-sm text-soft-mist/70 mb-2">
-            Position the QR code within the frame
-          </p>
-          <button
-            onClick={handleManualInput}
-            className="text-xs text-aurora hover:text-aurora/80 underline"
-          >
-            Or enter QR code manually
-          </button>
+        {/* Controls */}
+        <div className="flex flex-col items-center gap-4">
+          {/* Capture Button */}
+          {!error && isScanning && (
+            <button
+              onClick={capturePhoto}
+              className="w-16 h-16 rounded-full bg-signal-white border-4 border-graphite shadow-lg hover:bg-soft-mist transition-colors flex items-center justify-center"
+              aria-label="Capture photo"
+            >
+              <Circle className="w-12 h-12 text-carbon fill-carbon" />
+            </button>
+          )}
+
+          {/* Instructions */}
+          <div className="text-center">
+            <p className="text-sm text-soft-mist/70 mb-2">
+              {onPhotoCapture 
+                ? "Tap the button to capture a photo, or position a QR code to scan"
+                : "Position the QR code within the frame"}
+            </p>
+            <button
+              onClick={handleManualInput}
+              className="text-xs text-aurora hover:text-aurora/80 underline"
+            >
+              Or enter QR code manually
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Manual Input Modal */}
+      {showManualInput && (
+        <div className="fixed inset-0 z-[10001] bg-carbon/95 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-graphite rounded-xl border border-graphite/60 shadow-lg w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-signal-white">Enter QR Code Data</h3>
+              <button
+                onClick={() => {
+                  setShowManualInput(false);
+                  setManualInputValue("");
+                }}
+                className="p-1.5 rounded-lg text-soft-mist/70 hover:text-signal-white hover:bg-graphite/50 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <input
+              ref={inputRef}
+              type="text"
+              value={manualInputValue}
+              onChange={(e) => setManualInputValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  handleManualInputSubmit();
+                } else if (e.key === "Escape") {
+                  setShowManualInput(false);
+                  setManualInputValue("");
+                }
+              }}
+              placeholder="Paste QR code data here..."
+              className="w-full px-4 py-3 bg-carbon/50 border border-graphite/60 rounded-lg text-signal-white placeholder:text-soft-mist/50 focus:outline-none focus:ring-2 focus:ring-aurora mb-4"
+              autoFocus
+            />
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowManualInput(false);
+                  setManualInputValue("");
+                }}
+                className="flex-1 px-4 py-2 bg-graphite/80 text-signal-white rounded-lg text-sm font-medium hover:bg-graphite transition-colors border border-graphite/60"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleManualInputSubmit}
+                disabled={!manualInputValue.trim()}
+                className="flex-1 px-4 py-2 bg-aurora text-carbon rounded-lg text-sm font-medium hover:bg-aurora/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Submit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

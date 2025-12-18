@@ -67,25 +67,8 @@ const formatTime = (date: Date | string): string => {
   return notificationDate.toLocaleDateString()
 }
 
-// Default activities (fallback when no notifications)
-const defaultActivities: Activity[] = [
-  {
-    id: 1,
-    icon: <MessageCircle className="h-4 w-4" />,
-    iconBg: "bg-neutral-700 dark:bg-neutral-700 bg-neutral-200",
-    title: "Welcome to Arcle!",
-    description: "Your AI-powered financial assistant is ready.",
-    time: "Just Now",
-  },
-  {
-    id: 2,
-    icon: <Shield className="h-4 w-4" />,
-    iconBg: "bg-neutral-700 dark:bg-neutral-700 bg-neutral-200",
-    title: "Security Enabled",
-    description: "Your wallet is protected with enterprise-grade security.",
-    time: "2 min ago",
-  },
-]
+// Default activities: none – show real notifications only
+const defaultActivities: Activity[] = []
 
 export function ActivityDropdown({ userId }: { userId?: string }) {
   const [isOpen, setIsOpen] = useState(false)
@@ -96,7 +79,8 @@ export function ActivityDropdown({ userId }: { userId?: string }) {
     // Load notifications from Supabase service
     const loadNotifications = async () => {
       if (!userId) {
-        setActivities(defaultActivities)
+        // No authenticated user – no notifications
+        setActivities([])
         setUnreadCount(0)
         return
       }
@@ -119,7 +103,7 @@ export function ActivityDropdown({ userId }: { userId?: string }) {
           supabaseUserId = data.userId;
         } catch (error) {
           console.warn("[ActivityDropdown] Could not get Supabase user ID:", error);
-          setActivities(defaultActivities)
+          setActivities([])
           setUnreadCount(0)
           return;
         }
@@ -146,12 +130,12 @@ export function ActivityDropdown({ userId }: { userId?: string }) {
           })
           setActivities(mappedActivities)
         } else {
-          // Use default activities if no notifications
-          setActivities(defaultActivities)
+          // No notifications yet
+          setActivities([])
         }
       } catch (error) {
         console.error("[ActivityDropdown] Error loading notifications:", error)
-        setActivities(defaultActivities)
+        setActivities([])
         setUnreadCount(0)
       }
     }

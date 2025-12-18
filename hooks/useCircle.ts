@@ -142,6 +142,8 @@ export function useCircle(): UseCircleReturn {
           // Generate and store deviceId for token refresh
           const deviceId = `device-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
           await savePreference({ userId: userData.userId, key: "device_id", value: deviceId });
+          // Also record the "current" Circle user for future lookups across the app
+          await savePreference({ userId: "current", key: "current_user_id", value: userData.userId });
         } catch (error) {
           console.error("[useCircle] Failed to save user to Supabase:", error);
         }

@@ -1,16 +1,16 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Mic, Plus, X, Send, Camera, MapPin } from "lucide-react";
+import { Plus, X, Send, Camera, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { startVoiceRecognition, isVoiceRecognitionSupported } from "@/lib/voice/voice-recognition";
-import { SoundWaveIcon } from "@/components/ui/SoundWaveIcon";
+import { isVoiceRecognitionSupported } from "@/lib/voice/voice-recognition";
 import { AttachmentMenu } from "./AttachmentMenu";
 import { QRCodeScanner } from "./QRCodeScanner";
 import { BorderBeam } from "@/components/ui/border-beam";
+import { AIVoiceInputCompact } from "@/components/ui/ai-voice-input-compact";
 
 interface ChatInputProps {
-  onSendMessage: (message: string, replyTo?: string) => void;
+  onSendMessage: (message: string, replyTo?: string, image?: string) => void;
   disabled?: boolean;
   placeholder?: string;
   replyTo?: {
@@ -45,7 +45,7 @@ export function ChatInput({
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [isGettingLocation, setIsGettingLocation] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const plusButtonRef = useRef<HTMLButtonElement>(null);
   const stopRecognitionRef = useRef<(() => void) | null>(null);
   
@@ -55,6 +55,14 @@ export function ChatInput({
       inputRef.current.focus();
     }
   }, [replyTo]);
+
+  // Auto-resize textarea - limited expansion to keep content visible
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+      inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 100)}px`;
+    }
+  }, [message]);
 
   // Determine voice support on client only to avoid SSR/CSR mismatch
   useEffect(() => {
@@ -194,10 +202,10 @@ export function ChatInput({
       )}
       
       {/* Main Input Bar - Centered and Compact */}
-      <div className="px-2 sm:px-4 py-3 sm:py-4 pb-safe">
-        <div className="max-w-2xl mx-auto">
-          <div className="relative rounded-full overflow-hidden">
-            <div className="flex items-center gap-2 sm:gap-3 bg-graphite rounded-full px-2.5 sm:px-3.5 py-2 sm:py-2.5 relative">
+      <div className="px-2 sm:px-4 py-2 sm:py-3 pb-safe">
+        <div className="max-w-xl mx-auto">
+          <div className="relative overflow-hidden">
+            <div className="flex items-center gap-2 sm:gap-3 bg-graphite px-2 sm:px-3 py-1.5 sm:py-2 relative border border-graphite/60 rounded-lg shadow-lg shadow-black/20">
               {/* BorderBeam - Smaller size on mobile, larger on desktop */}
               <BorderBeam 
                 size={isMobile ? 150 : 250}
@@ -206,14 +214,13 @@ export function ChatInput({
                 borderWidth={1.5}
                 colorFrom="#E9F28E"
                 colorTo="rgba(233, 242, 142, 0.3)"
-                className="rounded-full"
               />
             {/* Plus Icon */}
             <button
               ref={plusButtonRef}
               type="button"
               disabled={disabled}
-              className="flex-shrink-0 text-signal-white hover:text-aurora transition-colors disabled:opacity-50 cursor-pointer w-10 h-10 rounded-full bg-graphite/80 border border-graphite/50 flex items-center justify-center"
+              className="flex-shrink-0 text-signal-white hover:text-aurora transition-colors disabled:opacity-50 cursor-pointer w-10 h-10 bg-graphite/80 border border-graphite/50 flex items-center justify-center"
               onClick={handlePlusClick}
               onMouseDown={(e) => {
                 // Prevent form submission when clicking plus
@@ -230,125 +237,106 @@ export function ChatInput({
               <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
 
-        {/* Input Field */}
-            <input
-              type="text"
+        {/* Textarea Field - Auto-expanding */}
+            <textarea
               ref={inputRef}
-            value={message}
+              value={message}
               onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSubmit(e);
-              }
-            }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit(e);
+                }
+              }}
               placeholder={placeholder || "Ask anything"}
-            disabled={disabled}
-            className={cn(
-                "flex-1 bg-transparent border-none outline-none",
+              disabled={disabled}
+              rows={1}
+              className={cn(
+                "flex-1 bg-transparent border-none outline-none resize-none",
                 "text-signal-white placeholder:text-soft-mist/50",
                 "text-sm sm:text-[15px] leading-6",
                 "disabled:opacity-50 disabled:cursor-not-allowed",
-                "touch-manipulation" // Prevent double-tap zoom on mobile
+                "touch-manipulation", // Prevent double-tap zoom on mobile
+                "overflow-y-auto min-h-[24px] max-h-[100px]",
+                "py-1 self-center",
+                "scrollbar-hide" // Hide scrollbar
               )}
-            style={{ fontSize: '16px' }} // Prevent iOS zoom on focus
+              style={{ 
+                fontSize: '16px',
+                scrollbarWidth: 'none', // Firefox
+                msOverflowStyle: 'none' // IE/Edge
+              }}
+              style={{ fontSize: '16px' }} // Prevent iOS zoom on focus
             />
 
             {/* Camera Icon (when empty) or Send Icon (when user has typed) */}
-            {!isListening && (
-              <div className="flex items-center gap-2 sm:gap-3">
-                {hasText ? (
-                  <button
-                    type="button"
-                    disabled={disabled}
-                    onClick={handleSendClick}
-                    className="flex-shrink-0 text-signal-white hover:text-aurora transition-colors disabled:opacity-50"
-                    aria-label="Send message"
-                  >
-                    <Send className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </button>
-                ) : (
-                  <>
-                    {/* Location Icon for sharing location */}
-                    <button
-                      type="button"
-                      disabled={disabled || isGettingLocation}
-                      onClick={handleShareLocation}
-                      className="flex-shrink-0 text-signal-white hover:text-aurora transition-colors disabled:opacity-50"
-                      aria-label="Share location"
-                      title="Share your location for delivery tracking"
-                    >
-                      {isGettingLocation ? (
-                        <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-signal-white border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <MapPin className="w-4 h-4 sm:w-5 sm:h-5" />
-                      )}
-                    </button>
-                    {/* Camera Icon for QR Scanning */}
-                    <button
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => setShowQRScanner(true)}
-                      className="flex-shrink-0 text-signal-white hover:text-aurora transition-colors disabled:opacity-50"
-                      aria-label="Scan QR code"
-                    >
-                      <Camera className="w-4 h-4 sm:w-5 sm:h-5" />
-                    </button>
-                    {/* Microphone Icon */}
-                    <button
-                      type="button"
-                      disabled={disabled || !voiceSupported}
-                      onClick={() => {
-                        setIsListening(true);
-                        const stop = startVoiceRecognition(
-                          (result) => {
-                            if (result.text) {
-                              setMessage(result.text);
-                              if (result.confidence && result.confidence > 0.7) {
-                                setTimeout(() => {
-                                  onSendMessage(result.text);
-                                  setMessage("");
-                                }, 300);
-                              }
-                            }
-                            setIsListening(false);
-                            stopRecognitionRef.current = null;
-                          },
-                          (error) => {
-                            console.error("Voice recognition error:", error);
-                            setIsListening(false);
-                            stopRecognitionRef.current = null;
-                          }
-                        );
-                        stopRecognitionRef.current = stop;
-                      }}
-                      className="flex-shrink-0 text-signal-white hover:text-aurora transition-colors disabled:opacity-50"
-                      aria-label="Start voice recording"
-                    >
-                      <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
-
-            {/* Sound Wave Button (when listening) */}
-            {isListening && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (stopRecognitionRef.current) {
-                    stopRecognitionRef.current();
-                    setIsListening(false);
-                    stopRecognitionRef.current = null;
-                  }
-                }}
-                className="flex-shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-signal-white flex items-center justify-center hover:bg-soft-mist transition-colors"
-                aria-label="Stop voice recording"
-              >
-                <SoundWaveIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-carbon" />
-              </button>
-            )}
+            <div className="flex items-center gap-2 sm:gap-3">
+              {hasText ? (
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={handleSendClick}
+                  className="flex-shrink-0 w-8 h-8 sm:w-10 sm:h-10 rounded border border-signal-white/50 hover:border-aurora text-signal-white hover:text-aurora transition-colors disabled:opacity-50 flex items-center justify-center"
+                  aria-label="Send message"
+                >
+                  <Send className="w-4 h-4 sm:w-5 sm:h-5" />
+                </button>
+              ) : (
+                <>
+                  {!isListening && (
+                    <>
+                      {/* Location Icon for sharing location */}
+                      <button
+                        type="button"
+                        disabled={disabled || isGettingLocation}
+                        onClick={handleShareLocation}
+                        className="flex-shrink-0 text-signal-white hover:text-aurora transition-colors disabled:opacity-50"
+                        aria-label="Share location"
+                        title="Share your location for delivery tracking"
+                      >
+                        {isGettingLocation ? (
+                          <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-signal-white border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <MapPin className="w-4 h-4 sm:w-5 sm:h-5" />
+                        )}
+                      </button>
+                      {/* Camera Icon for QR Scanning */}
+                      <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => setShowQRScanner(true)}
+                        className="flex-shrink-0 text-signal-white hover:text-aurora transition-colors disabled:opacity-50"
+                        aria-label="Scan QR code"
+                      >
+                        <Camera className="w-4 h-4 sm:w-5 sm:h-5" />
+                      </button>
+                    </>
+                  )}
+                  {/* Microphone Icon with Visualizer */}
+                  <AIVoiceInputCompact
+                    onResult={(text) => {
+                      if (text) {
+                        setMessage(text);
+                        // Auto-send if confidence is high (handled by voice recognition)
+                        setTimeout(() => {
+                          onSendMessage(text);
+                          setMessage("");
+                        }, 300);
+                      }
+                    }}
+                    onStart={() => {
+                      setIsListening(true);
+                    }}
+                    onStop={() => {
+                      setIsListening(false);
+                    }}
+                    disabled={disabled || !voiceSupported}
+                    showVisualizer={true}
+                    className="flex-shrink-0"
+                  />
+                </>
+              )}
+            </div>
             </div>
           </div>
         </div>
@@ -435,6 +423,11 @@ export function ChatInput({
         } else {
           onSendMessage(`Scanned QR code: ${data.rawData}`);
         }
+      }}
+      onPhotoCapture={(imageDataUrl) => {
+        setShowQRScanner(false);
+        // Send image to AI with a message asking it to analyze
+        onSendMessage("Please analyze this image. It may contain a wallet address, account number, or other transaction information.", undefined, imageDataUrl);
       }}
     />
     </>

@@ -10,7 +10,7 @@
  * - All other user preferences
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { loadPreference, savePreference } from "@/lib/supabase-data";
 
 export interface UserSettings {
@@ -73,16 +73,21 @@ const DEFAULT_SETTINGS: UserSettings = {
 export function useSettings(userId?: string) {
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
   const [isLoading, setIsLoading] = useState(true);
+  const hasLoadedRef = useRef(false);
 
   // Load settings from Supabase (if userId provided)
   useEffect(() => {
     const loadSettings = async () => {
       try {
+        // If we don't have a user yet, just ensure defaults are applied once
         if (!userId) {
-          setSettings(DEFAULT_SETTINGS);
-              setIsLoading(false);
-              return;
-            }
+          if (!hasLoadedRef.current) {
+            setSettings(DEFAULT_SETTINGS);
+            setIsLoading(false);
+            hasLoadedRef.current = true;
+          }
+          return;
+        }
 
         const preference = await loadPreference({ userId, key: "user_settings" });
         if (preference?.value) {
@@ -93,6 +98,7 @@ export function useSettings(userId?: string) {
         }
         
         setIsLoading(false);
+        hasLoadedRef.current = true;
       } catch (error) {
         console.error("[Settings] Error loading settings:", error);
         setIsLoading(false);
@@ -101,6 +107,28 @@ export function useSettings(userId?: string) {
 
     loadSettings();
   }, [userId]);
+
+  // Apply theme on initial load and whenever settings.theme changes
+  useEffect(() => {
+    if (isLoading) return;
+    if (typeof window === "undefined") return;
+
+    const theme = settings.theme;
+
+    if (theme === "light") {
+      document.documentElement.classList.remove("dark");
+    } else if (theme === "dark") {
+      document.documentElement.classList.add("dark");
+    } else {
+      // System preference
+      const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      if (isDark) {
+        document.documentElement.classList.add("dark");
+      } else {
+        document.documentElement.classList.remove("dark");
+      }
+    }
+  }, [settings.theme, isLoading]);
 
   // Save settings to Supabase (if userId provided)
   const saveSettings = useCallback(async (newSettings: Partial<UserSettings>) => {

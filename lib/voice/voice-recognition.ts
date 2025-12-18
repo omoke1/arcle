@@ -54,7 +54,22 @@ export function startVoiceRecognition(
 
   recognition.onerror = (event: any) => {
     const error = event.error || 'Unknown error';
-    onError?.(error);
+    
+    // Map error codes to user-friendly messages
+    let errorMessage = error;
+    if (error === 'not-allowed' || error === 'NotAllowedError') {
+      errorMessage = 'Microphone permission denied. Please allow microphone access in your browser settings.';
+    } else if (error === 'no-speech' || error === 'NoSpeechError') {
+      errorMessage = 'No speech detected. Please try again.';
+    } else if (error === 'aborted' || error === 'AbortError') {
+      errorMessage = 'Voice recognition was aborted.';
+    } else if (error === 'network' || error === 'NetworkError') {
+      errorMessage = 'Network error. Please check your connection.';
+    } else if (error === 'service-not-allowed' || error === 'ServiceNotAllowedError') {
+      errorMessage = 'Speech recognition service is not allowed.';
+    }
+    
+    onError?.(errorMessage);
   };
 
   recognition.onend = () => {

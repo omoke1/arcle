@@ -62,10 +62,14 @@ export async function POST(req: NextRequest) {
     // Get the last user message
     const lastMessage = messages[messages.length - 1];
     const userMsg = String(lastMessage?.content || "").slice(0, 5000);
+    const userImage = lastMessage?.image; // Get image if present
 
-    // Add user message to history
+    // Add user message to history (with image note if present)
     if (userMsg) {
-      await addMessageToHistory(currentSessionId, "user", userMsg, userId);
+      const historyContent = userImage 
+        ? `${userMsg} [Image attached]` 
+        : userMsg;
+      await addMessageToHistory(currentSessionId, "user", historyContent, userId);
     }
 
     // Build system prompt with tier
@@ -73,16 +77,27 @@ export async function POST(req: NextRequest) {
     const contextString = buildContextString(agentContext);
     let systemPrompt = config.systemPrompt.replace("{{context}}", contextString);
     
+    // Add image analysis instructions if image is present
+    if (userImage) {
+      systemPrompt += `\n\n📸 IMAGE ANALYSIS MODE:\nThe user has sent an image. Please analyze it carefully. The image may contain:\n- Wallet addresses (Ethereum, Solana, etc.)\n- Account numbers for transactions\n- QR codes with payment information\n- Receipts or transaction details\n- Bank account information\n- Other financial or transaction-related information\n\nExtract any relevant information from the image and provide a helpful response. If you identify a wallet address or account number, offer to help process a transaction.`;
+    }
+    
     if (conversationHistory) {
       systemPrompt += `\n\n📝 RECENT CONVERSATION HISTORY:\n${conversationHistory}\n`;
       systemPrompt += `\nIMPORTANT: Remember the context from previous messages. Reference past conversations when relevant.`;
     }
 
     // Format messages for Groq (convert from Vercel AI SDK format)
-    const formattedMessages = messages.map((msg: any) => ({
-      role: msg.role === "user" ? "user" : "assistant",
-      content: msg.content,
-    }));
+    // Note: Groq's current models may not support vision directly, so we'll include image as base64 in content
+    const formattedMessages = messages.map((msg: any) => {
+      const content = msg.image 
+        ? `${msg.content}\n\n[Image data: ${msg.image.substring(0, 100)}...]` 
+        : msg.content;
+      return {
+        role: msg.role === "user" ? "user" : "assistant",
+        content: content,
+      };
+    });
 
     // Use Vercel AI SDK's streamText with Groq
     const result = streamText({

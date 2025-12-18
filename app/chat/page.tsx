@@ -125,6 +125,39 @@ export default function ChatPage() {
   const [replyToMessageId, setReplyToMessageId] = useState<string | null>(null);
   const hasHydratedMessagesRef = useRef(false);
 
+  // Bootstrap userId from Supabase "current_user_id" preference or legacy localStorage
+  useEffect(() => {
+    const loadCurrentUserId = async () => {
+      if (typeof window === "undefined" || userId) return;
+      try {
+        const { loadPreference } = await import("@/lib/supabase-data");
+        let currentUserId: string | null = null;
+
+        // Try system-level current_user_id preference (maps to active Circle userId)
+        const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
+        if (currentUserPref?.value && typeof currentUserPref.value === "string") {
+          currentUserId = currentUserPref.value;
+        }
+
+        // Fallback: legacy localStorage
+        if (!currentUserId) {
+          const legacyUserId = localStorage.getItem("arcle_user_id");
+          if (legacyUserId) {
+            currentUserId = legacyUserId;
+          }
+        }
+
+        if (currentUserId) {
+          setUserId(currentUserId);
+        }
+      } catch (error) {
+        console.warn("[ChatPage] Failed to bootstrap current userId:", error);
+      }
+    };
+
+    loadCurrentUserId();
+  }, [userId]);
+
   // Initialize session ID from Supabase
   useEffect(() => {
     const initSessionId = async () => {
@@ -600,7 +633,7 @@ export default function ChatPage() {
     router.push("/");
   };
 
-  const handleSendMessage = async (content: string, replyTo?: string) => {
+  const handleSendMessage = async (content: string, replyTo?: string, image?: string) => {
     // Add user message
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
@@ -608,6 +641,7 @@ export default function ChatPage() {
       content,
       timestamp: new Date(),
       replyTo: replyTo || replyToMessageId || undefined,
+      image: image, // Include image if provided
     };
     setMessages((prev) => [...prev, userMessage]);
 
@@ -738,18 +772,92 @@ export default function ChatPage() {
           setHasWallet(false);
         }
 
-        const creatingMessage: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: "Perfect! Let's get your wallet set up. I'm creating your account now...",
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, creatingMessage]);
+        // Step 1: Get or create user (User-Controlled Wallets)
+        // First, try to load existing user credentials from signup
+        let userData: { userId: string; userToken: string; encryptionKey?: string } | null = null;
+        let existingUserId: string | null = null;
+        let existingUserToken: string | null = null;
 
-        // Step 1: Create or get user (User-Controlled Wallets)
-        const userData = await createUser();
+        // Check if user already has credentials from signup
+        if (typeof window !== 'undefined') {
+          const storedUserId = localStorage.getItem("arcle_user_id");
+          const storedUserToken = localStorage.getItem("arcle_user_token");
+          
+          if (storedUserId && storedUserToken) {
+            existingUserId = storedUserId;
+            existingUserToken = storedUserToken;
+            
+            // Check for existing wallet before creating new user
+            const { detectExistingWallet } = await import("@/lib/wallet/wallet-detection");
+            const walletCheck = await detectExistingWallet(storedUserId, storedUserToken);
+            
+            if (walletCheck.hasExistingWallet && walletCheck.wallet) {
+              console.log("[ChatPage] Found existing wallet from signup, using it:", {
+                walletId: walletCheck.wallet.walletId,
+                source: walletCheck.wallet.source,
+              });
+              
+              // Use existing wallet
+              setUserId(walletCheck.wallet.userId);
+              setUserToken(walletCheck.wallet.userToken);
+              if (walletCheck.wallet.encryptionKey) {
+                setEncryptionKey(walletCheck.wallet.encryptionKey);
+              }
+              setWalletId(walletCheck.wallet.walletId);
+              setWalletAddress(walletCheck.wallet.walletAddress);
+              setHasWallet(true);
+              
+              // Save to Supabase if not already saved
+              await saveWalletData(walletCheck.wallet.userId, {
+                walletId: walletCheck.wallet.walletId,
+                walletAddress: walletCheck.wallet.walletAddress,
+              });
+              
+              const existingWalletMsg: ChatMessage = {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: `✅ Great! I found your existing wallet from when you signed up. Your wallet address is ${walletCheck.wallet.walletAddress.substring(0, 6)}...${walletCheck.wallet.walletAddress.substring(38)}. You're all set!`,
+                timestamp: new Date(),
+              };
+              setMessages((prev) => [...prev, existingWalletMsg]);
+              
+              creatingRef.current = false;
+              return;
+            }
+            
+            // User exists but no wallet - use existing credentials
+            userData = {
+              userId: storedUserId,
+              userToken: storedUserToken,
+              encryptionKey: localStorage.getItem("arcle_encryption_key") || undefined,
+            };
+          }
+        }
+
+        // If no existing user, create new one
         if (!userData) {
-          throw new Error("Failed to create user account");
+          const creatingMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "Perfect! Let's get your wallet set up. I'm creating your account now...",
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, creatingMessage]);
+
+          const newUserData = await createUser();
+          if (!newUserData) {
+            throw new Error("Failed to create user account");
+          }
+          userData = newUserData;
+        } else {
+          // Using existing user - show message
+          const usingExistingMsg: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "I see you already have an account! Let me check if you have a wallet...",
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, usingExistingMsg]);
         }
 
         // Save user credentials
@@ -769,7 +877,35 @@ export default function ChatPage() {
           setMessages((prev) => [...prev, warningMsg]);
         }
 
-        // Step 2: Create wallet challenge
+        // Step 2: Check for existing wallet one more time (in case it was created between checks)
+        const { detectExistingWallet } = await import("@/lib/wallet/wallet-detection");
+        const finalWalletCheck = await detectExistingWallet(userData.userId, userData.userToken);
+        
+        if (finalWalletCheck.hasExistingWallet && finalWalletCheck.wallet) {
+          console.log("[ChatPage] Found existing wallet after user creation, using it");
+          
+          setWalletId(finalWalletCheck.wallet.walletId);
+          setWalletAddress(finalWalletCheck.wallet.walletAddress);
+          setHasWallet(true);
+          
+          await saveWalletData(finalWalletCheck.wallet.userId, {
+            walletId: finalWalletCheck.wallet.walletId,
+            walletAddress: finalWalletCheck.wallet.walletAddress,
+          });
+          
+          const foundWalletMsg: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `✅ Perfect! I found your existing wallet. Your wallet address is ${finalWalletCheck.wallet.walletAddress.substring(0, 6)}...${finalWalletCheck.wallet.walletAddress.substring(38)}. You're ready to go!`,
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, foundWalletMsg]);
+          
+          creatingRef.current = false;
+          return;
+        }
+
+        // Step 3: Create wallet challenge (only if no existing wallet found)
         const forceNew = hasWallet && (lowerContent.includes("new wallet") || lowerContent.includes("another wallet"));
         const result = await createWallet(forceNew, userData.userToken, userData.userId);
         if (!result) throw new Error("Failed to create wallet");

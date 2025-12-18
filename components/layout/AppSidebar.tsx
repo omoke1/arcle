@@ -24,6 +24,8 @@ import { SettingsPage } from "./SettingsPage";
 import { HelpPage } from "./HelpPage";
 import { ArcleLogoIcon } from "@/components/ui/ArcleLogoIcon";
 import { SplitViewIcon } from "@/components/ui/SplitViewIcon";
+import { useSettings } from "@/lib/settings/use-settings";
+import { loadUser as loadSupabaseUser, type SupabaseUser } from "@/lib/supabase-data";
 
 type SidebarView = "main" | "transaction-history" | "wallet" | "schedules" | "scan-reports" | "settings" | "profile" | "help";
 
@@ -55,14 +57,43 @@ export function AppSidebar({
   onViewChange,
 }: AppSidebarProps) {
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  // Use initialView only as the initial state; avoid syncing it on every render to prevent loops
   const [currentView, setCurrentView] = useState<SidebarView>(initialView);
 
-  // Update view when initialView prop changes
+  // User profile (display real details when available)
+  const { settings } = useSettings(userId || "current");
+  const [profileEmail, setProfileEmail] = useState<string | null>(null);
+
   useEffect(() => {
-    if (initialView !== currentView) {
-      setCurrentView(initialView);
-    }
-  }, [initialView, currentView]);
+    let cancelled = false;
+
+    const fetchProfile = async () => {
+      if (!userId) {
+        if (!cancelled) {
+          setProfileEmail(null);
+        }
+        return;
+      }
+
+      try {
+        // Try to load Supabase user by id (when userId is a UUID)
+        const user: SupabaseUser | null = await loadSupabaseUser({ id: userId });
+        if (!cancelled && user) {
+          setProfileEmail(user.email);
+        }
+      } catch {
+        // If this fails (e.g. non-UUID id), fall back to settings-only data
+        if (!cancelled) {
+          setProfileEmail(null);
+        }
+      }
+    };
+
+    fetchProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   // Notify parent of view changes
   useEffect(() => {
@@ -70,9 +101,19 @@ export function AppSidebar({
   }, [currentView, onViewChange]);
 
   const handleItemClick = (callback?: () => void) => {
+    // If sidebar is collapsed, first expand it and do nothing else.
+    // This ensures icons don't change views until the sidebar is open.
+    if (!isOpen) {
+      if (onToggle) {
+        onToggle();
+      }
+      return;
+    }
+
     if (callback) {
       callback();
     }
+
     // Close sidebar on mobile after clicking an item
     if (isMobile && onToggle) {
       onToggle();
@@ -199,18 +240,36 @@ export function AppSidebar({
 
             {/* User Profile - Only show on main view */}
             <div className="p-4 border-t border-graphite/30 flex-shrink-0">
+              {(() => {
+                const displayName =
+                  settings.displayName ||
+                  settings.email ||
+                  profileEmail ||
+                  "Guest User";
+                const email =
+                  profileEmail ||
+                  settings.email ||
+                  null;
+                const initial =
+                  (displayName?.trim()[0] || email?.trim()[0] || "U").toUpperCase();
+
+                return (
               <div className={cn(
                 "flex items-center gap-3 mb-2",
                 !isOpen && "justify-center"
               )}>
                 <div className="w-8 h-8 rounded-full bg-aurora/20 border border-aurora/30 flex items-center justify-center flex-shrink-0">
-                  <span className="text-xs font-semibold text-aurora">U</span>
+                  <span className="text-xs font-semibold text-aurora">{initial}</span>
                 </div>
                 {isOpen && (
                   <>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-signal-white truncate">User</p>
-                      <p className="text-xs text-soft-mist/60 truncate">user@arcle.com</p>
+                      <p className="text-sm font-medium text-signal-white truncate">
+                        {displayName}
+                      </p>
+                      <p className="text-xs text-soft-mist/60 truncate">
+                        {email || "No email set"}
+                      </p>
                     </div>
                     {onLogout && (
                       <button
@@ -225,6 +284,8 @@ export function AppSidebar({
                   </>
                 )}
               </div>
+                );
+              })()}
             </div>
           </>
         ) : currentView === "transaction-history" ? (

@@ -1,35 +1,44 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ChatHistoryManager } from "@/lib/chat/chat-history-manager";
-
-const historyManager = new ChatHistoryManager();
+import { loadMessages } from "@/lib/supabase-data";
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const sessionId = searchParams.get("sessionId");
-    const userId = searchParams.get("userId") || undefined;
+    const userId = searchParams.get("userId"); // currently used only for logging / future auth
 
     if (!sessionId) {
       return NextResponse.json(
-        { error: "Missing sessionId" },
+        { success: false, error: "sessionId is required" },
         { status: 400 }
       );
     }
 
-    const messages = await historyManager.getHistory({
-      sessionId,
-      userId,
-    });
+    // In the current v1, we trust the provided sessionId. In a future iteration,
+    // we should bind sessionId to userId and enforce access control here.
 
-    return NextResponse.json({ messages });
+    const supabaseMessages = await loadMessages(sessionId, { limit: 50 });
+
+    const messages = supabaseMessages.map((msg) => ({
+      id: msg.id,
+      role: msg.role === "assistant" ? "assistant" : "user",
+      content: msg.content,
+      // Return ISO timestamp; client can convert to Date.
+      timestamp: msg.createdAt,
+    }));
+
+    return NextResponse.json({
+      success: true,
+      sessionId,
+      userId: userId || null,
+      messages,
+    });
   } catch (error: any) {
-    console.error("[ChatHistory] Failed to load history:", error);
+    console.error("[ChatHistory] Error loading history:", error);
     return NextResponse.json(
-      { error: "Failed to load chat history" },
+      { success: false, error: error.message || "Failed to load chat history" },
       { status: 500 }
     );
   }
 }
-
-
 

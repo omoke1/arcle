@@ -112,6 +112,7 @@ export function ChatInterface({
                 timestamp={message.timestamp}
                 messageId={message.id}
                 replyTo={message.replyTo}
+                image={message.image}
                 repliedMessage={repliedMessage ? {
                   id: repliedMessage.id,
                   content: repliedMessage.content,

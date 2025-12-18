@@ -114,3 +114,4 @@ export function hasLocationData(message: string): boolean {
   return parseLocationFromMessage(message) !== null;
 }
 
+

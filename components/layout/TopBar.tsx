@@ -1,13 +1,14 @@
 "use client";
 
 import { Sun, Moon, Bell, User, ChevronDown, Settings, LogOut, Menu } from "lucide-react";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { Layers2 } from "@/components/animate-ui/icons/layers-2";
 import FloatingActionMenu from "@/components/ui/floating-action-menu";
 import { QuickActionsSheet } from "./QuickActionsSheet";
 import { ActivityDropdown } from "@/components/ui/activity-dropdown";
 import { TierSelector, AgentTier } from "@/components/ui/TierSelector";
+import { useSettings } from "@/lib/settings/use-settings";
 
 interface TopBarProps {
   balance?: string;
@@ -48,7 +49,11 @@ export function TopBar({
   onSettings,
   onProfile,
 }: TopBarProps) {
-  const [isDark, setIsDark] = useState(true);
+  const { settings, updateTheme } = useSettings(userId);
+  const isDark = useMemo(
+    () => settings.theme === "dark",
+    [settings.theme]
+  );
   const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   
@@ -82,7 +87,7 @@ export function TopBar({
       <div className="flex items-center gap-1.5 md:gap-3 h-full">
         {/* Theme Toggle - Hidden on mobile */}
         <button
-          onClick={() => setIsDark(!isDark)}
+          onClick={() => updateTheme(isDark ? "light" : "dark")}
           className="hidden md:flex p-2 rounded-lg text-soft-mist/70 hover:text-signal-white hover:bg-graphite/50 transition-colors items-center"
         >
           {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}

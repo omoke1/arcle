@@ -6,10 +6,11 @@ import { Loader2, CheckCircle2, XCircle, X } from "lucide-react";
 import { BorderBeamDemo } from "@/components/ui/border-beam-demo";
 import { BorderBeam } from "@/components/ui/border-beam";
 import { hasValidAccess, grantAccess } from "@/lib/auth/invite-codes";
-import { loadWalletData, loadUserCredentials, saveUserCredentials } from "@/lib/supabase-data";
+import { loadWalletData, loadUserCredentials, saveUserCredentials, saveWalletData } from "@/lib/supabase-data";
 import { CircleGoogleAuth } from "@/components/auth/CircleGoogleAuth";
 import { CircleEmailWidget } from "@/components/wallet/CircleEmailWidget";
 import { circleConfig } from "@/lib/circle";
+// Wallet creation moved to API route to avoid client-side SDK issues
 
 const designTokens = {
   aurora: "#E9F28E",
@@ -186,16 +187,72 @@ export default function Home() {
         setVerificationStatus('success');
         await grantAccess(inviteCode.trim());
 
-        // Save Circle credentials to Supabase if we have them
+        // Save Circle credentials to Supabase and localStorage
         if (circleAuthData) {
           try {
+            // Save to Supabase
             await saveUserCredentials(circleAuthData.userId, {
               userToken: circleAuthData.userToken,
               encryptionKey: circleAuthData.encryptionKey,
             });
             console.log("Circle credentials saved to Supabase");
+
+            // Save to localStorage for chat page
+            if (typeof window !== 'undefined') {
+              localStorage.setItem("arcle_user_id", circleAuthData.userId);
+              localStorage.setItem("arcle_user_token", circleAuthData.userToken);
+              if (circleAuthData.encryptionKey) {
+                localStorage.setItem("arcle_encryption_key", circleAuthData.encryptionKey);
+              }
+            }
+
+            // Ensure wallet exists after signup (non-blocking - don't wait for it)
+            // Wallet creation will happen in background, or in chat page if needed
+            // Use API route instead of direct client-side call to avoid SDK issues
+            console.log("Ensuring wallet exists after signup...");
+            fetch("/api/circle/wallets/ensure-after-signup", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                userId: circleAuthData.userId,
+                userToken: circleAuthData.userToken,
+                encryptionKey: circleAuthData.encryptionKey,
+                blockchain: "ARC-TESTNET",
+              }),
+            })
+              .then((res) => res.json())
+              .then((walletResult) => {
+                if (walletResult.success) {
+                  if (walletResult.walletId && walletResult.walletAddress) {
+                    // Wallet created successfully
+                    console.log("Wallet created/verified after signup:", {
+                      walletId: walletResult.walletId,
+                      address: walletResult.walletAddress.substring(0, 10) + "...",
+                    });
+
+                    // Save wallet to localStorage
+                    if (typeof window !== 'undefined') {
+                      localStorage.setItem("arcle_wallet_id", walletResult.walletId);
+                      localStorage.setItem("arcle_wallet_address", walletResult.walletAddress);
+                    }
+                  } else if (walletResult.challengeId) {
+                    // Wallet creation requires PIN setup
+                    console.log("Wallet creation requires PIN setup, challengeId:", walletResult.challengeId);
+                    // Note: PIN setup will be handled in chat page when user first interacts
+                    // For now, just redirect - chat page will detect missing wallet and prompt for PIN
+                  }
+                } else {
+                  console.warn("Wallet creation after signup failed:", walletResult.error);
+                  // Continue anyway - wallet can be created in chat
+                }
+              })
+              .catch((error) => {
+                console.error("Error ensuring wallet after signup:", error);
+                // Don't block - wallet can be created in chat page
+              });
           } catch (error) {
-            console.error("Failed to save Circle credentials:", error);
+            console.error("Failed to save Circle credentials or create wallet:", error);
+            // Continue anyway - user can still proceed to chat
           }
         }
 

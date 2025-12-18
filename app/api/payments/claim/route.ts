@@ -30,42 +30,38 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { claimCode, phone, email, userId, userToken, walletId } = body;
 
-    if (!claimCode && !phone && !email) {
+    // For security, a valid claim always requires the secret claimCode.
+    // phone/email may be used by the UI to help users discover codes,
+    // but the backend will not claim purely by phone/email.
+    if (!claimCode) {
       return NextResponse.json(
-        { error: 'Either claimCode, phone, or email is required' },
+        { error: 'claimCode is required to claim a payment' },
         { status: 400 }
       );
     }
 
-    let pendingPayment;
-
-    // Get pending payment
-    if (claimCode) {
-      pendingPayment = await getPendingPaymentByClaimCode(claimCode);
-    } else if (phone) {
-      const pending = await getPendingPaymentsByPhone(phone);
-      if (pending.length === 0) {
-        return NextResponse.json(
-          { error: 'No pending payments found for this phone number' },
-          { status: 404 }
-        );
-      }
-      pendingPayment = pending[0]; // Claim most recent
-    } else if (email) {
-      const pending = await getPendingPaymentsByEmail(email.toLowerCase());
-      if (pending.length === 0) {
-        return NextResponse.json(
-          { error: 'No pending payments found for this email' },
-          { status: 404 }
-        );
-      }
-      pendingPayment = pending[0];
-    }
+    // Look up pending payment strictly by claimCode
+    const pendingPayment = await getPendingPaymentByClaimCode(claimCode);
 
     if (!pendingPayment) {
       return NextResponse.json(
         { error: 'Pending payment not found' },
         { status: 404 }
+      );
+    }
+
+    // Optional: if caller also supplied phone/email, ensure they match the intended recipient
+    if (phone && pendingPayment.recipient_phone && phone !== pendingPayment.recipient_phone) {
+      return NextResponse.json(
+        { error: 'Phone number does not match this payment' },
+        { status: 400 }
+      );
+    }
+
+    if (email && pendingPayment.recipient_email && email.toLowerCase() !== pendingPayment.recipient_email.toLowerCase()) {
+      return NextResponse.json(
+        { error: 'Email address does not match this payment' },
+        { status: 400 }
       );
     }
 
@@ -222,13 +218,13 @@ export async function POST(request: NextRequest) {
     const { claimFromEscrow } = await import('@/lib/escrow/escrowService');
     const claimTxHash = await claimFromEscrow(
       paymentId,
-      pendingPayment.claim_code,
+      claimCode,
       recipientWalletAddress
     );
 
     // Mark payment as claimed
     const claimedPayment = await claimPendingPayment(
-      pendingPayment.claim_code,
+      claimCode,
       supabaseUserId,
       recipientWalletId,
       recipientWalletAddress,

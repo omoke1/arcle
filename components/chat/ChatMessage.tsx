@@ -21,6 +21,7 @@ interface ChatMessageProps {
   }; // The message being replied to (for display)
   onReply?: (messageId: string) => void; // Callback when message is clicked to reply
   messageId?: string; // ID of this message (needed for reply functionality)
+  image?: string; // Base64 image data URL
   children?: React.ReactNode; // For transaction previews, QR codes, etc.
 }
 
@@ -33,6 +34,7 @@ export function ChatMessage({
   repliedMessage,
   onReply,
   messageId,
+  image,
   children,
 }: ChatMessageProps) {
   const isUser = role === "user";
@@ -47,8 +49,13 @@ export function ChatMessage({
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
-    const checkMobile = () =>
-      setIsMobile(typeof window !== "undefined" && window.innerWidth < 768);
+    const checkMobile = () => {
+      if (typeof window === "undefined") return;
+      const next = window.innerWidth < 768;
+      // Avoid unnecessary state updates that can contribute to deep update loops
+      setIsMobile((prev) => (prev === next ? prev : next));
+    };
+
     checkMobile();
     window.addEventListener("resize", checkMobile);
     return () => window.removeEventListener("resize", checkMobile);
@@ -366,6 +373,17 @@ export function ChatMessage({
                 <SpeechBubbleIcon size={16} className="text-[#E9F28E]" />
                 <span className="text-sm font-medium text-white">ARCLE</span>
                 <VerifiedBadge size={14} variant="light" />
+              </div>
+            )}
+            {/* Display image if present */}
+            {image && (
+              <div className="mb-2 rounded-lg overflow-hidden max-w-full">
+                <img
+                  src={image}
+                  alt="User captured image"
+                  className="max-w-full h-auto rounded-lg"
+                  style={{ maxHeight: "400px", objectFit: "contain" }}
+                />
               </div>
             )}
             <p className="text-[15px] leading-relaxed whitespace-pre-wrap">

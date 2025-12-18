@@ -449,3 +449,4 @@ export function logHigh(
   return errorLogger.high(error, category, context, message);
 }
 
+

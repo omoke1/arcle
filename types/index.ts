@@ -25,6 +25,7 @@ export interface ChatMessage {
   content: string;
   timestamp: Date;
   replyTo?: string; // ID of the message this is replying to
+  image?: string; // Base64 image data URL
   transactionPreview?: {
     amount: string;
     to: string;
