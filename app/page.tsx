@@ -8,7 +8,6 @@ import { BorderBeam } from "@/components/ui/border-beam";
 import { hasValidAccess, grantAccess } from "@/lib/auth/invite-codes";
 import { loadWalletData, saveUserCredentials, loadUserCredentials } from "@/lib/supabase-data";
 import { getSupabaseClient } from "@/lib/supabase";
-import { circleConfig } from "@/lib/circle";
 
 const designTokens = {
   aurora: "#E9F28E",
@@ -34,6 +33,7 @@ export default function Home() {
   const [inviteCode, setInviteCode] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
   const [verificationStatus, setVerificationStatus] = useState<"idle" | "success" | "error">("idle");
+
 
   const [authenticatedUser, setAuthenticatedUser] = useState<any>(null);
 
@@ -66,6 +66,7 @@ export default function Home() {
       }
     };
     checkSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleGetAccess = async () => {
@@ -194,13 +195,26 @@ export default function Home() {
     setVerificationStatus('idle');
 
     try {
-      // Server-side verify
+      // Get Supabase session token for authentication
+      const supabase = getSupabaseClient();
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (!session?.access_token) {
+        setVerificationStatus('error');
+        setErrorMessage("Please sign in to verify an invite code");
+        setIsVerifying(false);
+        return;
+      }
+
+      // Server-side verify with authenticated session
       const response = await fetch('/api/auth/verify-invite', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
         body: JSON.stringify({
           code: inviteCode.trim(),
-          userId: authenticatedUser.id
         }),
       });
 
@@ -372,6 +386,7 @@ export default function Home() {
           </div>
         </div>
       )}
+
 
       {showInviteModal && (
         <div

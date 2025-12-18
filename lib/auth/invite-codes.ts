@@ -208,12 +208,24 @@ export async function hasValidAccess(userId?: string): Promise<boolean> {
   // Try to get userId if not provided
   if (!userId) {
     try {
-      const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
-      if (currentUserPref?.value) {
-        userId = currentUserPref.value;
+      // First, try to get from Supabase auth session
+      const { getSupabaseClient } = await import('@/lib/supabase');
+      const supabase = getSupabaseClient();
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (!authError && user?.id) {
+        userId = user.id;
+        console.log("[hasValidAccess] Got userId from Supabase auth:", userId);
+      } else {
+        // Fallback: Try to get from preferences
+        const currentUserPref = await loadPreference({ userId: "current", key: "current_user_id" }).catch(() => null);
+        if (currentUserPref?.value) {
+          userId = currentUserPref.value;
+          console.log("[hasValidAccess] Got userId from preferences:", userId);
+        }
       }
     } catch (error) {
-      // Ignore
+      console.warn("[hasValidAccess] Error getting userId:", error);
     }
   }
 
